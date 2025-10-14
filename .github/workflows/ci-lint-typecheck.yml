@@ -6,22 +6,31 @@ on:
 jobs:
   lint-typecheck:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
-
-      # 1) installer pnpm d'abord
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 9
-          run_install: false
-
-      # 2) puis setup-node avec cache pnpm
-      - uses: actions/setup-node@v4
+  - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: 'pnpm'
 
-      - name: Install deps
+ - name: Enable Corepack & pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@9 --activate
+          pnpm -v
+          node -v
+ - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ~/.pnpm-store
+          key: ${{ runner.os }}-pnpmstore-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpmstore-
+
+    - name: Install deps
         run: pnpm install --frozen-lockfile
 
       - name: Generate Prisma Client
