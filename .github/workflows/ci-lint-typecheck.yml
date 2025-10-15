@@ -1,43 +1,51 @@
-name: Lint & Typecheck
+name: CI — Lint & Typecheck
+
 on:
-  push: { branches: [main] }
   pull_request:
+    branches: [ main ]
+  workflow_dispatch: {}   # <- rend le bouton "Run workflow" visible
+
+defaults:
+  run:
+    working-directory: exodus-app
+
+permissions:
+  contents: read
 
 jobs:
   lint-typecheck:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        shell: bash
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
+      DATABASE_URL: "file:./prisma/ci.db"  # SQLite éphémère pour Prisma
+
     steps:
       - uses: actions/checkout@v4
-  - name: Setup Node.js
+
+      - name: Setup Node + pnpm cache
         uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: pnpm
+          cache-dependency-path: exodus-app/pnpm-lock.yaml
 
- - name: Enable Corepack & pnpm
+      - name: Enable pnpm
         run: |
           corepack enable
           corepack prepare pnpm@9 --activate
           pnpm -v
           node -v
- - name: Cache pnpm store
-        uses: actions/cache@v4
-        with:
-          path: ~/.pnpm-store
-          key: ${{ runner.os }}-pnpmstore-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-pnpmstore-
 
-    - name: Install deps
+      - name: Install deps
         run: pnpm install --frozen-lockfile
 
-      - name: Generate Prisma Client
+      - name: Prisma generate
         run: pnpm exec prisma generate
 
-      - name: ESLint
-        run: pnpm exec eslint . --max-warnings=0
+      - name: ESLint (exodus-app only)
+        run: >
+          pnpm exec eslint --max-warnings=0 --no-error-on-unmatched-pattern
+          "src/**/*.{ts,tsx,js,jsx}" "e2e/**/*.{ts,tsx,js,jsx}" "playwright.config.ts"
 
       - name: Typecheck
         run: pnpm exec tsc -p tsconfig.json --noEmit
