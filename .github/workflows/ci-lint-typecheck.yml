@@ -3,7 +3,7 @@ name: CI — Lint & Typecheck
 on:
   pull_request:
     branches: [ main ]
-  workflow_dispatch: {}   # <- rend le bouton "Run workflow" visible
+  workflow_dispatch: {}
 
 defaults:
   run:
@@ -17,25 +17,37 @@ jobs:
     runs-on: ubuntu-latest
     env:
       NEXT_TELEMETRY_DISABLED: "1"
-      DATABASE_URL: "file:./prisma/ci.db"  # SQLite éphémère pour Prisma
+      DATABASE_URL: "file:./prisma/ci.db"
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Node + pnpm cache
+      # 1) Node SANS cache pnpm (sinon il essaie d'appeler pnpm trop tôt)
+      - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: pnpm
-          cache-dependency-path: exodus-app/pnpm-lock.yaml
 
+      # 2) Activer pnpm via Corepack
       - name: Enable pnpm
         run: |
           corepack enable
           corepack prepare pnpm@9 --activate
           pnpm -v
           node -v
+          # on fixe un store stable pour le cache
+          pnpm config set store-dir ~/.pnpm-store
 
+      # 3) Cache du store pnpm
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ~/.pnpm-store
+          key: ${{ runner.os }}-pnpmstore-${{ hashFiles('exodus-app/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpmstore-
+
+      # 4) Install + vérifs
       - name: Install deps
         run: pnpm install --frozen-lockfile
 
