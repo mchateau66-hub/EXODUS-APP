@@ -5,10 +5,6 @@ on:
     branches: [ main ]
   workflow_dispatch: {}
 
-defaults:
-  run:
-    working-directory: exodus-app
-
 concurrency:
   group: e2e-${{ github.ref }}
   cancel-in-progress: true
@@ -21,58 +17,49 @@ jobs:
     runs-on: ubuntu-latest
     env:
       NEXT_TELEMETRY_DISABLED: "1"
-      # Renseigne Settings → Actions → Variables → E2E_BASE_URL (ex: https://staging…)
+      # Définis cette variable dans Settings → Actions → Variables
       E2E_BASE_URL: ${{ vars.E2E_BASE_URL }}
-      # SQLite éphémère pour Prisma (évite les erreurs DATABASE_URL)
       DATABASE_URL: "file:./prisma/ci.db"
 
     steps:
       - uses: actions/checkout@v4
 
-      # 1) Node SANS cache pnpm intégré (sinon il tente d'appeler pnpm trop tôt)
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 20
 
-      # 2) Activer pnpm via Corepack
       - name: Enable pnpm
         run: |
           corepack enable
           corepack prepare pnpm@9 --activate
           pnpm -v
           node -v
-          # store stable pour un cache efficace
           pnpm config set store-dir ~/.pnpm-store
 
-      # 3) Cache du store pnpm
       - name: Cache pnpm store
         uses: actions/cache@v4
         with:
           path: ~/.pnpm-store
-          key: ${{ runner.os }}-pnpmstore-${{ hashFiles('exodus-app/pnpm-lock.yaml') }}
+          key: ${{ runner.os }}-pnpmstore-${{ hashFiles('pnpm-lock.yaml') }}
           restore-keys: |
             ${{ runner.os }}-pnpmstore-
 
-      # 4) Dépendances + Prisma
       - name: Install deps
         run: pnpm install --frozen-lockfile
 
       - name: Prisma generate
         run: pnpm exec prisma generate
 
-      # Optionnel: migrations (ok avec SQLite éphémère)
       - name: Apply DB migrations
         run: pnpm exec prisma migrate deploy
 
-      # 5) Playwright
       - name: Install Playwright browsers
         run: pnpm exec playwright install --with-deps
 
       - name: Run Playwright tests
         run: pnpm exec playwright test --reporter=github,html
 
-      # 6) Artefact du rapport HTML
       - name: Upload HTML report
         if: always()
         uses: actions/upload-artifact@v4
