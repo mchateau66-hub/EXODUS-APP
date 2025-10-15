@@ -10,19 +10,28 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v4
-  - name: Setup Node.js
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 1) Node (⚠️ pas de cache: pnpm ici)
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
+          # NE PAS mettre "cache: pnpm" ici, c'est ce qui casse !
 
- - name: Enable Corepack & pnpm
+      # 2) Activer Corepack & pnpm
+      - name: Enable Corepack & pnpm
         run: |
           corepack enable
           corepack prepare pnpm@9 --activate
           pnpm -v
           node -v
- - name: Cache pnpm store
+          # on fixe le chemin du store pour que le cache soit efficace
+          pnpm config set store-dir ~/.pnpm-store
+
+      # 3) Cache du store pnpm (ne dépend pas du binaire pnpm)
+      - name: Cache pnpm store
         uses: actions/cache@v4
         with:
           path: ~/.pnpm-store
@@ -30,7 +39,8 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pnpmstore-
 
-    - name: Install deps
+      # 4) Install + vérifs
+      - name: Install deps
         run: pnpm install --frozen-lockfile
 
       - name: Generate Prisma Client
