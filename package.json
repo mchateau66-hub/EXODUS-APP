@@ -6,22 +6,35 @@
     "dev": "next dev --turbopack",
     "build": "next build --turbopack",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint .",
+    "postinstall": "prisma generate",
+
+    "e2e": "playwright test",
+    "e2e:ui": "playwright test --ui",
+    "e2e:html": "playwright test --reporter=html",
+    "e2e:report": "playwright show-report"
   },
   "dependencies": {
+    "next": "15.5.5",
     "react": "19.1.0",
     "react-dom": "19.1.0",
-    "next": "15.5.5"
+    "@prisma/client": "^6.17.1"
   },
   "devDependencies": {
     "typescript": "^5",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "@tailwindcss/postcss": "^4",
-    "tailwindcss": "^4",
+
     "eslint": "^9",
     "eslint-config-next": "15.5.5",
-    "@eslint/eslintrc": "^3"
+    "@eslint/eslintrc": "^3",
+
+    "tailwindcss": "^4",
+    "@tailwindcss/postcss": "^4",
+
+    "prisma": "^6.17.1",
+    "@playwright/test": "1.56.0",
+    "playwright": "1.56.0"
   }
 }
