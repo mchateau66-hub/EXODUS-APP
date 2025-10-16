@@ -1,55 +1,42 @@
-name: E2E — Playwright
+name: E2E Playwright
 
 on:
-  pull_request:
-  push:
-    branches: [ main ]
-  workflow_dispatch: {}
-
-defaults:
-  run:
-    working-directory: exodus-app
+  pull_request: { branches: [ main ] }
+  workflow_dispatch:
 
 jobs:
-  test:
+  e2e:
     runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+    env:
+      E2E_BASE_URL: ${{ vars.E2E_BASE_URL || 'http://127.0.0.1:3000' }}
+      E2E_SMOKE_PATH: ${{ vars.E2E_SMOKE_PATH || '/api/health' }}
+      E2E_PORT: ${{ vars.E2E_PORT || '3000' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v2
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: pnpm
 
-      - name: Enable Corepack & pnpm
-        run: |
-          corepack enable
-          corepack prepare pnpm@^9 --activate
-          pnpm -v
-
-      # --- Plan B ici aussi
-      - name: Install deps (no frozen lockfile)
-        run: pnpm install --no-frozen-lockfile
-
-      - name: Prisma generate
-        env:
-          DATABASE_URL: "file:./prisma/ci.db"
-        run: pnpm exec prisma generate
+      - name: Install deps
+        run: pnpm install --frozen-lockfile
 
       - name: Install Playwright browsers
         run: pnpm exec playwright install --with-deps
 
-      - name: Run Playwright tests
-        env:
-          BASE_URL: http://127.0.0.1:3003
-          CI: 'true'
-        run: pnpm exec playwright test --reporter=github,html
+      - name: Run tests
+        run: pnpm exec playwright test -c ./playwright.config.ts
 
-      - name: Upload HTML report
-        if: always()
+      - if: always()
+        name: Upload HTML report
         uses: actions/upload-artifact@v4
         with:
           name: playwright-report
           path: playwright-report
-          retention-days: 7
