@@ -1,65 +1,51 @@
 name: E2E — Playwright
 
 on:
-  pull_request:
+  push:
     branches: [ main ]
+  pull_request:
   workflow_dispatch: {}
-
-concurrency:
-  group: e2e-${{ github.ref }}
-  cancel-in-progress: true
-
-permissions:
-  contents: read
 
 jobs:
   test:
     runs-on: ubuntu-latest
-    env:
-      NEXT_TELEMETRY_DISABLED: "1"
-      # Définis cette variable dans Settings → Actions → Variables
-      E2E_BASE_URL: ${{ vars.E2E_BASE_URL }}
-      DATABASE_URL: "file:./prisma/ci.db"
-
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Setup Node
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
 
-      - name: Enable pnpm
+      - name: Enable Corepack & pnpm
         run: |
           corepack enable
           corepack prepare pnpm@9 --activate
-          pnpm -v
-          node -v
-          pnpm config set store-dir ~/.pnpm-store
-
-      - name: Cache pnpm store
-        uses: actions/cache@v4
-        with:
-          path: ~/.pnpm-store
-          key: ${{ runner.os }}-pnpmstore-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-pnpmstore-
 
       - name: Install deps
-        run: pnpm install --no-frozen-lockfile
-
+        run: pnpm install --frozen-lockfile
 
       - name: Prisma generate
+        env:
+          DATABASE_URL: "file:./prisma/ci.db"
         run: pnpm exec prisma generate
-
-      - name: Apply DB migrations
-        run: pnpm exec prisma migrate deploy
 
       - name: Install Playwright browsers
         run: pnpm exec playwright install --with-deps
 
+      # Option A (recommandé CI): on build + on démarre l'app
+      - name: Build app
+        run: pnpm build
+
+      - name: Start app
+        run: pnpm start -- -p 3000 & npx wait-on http://127.0.0.1:3000
+
       - name: Run Playwright tests
-        run: pnpm exec playwright test --reporter=github,html
+        env:
+          BASE_URL: http://127.0.0.1:3000
+          CI: 'true'
+        run: pnpm exec playwright test --reporter=github
 
       - name: Upload HTML report
         if: always()
