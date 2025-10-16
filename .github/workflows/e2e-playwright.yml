@@ -46,7 +46,8 @@ jobs:
             ${{ runner.os }}-pnpmstore-
 
       - name: Install deps
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --no-frozen-lockfile
+
 
       - name: Prisma generate
         run: pnpm exec prisma generate
