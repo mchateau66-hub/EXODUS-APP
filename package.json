@@ -4,13 +4,18 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build --turbopack",
+    "dev:turbo": "next dev --turbo",
+    "build": "next build",
+    "build:turbo": "next build --turbo",
     "start": "next start",
-    "lint": "eslint",
+    "lint": "eslint .",
     "postinstall": "prisma generate",
-    "e2e": "playwright test",
-    "e2e:ui": "playwright test --ui",
-    "e2e:html": "playwright test --reporter=html",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+
+    "test": "playwright test -c ./playwright.config.ts",
+    "e2e": "playwright test -c ./playwright.config.ts",
+    "e2e:ui": "playwright test -c ./playwright.config.ts --ui",
+    "e2e:html": "playwright test -c ./playwright.config.ts --reporter=html",
     "e2e:report": "playwright show-report"
   },
   "dependencies": {
