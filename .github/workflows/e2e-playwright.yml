@@ -1,10 +1,14 @@
 name: E2E — Playwright
 
 on:
+  pull_request:
   push:
     branches: [ main ]
-  pull_request:
   workflow_dispatch: {}
+
+defaults:
+  run:
+    working-directory: exodus-app
 
 jobs:
   test:
@@ -21,10 +25,12 @@ jobs:
       - name: Enable Corepack & pnpm
         run: |
           corepack enable
-          corepack prepare pnpm@9 --activate
+          corepack prepare pnpm@^9 --activate
+          pnpm -v
 
-      - name: Install deps
-        run: pnpm install --frozen-lockfile
+      # --- Plan B ici aussi
+      - name: Install deps (no frozen lockfile)
+        run: pnpm install --no-frozen-lockfile
 
       - name: Prisma generate
         env:
@@ -34,18 +40,11 @@ jobs:
       - name: Install Playwright browsers
         run: pnpm exec playwright install --with-deps
 
-      # Option A (recommandé CI): on build + on démarre l'app
-      - name: Build app
-        run: pnpm build
-
-      - name: Start app
-        run: pnpm start -- -p 3000 & npx wait-on http://127.0.0.1:3000
-
       - name: Run Playwright tests
         env:
-          BASE_URL: http://127.0.0.1:3000
+          BASE_URL: http://127.0.0.1:3003
           CI: 'true'
-        run: pnpm exec playwright test --reporter=github
+        run: pnpm exec playwright test --reporter=github,html
 
       - name: Upload HTML report
         if: always()
