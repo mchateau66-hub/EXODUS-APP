@@ -11,8 +11,7 @@
     "start": "next start",
     "lint": "eslint .",
 
-    // Évite l'erreur Prisma sur Vercel si aucun schema n'est présent
-    "postinstall": "node -e \"process.exit(require('fs').existsSync('prisma/schema.prisma')?0:1)\" && prisma generate || echo 'skip prisma generate'",
+    "postinstall": "node -e \"const { existsSync } = require('fs'); const { execSync } = require('child_process'); const p1='./prisma/schema.prisma'; const p2='schema.prisma'; if (existsSync(p1) || existsSync(p2)) { console.log('✔ prisma schema found, generating...'); execSync('pnpm prisma generate', { stdio: 'inherit' }); } else { console.log('ℹ no prisma schema found, skipping prisma generate'); }\"",
 
     "e2e": "playwright test",
     "e2e:ui": "playwright test --ui",
@@ -27,18 +26,18 @@
     "react-dom": "19.1.0",
     "@prisma/client": "^6.17.1"
   },
-
   "devDependencies": {
     "typescript": "^5",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
+    "@eslint/eslintrc": "^3",
     "eslint-config-next": "15.5.5",
     "tailwindcss": "^4",
     "@tailwindcss/postcss": "^4",
     "prisma": "^6.17.1",
-    "@playwright/test": "^1.56.0",
-    "playwright": "^1.56.0"
+    "playwright": "^1.56.0",
+    "@playwright/test": "^1.56.0"
   }
 }
