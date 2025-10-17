@@ -11,7 +11,8 @@
     "start": "next start",
     "lint": "eslint .",
 
-    "postinstall": "prisma generate",
+    // Évite l'erreur Prisma sur Vercel si aucun schema n'est présent
+    "postinstall": "node -e \"process.exit(require('fs').existsSync('prisma/schema.prisma')?0:1)\" && prisma generate || echo 'skip prisma generate'",
 
     "e2e": "playwright test",
     "e2e:ui": "playwright test --ui",
