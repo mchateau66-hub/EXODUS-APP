@@ -1,46 +1,69 @@
 // e2e/paywall.spec.ts
-import { test, expect } from '@playwright/test';
-import { isPaywallVisible } from './helpers';
+import { test, expect, type Response, type Request } from '@playwright/test'
+import {
+  BASE_URL,
+  waitForHealth,
+  login,
+  setSessionCookieFromEnv,
+  isPaywallVisible,
+  gotoOk,
+  expectRedirectToPaywall,
+} from './helpers'
 
-const PATH   = process.env.E2E_PAYWALL_PATH ?? '/pro';
-const SEL    = process.env.E2E_PAYWALL_SELECTOR;      // ex: [data-test="paywall"]
-const OK_SEL = process.env.E2E_PAYWALL_OK_SELECTOR;   // ex: main,[data-test="content"]
+/** Remonte à la première Response de la chaîne de redirections (navigation). */
+async function firstRedirectResponse(res: Response | null): Promise<Response | null> {
+  if (!res) return null
+  let req: Request = res.request()
+  let prev: Request | null
+  while ((prev = req.redirectedFrom())) req = prev
+  // si aucune redirection -> la 1ère est la réponse elle-même
+  const first = await req.response()
+  return first ?? res
+}
 
-// Par défaut, on TRAITE 404 COMME BLOQUÉ (désactive avec E2E_PAYWALL_ALLOW_404_AS_BLOCKED=0)
-const allow404 = (process.env.E2E_PAYWALL_ALLOW_404_AS_BLOCKED ?? '1') === '1';
+test.describe('Paywall /pro', () => {
+  test.beforeAll(async () => {
+    await waitForHealth(BASE_URL, process.env.E2E_SMOKE_PATH ?? '/api/health', 20_000)
+  })
 
-test('paywall ▸ anonyme → contenu protégé bloqué', async ({ browser, context }) => {
-  const anon = await (context ?? (await browser.newContext())).newPage();
+  test.beforeEach(async ({ context }) => {
+    // Si un cookie a été injecté via var d’env, on l’ajoute
+    await setSessionCookieFromEnv(context)
+  })
 
-  const res  = await anon.goto(PATH, { waitUntil: 'domcontentloaded' });
-  const st   = res?.status() ?? 0;
-  const loc  = res?.headers()['location'] ?? '';
-  const url  = res?.url() ?? '';
+  test('smoke: /api/health is 200', async ({ page }) => {
+    const r = await page.request.get(process.env.E2E_SMOKE_PATH ?? '/api/health')
+    expect(r.ok()).toBeTruthy()
+  })
 
-  // 1) blocage par status HTTP
-  const blockedByStatus = new Set<number>([401, 402, 403, ...(allow404 ? [404] : [])]).has(st);
+  test('anonymous → middleware redirects (307 + Location /?paywall=1&from=/pro)', async ({ page }) => {
+    await page.context().clearCookies()
 
-  // 2) redirection vers login / auth / subscribe / paywall
-  const redirectedToAuth =
-    [301,302,303,307,308].includes(st) &&
-    /(login|signin|auth|subscribe|checkout|paywall)/i.test(loc || url);
+    // Navigation (permet de remonter la chaîne de redirections)
+    const nav = await page.goto('/pro', { waitUntil: 'domcontentloaded' })
+    const first = await firstRedirectResponse(nav ?? null)
+    expect(first).not.toBeNull()
+    if (first) expectRedirectToPaywall(first, '/pro')
 
-  // 3) UI de paywall visible (si tu fournis un sélecteur)
-  const blockedByUI = await isPaywallVisible(anon, SEL);
+    // URL finale = home + query paywall=1
+    const u = new URL(page.url())
+    expect(u.pathname).toBe('/')
+    expect(u.searchParams.get('paywall')).toBe('1')
+    expect(u.searchParams.get('from')).toBe('/pro')
 
-  // 4) Option “OK selector” (si la page de contenu s’affiche quand autorisé)
-  const okSelectorVisible = OK_SEL
-    ? await anon.locator(OK_SEL).first().isVisible().catch(() => false)
-    : false;
+    // Heuristique visuelle (facultatif)
+    expect(await isPaywallVisible(page)).toBeTruthy()
+  })
 
-  // Verdict : bloqué si l’un des trois signaux est vrai, et PAS okSelectorVisible
-  const blocked =
-    (blockedByStatus || redirectedToAuth || blockedByUI) && !okSelectorVisible;
+  test('authorized via /api/login cookie → /pro is 200', async ({ page }) => {
+    await login(page) // pose le cookie "session"
+    const res = await gotoOk(page, '/pro', { waitUntil: 'domcontentloaded' })
+    expect(res.status()).toBe(200)
+    await expect(page.getByRole('heading', { name: /Espace Pro/i })).toBeVisible()
+  })
 
-  expect(
-    blocked,
-    `status=${st} location=${loc} url=${url} paywallUI=${blockedByUI} okSel=${okSelectorVisible}`
-  ).toBe(true);
-
-  await anon.context().close().catch(() => {});
-});
+  test('authorized via Authorization: Bearer <token> → /pro is 200', async ({ page }) => {
+    const r = await page.request.get('/pro', { headers: { authorization: 'Bearer test-token' } })
+    expect(r.status()).toBe(200)
+  })
+})

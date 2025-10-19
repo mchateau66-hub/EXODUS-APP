@@ -1,3 +1,8 @@
+import { NextResponse } from 'next/server'
+
+export const runtime = 'nodejs'
+
 export async function GET() {
-  return new Response('ok', { status: 200, headers: { 'content-type': 'text/plain' } });
+// Répond toujours 200 pour le smoke test/CI
+return NextResponse.json({ ok: true })
 }

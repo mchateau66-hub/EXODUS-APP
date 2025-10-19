@@ -3,41 +3,41 @@
   "version": "0.1.0",
   "private": true,
   "packageManager": "pnpm@9.15.9",
-  "engines": { "node": ">=20.0.0" },
-
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
-
     "postinstall": "node -e \"const { existsSync } = require('fs'); const { execSync } = require('child_process'); const p1='./prisma/schema.prisma'; const p2='schema.prisma'; if (existsSync(p1) || existsSync(p2)) { console.log('✔ prisma schema found, generating...'); execSync('pnpm prisma generate', { stdio: 'inherit' }); } else { console.log('ℹ no prisma schema found, skipping prisma generate'); }\"",
-
     "e2e": "playwright test",
     "e2e:ui": "playwright test --ui",
     "e2e:html": "playwright test --reporter=html",
     "e2e:report": "playwright show-report",
     "e2e:ci": "playwright test -c ./playwright.config.ts --reporter=html && playwright show-report --port 0"
   },
-
   "dependencies": {
+    "@prisma/client": "^6.17.1",
     "next": "15.5.5",
     "react": "19.1.0",
-    "react-dom": "19.1.0",
-    "@prisma/client": "^6.17.1"
+    "react-dom": "19.1.0"
   },
   "devDependencies": {
-    "typescript": "^5",
+    "@eslint/eslintrc": "^3",
+    "@playwright/test": "^1.56.0",
+    "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "autoprefixer": "^10.4.21",
     "eslint": "^9",
-    "@eslint/eslintrc": "^3",
     "eslint-config-next": "15.5.5",
-    "tailwindcss": "^4",
-    "@tailwindcss/postcss": "^4",
-    "prisma": "^6.17.1",
     "playwright": "^1.56.0",
-    "@playwright/test": "^1.56.0"
+    "postcss": "^8.5.6",
+    "prisma": "^6.17.1",
+    "tailwindcss": "^4.1.14",
+    "typescript": "^5"
   }
 }
