@@ -1,0 +1,26 @@
+// middleware.ts (à la racine du projet, au même niveau que package.json)
+import { NextResponse, type NextRequest } from 'next/server'
+
+export function middleware(req: NextRequest) {
+  const hasSession = req.cookies.has('session')
+  const auth = (req.headers.get('authorization') ?? '').toLowerCase()
+
+  // Passe si cookie "session" OU header "Authorization: Bearer ..."
+  if (hasSession || auth.startsWith('bearer ')) {
+    return NextResponse.next()
+  }
+
+  // Redirige vers /paywall?from=<path>, statut 307 + header x-paywall
+  const url = new URL('/paywall', req.url)
+  const from = req.nextUrl.pathname + req.nextUrl.search
+  url.searchParams.set('from', from)
+
+  const res = NextResponse.redirect(url, { status: 307 })
+  res.headers.set('x-paywall', '1')
+  return res
+}
+
+// Protège /pro et toutes ses sous-routes
+export const config = {
+  matcher: ['/pro/:path*'],
+}

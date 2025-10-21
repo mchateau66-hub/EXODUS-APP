@@ -1,0 +1,28 @@
+{
+    "root": true,
+    "extends": ["next/core-web-vitals"],
+    "parser": "@typescript-eslint/parser",
+    "plugins": ["@typescript-eslint", "import", "security"],
+    "rules": {
+      "no-console": ["error", { "allow": ["warn", "error"] }],
+      "@typescript-eslint/no-explicit-any": "error",
+      "@typescript-eslint/no-floating-promises": "error",
+      "@typescript-eslint/consistent-type-imports": "error",
+      "import/order": ["warn", { "newlines-between": "always", "alphabetize": { "order": "asc", "caseInsensitive": true } }],
+      "security/detect-non-literal-regexp": "warn",
+      "security/detect-possible-timing-attacks": "warn"
+    },
+    "overrides": [
+      {
+        "files": ["e2e/**/*.{ts,tsx}"],
+        "plugins": ["playwright"],
+        "extends": ["plugin:playwright/recommended"],
+        "env": { "node": true },
+        "rules": {
+          "@typescript-eslint/no-explicit-any": "off"  // tests: pragmatique si besoin de helpers génériques
+        }
+      }
+    ],
+    "ignorePatterns": ["node_modules/", ".next/", "dist/", "coverage/"]
+  }
+  
