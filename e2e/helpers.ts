@@ -1,28 +1,49 @@
 // e2e/helpers.ts
 import {
   expect,
+  request,
   type Page,
   type BrowserContext,
-  request,
-  type APIRequestContext,
-  type Response,
   type APIResponse,
+  type Response as PWResponse, // Réponse réseau Playwright
 } from '@playwright/test'
 
-export type MaybeResponse = Response | null
-export const BASE_URL = process.env.E2E_BASE_URL ?? 'http://127.0.0.1:3000'
+/* ───────────────────────────── Types & Constantes ─────────────────────────── */
 
-/* ------------------------------- Health ------------------------------- */
+type FetchResponse = globalThis.Response
+export type ResLike = PWResponse | APIResponse | FetchResponse
+export type MaybeResponse = ResLike | null
+
+export const BASE_URL =
+  (process.env.E2E_BASE_URL?.trim() || 'http://127.0.0.1:3000') as string
+export const E2E_SMOKE_PATH =
+  (process.env.E2E_SMOKE_PATH?.trim() || '/api/health') as string
+
+/* ─────────────────────────────── Type guards ──────────────────────────────── */
+
+function hasHeadersFn(r: unknown): r is { headers(): Record<string, string> } {
+  return typeof (r as any)?.headers === 'function'
+}
+function hasStatusFn(r: unknown): r is { status(): number } {
+  return typeof (r as any)?.status === 'function'
+}
+function isFetchResponse(r: unknown): r is FetchResponse {
+  return !!(r as any)?.headers?.get && typeof (r as any).headers.get === 'function'
+}
+function hasHeadersRecord(r: unknown): r is { headers: Record<string, string> } {
+  return !!(r as any)?.headers && typeof (r as any).headers === 'object' && !isFetchResponse(r)
+}
+
+/* ─────────────────────────────── Healthcheck ──────────────────────────────── */
 
 export async function waitForHealth(
   baseUrl: string = BASE_URL,
-  healthPath: string = process.env.E2E_SMOKE_PATH ?? '/api/health',
-  timeoutMs = 15_000
+  healthPath: string = E2E_SMOKE_PATH,
+  timeoutMs = 15_000,
 ): Promise<void> {
-  const client: APIRequestContext = await request.newContext({ baseURL: baseUrl })
+  const client = await request.newContext({ baseURL: baseUrl })
   const deadline = Date.now() + timeoutMs
   let lastStatus = 0
-
   while (Date.now() < deadline) {
     try {
       const res = await client.get(healthPath, { timeout: 5_000 })
@@ -31,162 +52,193 @@ export async function waitForHealth(
         await client.dispose()
         return
       }
-    } catch {}
-    await new Promise(r => setTimeout(r, 500))
+    } catch {
+      /* retry */
+    }
+    await new Promise((r) => setTimeout(r, 500))
   }
-
   await client.dispose()
-  throw new Error(`Healthcheck failed for ${baseUrl}${healthPath} (last status ${lastStatus})`)
+  throw new Error(
+    `Healthcheck failed for ${baseUrl}${healthPath} (last status ${lastStatus})`,
+  )
 }
 
-/* ------------------------------- Auth -------------------------------- */
+/* ────────────────────────────────── Auth ──────────────────────────────────── */
 
 export async function login(
   page: Page,
-  data: { session?: string; maxAge?: number } = {}
+  data: { session?: string; maxAge?: number } = {},
 ): Promise<APIResponse> {
   const res = await page.request.post('/api/login', { data })
   expect(res.ok()).toBeTruthy()
   return res
 }
 
-/**
- * Pose un cookie depuis la variable d'env E2E_SESSION_COOKIE.
- * Ex: "session=<uuid>" ou "session=<uuid>; Path=/; HttpOnly; SameSite=Lax; Secure"
- */
+export async function logout(page: Page): Promise<APIResponse> {
+  const res = await page.request.post('/api/logout')
+  expect(res.status()).toBe(204)
+  return res
+}
+
+/** Pose un cookie depuis la variable d'env E2E_SESSION_COOKIE (format Set-Cookie). */
 export async function setSessionCookieFromEnv(
   context: BrowserContext,
-  cookieEnv: string | undefined = process.env.E2E_SESSION_COOKIE,
-  baseUrl: string = BASE_URL
+  baseUrl: string = BASE_URL,
 ): Promise<void> {
-  if (!cookieEnv || !cookieEnv.trim()) return
+  const raw = process.env.E2E_SESSION_COOKIE?.trim() ?? ''
+  if (!raw) return
 
-  const parts = cookieEnv.split(';').map(s => s.trim()).filter(Boolean)
-  const nv = parts.shift()!
+  const parts = raw.split(';').map((s) => s.trim()).filter(Boolean)
+  const nv = parts.shift() ?? ''
   const eq = nv.indexOf('=')
-  if (eq < 0) throw new Error('E2E_SESSION_COOKIE must be "name=value[; Attr=...]"')
+  if (eq < 0) throw new Error('E2E_SESSION_COOKIE must be "name=value; Attr=…"')
 
-  const name = nv.slice(0, eq).trim()
+  const name = nv.slice(0, eq)
   const value = nv.slice(eq + 1)
-  const url = new URL(baseUrl)
-
+  
   const attrs = new Map<string, string | true>()
-  for (const a of parts) {
-    const i = a.indexOf('=')
-    if (i === -1) attrs.set(a.toLowerCase(), true)
-    else attrs.set(a.slice(0, i).toLowerCase(), a.slice(i + 1))
+  for (const p of parts) {
+    const i = p.indexOf('=')
+    if (i === -1) attrs.set(p.toLowerCase(), true)
+    else attrs.set(p.slice(0, i).toLowerCase(), p.slice(i + 1))
   }
 
-  const domainAttr = (attrs.get('domain') as string | undefined)?.replace(/^\./, '')
-  const pathAttr = (attrs.get('path') as string | undefined) ?? '/'
-  const sameSiteAttr = String(attrs.get('samesite') ?? 'Lax').toLowerCase() as
-    | 'lax' | 'strict' | 'none'
+  const url = new URL(baseUrl)
+  const domain = (attrs.get('domain') as string | undefined)?.replace(/^\./, '') ?? url.hostname
+  const path = (attrs.get('path') as string | undefined) ?? '/'
 
-  await context.addCookies([{
-    name,
-    value,
-    domain: domainAttr || url.hostname,
-    path: pathAttr,
-    secure: Boolean(attrs.get('secure')),
-    httpOnly: Boolean(attrs.get('httponly')),
-    sameSite: sameSiteAttr === 'none' ? 'None' : sameSiteAttr === 'strict' ? 'Strict' : 'Lax',
-    expires: undefined,
-  }])
+  const samesiteAttr = ((attrs.get('samesite') as string | undefined) ?? 'Lax').toLowerCase()
+  const sameSite: 'Strict' | 'Lax' | 'None' =
+    samesiteAttr === 'strict' ? 'Strict' : samesiteAttr === 'none' ? 'None' : 'Lax'
+
+  await context.addCookies([
+    {
+      name,
+      value,
+      domain,
+      path,
+      httpOnly: attrs.has('httponly'),
+      secure: attrs.has('secure'),
+      sameSite,
+    },
+  ])
 }
 
-/* ------------------------------ Paywall ------------------------------ */
+/* ─────────────────────────── Headers: utilitaires ─────────────────────────── */
 
-export async function isPaywallVisible(
-  page: Page,
-  customSelector?: string,
-  timeoutMs = 500
-): Promise<boolean> {
-  const selectors = [
-    customSelector,
-    '[data-test="paywall"]',
-    '[data-testid="paywall"]',
-    'section.paywall',
-    '#paywall',
-    '.paywall',
-  ].filter(Boolean) as string[]
+/** Lecture d’un header (insensible à la casse), toujours **synchrone**. */
+// --- util headers (une seule version, synchrone) ---
+export function headerValue(res: unknown, name: string): string | null {
+  const lower = name.toLowerCase();
 
-  for (const sel of selectors) {
-    try {
-      const loc = page.locator(sel).first()
-      if ((await loc.count()) > 0 && (await loc.isVisible({ timeout: timeoutMs }))) return true
-    } catch {}
+  // Playwright/APIResponse -> headers(): Record<string,string>
+  if (typeof (res as any)?.headers === 'function') {
+    const h = (res as any).headers() as Record<string, string>;
+    return h[lower] ?? h[name] ?? h[name.toUpperCase()] ?? null;
   }
-
-  const byText = page.locator('body').getByText(
-    /subscribe|upgrade|premium|paywall|sign in|log in|abonnez|abonnement|abonne|premium/i,
-    { exact: false }
-  ).first()
-
-  try {
-    if ((await byText.count()) && (await byText.isVisible({ timeout: timeoutMs }))) return true
-  } catch {}
-
-  return false
+  // fetch Response -> Headers.get(name)
+  if ((res as any)?.headers?.get) {
+    return ((res as any).headers.get(name) as string) ?? null;
+  }
+  // Objet { headers: Record<string,string> }
+  if ((res as any)?.headers && typeof (res as any).headers === 'object') {
+    const rec = (res as any).headers as Record<string, string>;
+    return rec[lower] ?? rec[name] ?? rec[name.toUpperCase()] ?? null;
+  }
+  return null;
 }
 
-/* ----------------------------- Assertions ---------------------------- */
+export function getHeader(res: unknown, name: string): string | null {
+  return headerValue(res, name)
+}
+
+/* ───────────────────────── Assertions & Navigation ────────────────────────── */
 
 export function expectOk(
   res: MaybeResponse,
-  opts?: { allowRedirects?: boolean; allowedStatuses?: number[] }
-): asserts res is Response {
-  const { allowRedirects = false, allowedStatuses } = opts ?? {}
-  const okSet = new Set<number>(
-    allowedStatuses ??
-      (allowRedirects
-        ? [200, 201, 202, 203, 204, 206, 301, 302, 303, 304, 307, 308]
-        : [200, 201, 202, 203, 204, 206, 304])
-  )
-  const status = res ? res.status() : 0
-  if (!res || !okSet.has(status)) throw new Error(`HTTP status invalid: ${status}`)
+  opts?: { allowRedirects?: boolean; allowedStatuses?: number[] },
+): void {
+  if (!res) throw new Error('HTTP response is null')
+  const allowRedirects = opts?.allowRedirects ?? false
+  const defaultStatuses = allowRedirects
+    ? [200, 201, 202, 203, 204, 206, 301, 302, 303, 304, 307, 308]
+    : [200, 201, 202, 203, 204, 206]
+  const okSet = new Set<number>(opts?.allowedStatuses ?? defaultStatuses)
+
+  const status = hasStatusFn(res) ? (res as any).status() : ((res as any).status ?? 0)
+  expect(okSet.has(status)).toBeTruthy()
 }
 
 export async function gotoOk(
   page: Page,
   path: string,
-  opts?: { waitUntil?: 'load' | 'domcontentloaded' | 'networkidle'; allowRedirects?: boolean }
-): Promise<Response> {
+  opts?: { waitUntil?: 'load' | 'domcontentloaded' | 'networkidle'; allowRedirects?: boolean },
+): Promise<PWResponse> {
   const res = await page.goto(path, { waitUntil: opts?.waitUntil ?? 'domcontentloaded' })
   if (!res) throw new Error('Navigation failed: no response')
-  expectOk(res, { allowRedirects: opts?.allowRedirects })
+  expectOk(res, { allowRedirects: opts?.allowRedirects }) // ✅ un seul expectOk
   return res
 }
 
-/* ---- util: header compatible Response | APIResponse ---- */
-type AnyResp = Response | APIResponse
-function getHeader(res: AnyResp, name: string): string | null | undefined {
-  const anyRes = res as any
-  if (typeof anyRes.headerValue === 'function') return anyRes.headerValue(name) // Response
-  const obj = anyRes.headers?.() ?? {}
-  const key = name.toLowerCase()
-  return obj[key] ?? obj[name]
-}
+/* ───────────────────────────── Paywall helpers ────────────────────────────── */
 
-export function expectRedirectToPaywall(res: AnyResp, fromPath = '/pro') {
-  const status = (res as any).status?.() ?? 0
-  const location = getHeader(res, 'location')
-  expect(status, 'expected paywall 307').toBe(307)
-  expect(location, 'expected Location header').toBeTruthy()
+export async function isPaywallVisible(
+  page: Page,
+  customSelector?: string,
+  timeoutMs = 500,
+): Promise<boolean> {
+  const selectors = (
+    [
+      customSelector,
+      "[data-test='paywall']",
+      "[data-testid='paywall']",
+      'section.paywall',
+      '.paywall',
+      '#paywall',
+    ] as (string | undefined)[]
+  ).filter(Boolean) as string[]
 
-  try {
-    const u = new URL(String(location), BASE_URL)
-    expect(u.searchParams.get('paywall')).toBe('1')
-    if (u.searchParams.has('from')) {
-      expect(u.searchParams.get('from')).toBe(fromPath)
+  for (const sel of selectors) {
+    const loc = page.locator(sel).first()
+    try {
+      if ((await loc.count()) > 0 && (await loc.isVisible({ timeout: timeoutMs }))) return true
+    } catch {
+      /* ignore */
     }
-  } catch {
-    // si Location est relatif, la présence du header suffit
   }
 
-  const x = getHeader(res, 'x-paywall')
-  if (x) expect(String(x)).toBe('1')
+  const byText = page
+    .locator('body')
+    .getByText(/subscribe|upgrade|premium|paywall|sign in|log in|abonne(z|ment)|premium/i, {
+      exact: false,
+    })
+    .first()
+
+  try {
+    if ((await byText.count()) && (await byText.isVisible({ timeout: timeoutMs }))) return true
+  } catch {
+    /* ignore */
+  }
+  return false
 }
 
-/* ------------------------------ Utils -------------------------------- */
+// --- assertion paywall ---
+export function expectRedirectToPaywall(res: any, fromPath = '/pro'): void {
+  const status = typeof res?.status === 'function' ? res.status() : (res?.status ?? 0);
+  expect(status).toBe(307);
 
-export const wait = (ms: number) => new Promise(res => setTimeout(res, ms))
+  const loc = headerValue(res, 'location');
+  expect(loc, 'expected Location header').toBeTruthy();
+
+  if (loc) {
+    const u = new URL(loc, BASE_URL); // supporte Location relatif
+    expect(u.pathname).toBe('/paywall');
+    const paywall = u.searchParams.get('paywall');
+    if (paywall !== null) expect(paywall).toBe('1');
+    const from = u.searchParams.get('from');
+    if (from !== null) expect(from).toBe(fromPath);
+  }
+
+  const x = headerValue(res, 'x-paywall');
+  if (x) expect(String(x)).toBe('1');
+}
