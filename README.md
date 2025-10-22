@@ -9,9 +9,9 @@
 - [Démarrer en local](#-démarrer-en-local)
 - [Tests E2E](#-tests-e2e-playwright)
 - [Contrat Paywall](#-contrat-paywall-rappel)
-- [Scripts](#-scripts-utiles)
+- [Scripts utiles](#scripts-utiles)
 - [CI](#-ci)
-- [ESLint ignores](#-eslint-flat-config--ignores)
+- [ESLint ignores](#eslint-ignores-flat-config)
 - [Dépannage](#-dépannage)
 - [Roadmap](#-roadmap-courte)
 
