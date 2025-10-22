@@ -21,7 +21,7 @@
 
 Application **Next.js 15 (App Router)** avec **paywall** protégé par middleware, E2E Playwright et CI GitHub Actions.
 
-- **Stack** : Next.js 15 • Node 20 • pnpm • Playwright  
+- **Stack** : Next.js 15 • Node 20 • pnpm • Playwright • TypeScript  
 - **Déploiement** : Vercel (Hobby, région IAD1, Fluid Compute ON)
 
 ---
