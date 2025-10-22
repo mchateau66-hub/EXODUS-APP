@@ -4,57 +4,40 @@ on:
   pull_request:
   push:
     branches: [ main ]
-  workflow_dispatch: {}
+  workflow_dispatch:
 
 permissions:
   contents: read
 
-# On travaille à la racine du repo (là où se trouve package.json)
-defaults:
-  run:
-    working-directory: .
-
+# pas de working-directory: on travaille à la racine
 jobs:
   lint-typecheck:
     runs-on: ubuntu-latest
     env:
-      # Évite tout prisma generate implicite (si un jour tu ajoutes Prisma)
       PRISMA_SKIP_GENERATE: "1"
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      # Installe pnpm avant setup-node (pour que cache: pnpm fonctionne)
+      - uses: pnpm/action-setup@v2
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: pnpm
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 9
-
-      # Cache pnpm store (accélère l’install)
-      - name: Cache pnpm store
-        uses: actions/cache@v4
-        with:
-          path: ~/.pnpm-store
-          key: ${{ runner.os }}-pnpmstore-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-pnpmstore-
-
-      - name: Install deps (frozen lockfile)
+      - name: Install deps
         run: pnpm install --frozen-lockfile
 
-      # Si tu n’utilises pas Prisma, tu peux supprimer ce bloc.
       - name: Prisma generate (if schema exists)
-        if: ${{ hashFiles('prisma/schema.prisma') != '' || hashFiles('exodus-app/prisma/schema.prisma') != '' }}
+        if: ${{ hashFiles('prisma/schema.prisma') != '' }}
         run: pnpm exec prisma generate
 
       - name: ESLint
-        run: pnpm run lint
+        run: pnpm exec eslint --max-warnings=0 "src/**/*.{ts,tsx,js,jsx}" "playwright.config.ts"
 
       - name: Typecheck
-        run: pnpm run typecheck
+        run: pnpm exec tsc -p tsconfig.json --noEmit
