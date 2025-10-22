@@ -3,35 +3,35 @@
   "version": "0.1.0",
   "private": true,
   "packageManager": "pnpm@9.15.9",
-  "engines": {
-    "node": ">=20.0.0"
+  "engines": { "node": ">=20.0.0" },
+
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+
+    "lint": "eslint . --max-warnings=0",
+    "typecheck": "tsc --noEmit",
+
+    "test:e2e": "playwright test",
+    "e2e": "playwright test",
+    "e2e:ui": "playwright test --ui",
+    "e2e:html": "playwright test --reporter=html",
+    "e2e:report": "playwright show-report",
+    "e2e:ci": "playwright test -c ./playwright.config.ts --reporter=html && playwright show-report --port 0",
+
+    "ci:lint-typecheck": "pnpm lint && pnpm typecheck",
+
+    "postinstall": "node -e \"const { existsSync } = require('fs'); const { execSync } = require('child_process'); const paths=['./prisma/schema.prisma','./exodus-app/prisma/schema.prisma']; if (paths.some(p=>existsSync(p))) execSync('pnpm exec prisma generate',{stdio:'inherit'})\""
   },
-  
-"scripts": {
-  "dev": "next dev",
-  "build": "next build",
-  "start": "next start",
 
-  "lint": "eslint . --max-warnings=0",
-  "typecheck": "tsc --noEmit",
-
-  "test:e2e": "playwright test",
-  "e2e": "playwright test",
-  "e2e:ui": "playwright test --ui",
-  "e2e:html": "playwright test --reporter=html",
-  "e2e:report": "playwright show-report",
-  "e2e:ci": "playwright test -c ./playwright.config.ts --reporter=html && playwright show-report --port 0",
-
-  "postinstall": "node -e \"const { existsSync } = require('fs'); const { execSync } = require('child_process'); const p1='./prisma/schema.prisma'; if (existsSync(p1)) { console.log('› prisma generate'); execSync('pnpm prisma generate', { stdio: 'inherit' }); }\"",
-
-  "ci:lint-typecheck": "pnpm lint && pnpm typecheck"
-}
   "dependencies": {
     "@prisma/client": "^6.17.1",
     "next": "15.5.5",
     "react": "19.1.0",
     "react-dom": "19.1.0"
   },
+
   "devDependencies": {
     "@eslint/eslintrc": "^3",
     "@playwright/test": "^1.56.0",
@@ -51,7 +51,7 @@
     "playwright": "^1.56.0",
     "postcss": "^8.5.6",
     "prisma": "^6.17.1",
-    "tailwindcss": "^4.1.14",
+    "tailwindcss": "^4.1.4",
     "typescript": "^5"
   }
 }
