@@ -1,29 +1,24 @@
-name: CI — Lint & Typecheck
+name: CI – Lint & Typecheck
 
 on:
   pull_request:
   push:
     branches: [ main ]
-  workflow_dispatch:
+  workflow_dispatch: {}
 
 permissions:
   contents: read
 
-# On travaille dans le sous-dossier de l’app
+# On travaille à la racine du repo (là où se trouve package.json)
 defaults:
   run:
-    working-directory: exodus-app
-
-# Évite les doublons sur une même branche
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+    working-directory: .
 
 jobs:
   lint-typecheck:
     runs-on: ubuntu-latest
-    # Désactive les generate Prisma implicites (postinstall, etc.)
     env:
+      # Évite tout prisma generate implicite (si un jour tu ajoutes Prisma)
       PRISMA_SKIP_GENERATE: "1"
 
     steps:
@@ -34,42 +29,32 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: pnpm
 
-      - name: Enable Corepack & pnpm
-        run: |
-          corepack enable
-          corepack prepare pnpm@^9 --activate
-          pnpm -v
-          node -v
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
 
+      # Cache pnpm store (accélère l’install)
       - name: Cache pnpm store
         uses: actions/cache@v4
         with:
           path: ~/.pnpm-store
-          # IMPORTANT : on hashe le lockfile du sous-dossier
-          key: ${{ runner.os }}-pnpmstore-${{ hashFiles('exodus-app/pnpm-lock.yaml') }}
+          key: ${{ runner.os }}-pnpmstore-${{ hashFiles('pnpm-lock.yaml') }}
           restore-keys: |
             ${{ runner.os }}-pnpmstore-
 
-      # Plan B : pas de --frozen-lockfile pour éviter les faux négatifs en CI
-      - name: Install deps (no frozen lockfile)
-        run: pnpm install --no-frozen-lockfile
+      - name: Install deps (frozen lockfile)
+        run: pnpm install --frozen-lockfile
 
-      # (Optionnel) Prisma generate uniquement si un schema existe
+      # Si tu n’utilises pas Prisma, tu peux supprimer ce bloc.
       - name: Prisma generate (if schema exists)
         if: ${{ hashFiles('prisma/schema.prisma') != '' || hashFiles('exodus-app/prisma/schema.prisma') != '' }}
-        env:
-          PRISMA_SKIP_GENERATE: "0"       # on réactive Prisma uniquement ici
-          DATABASE_URL: "file:./prisma/ci.db"
         run: pnpm exec prisma generate
 
       - name: ESLint
-        run: >
-          pnpm exec eslint --max-warnings=0
-          --no-error-on-unmatched-pattern
-          "src/**/*.{ts,tsx,js,jsx}"
-          "e2e/**/*.{ts,tsx,js,jsx}"
-          "playwright.config.ts"
+        run: pnpm run lint
 
       - name: Typecheck
-        run: pnpm exec tsc -p tsconfig.json --noEmit
+        run: pnpm run typecheck
