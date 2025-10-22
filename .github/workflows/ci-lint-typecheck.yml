@@ -1,23 +1,29 @@
-name: CI – Lint & Typecheck
+name: CI — Lint & Typecheck
 
 on:
   pull_request:
   push:
     branches: [ main ]
-  workflow_dispatch: {}
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+# On travaille dans le sous-dossier de l’app
 defaults:
   run:
-    working-directory: exodus-app   # on travaille dans le sous-dossier
+    working-directory: exodus-app
+
+# Évite les doublons sur une même branche
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   lint-typecheck:
     runs-on: ubuntu-latest
+    # Désactive les generate Prisma implicites (postinstall, etc.)
     env:
-      # Désactive tout prisma generate implicite (postinstall, etc.)
       PRISMA_SKIP_GENERATE: "1"
 
     steps:
@@ -40,27 +46,30 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.pnpm-store
-          # IMPORTANT : on hash le lockfile du sous-dossier
+          # IMPORTANT : on hashe le lockfile du sous-dossier
           key: ${{ runner.os }}-pnpmstore-${{ hashFiles('exodus-app/pnpm-lock.yaml') }}
           restore-keys: |
             ${{ runner.os }}-pnpmstore-
 
-      # Plan B pour débloquer la CI (pas de vérification stricte du lockfile)
+      # Plan B : pas de --frozen-lockfile pour éviter les faux négatifs en CI
       - name: Install deps (no frozen lockfile)
         run: pnpm install --no-frozen-lockfile
 
-      # Ne lance Prisma que si un schema existe (racine OU exodus-app/)
+      # (Optionnel) Prisma generate uniquement si un schema existe
       - name: Prisma generate (if schema exists)
         if: ${{ hashFiles('prisma/schema.prisma') != '' || hashFiles('exodus-app/prisma/schema.prisma') != '' }}
         env:
-          PRISMA_SKIP_GENERATE: "0"        # on réactive seulement ici
+          PRISMA_SKIP_GENERATE: "0"       # on réactive Prisma uniquement ici
           DATABASE_URL: "file:./prisma/ci.db"
         run: pnpm exec prisma generate
 
-      - name: ESLint (exodus-app only)
+      - name: ESLint
         run: >
-          pnpm exec eslint --max-warnings=0 --no-error-on-unmatched-pattern
-          "src/**/*.{ts,tsx,js,jsx}" "e2e/**/*.{ts,tsx,js,jsx}" "playwright.config.ts"
+          pnpm exec eslint --max-warnings=0
+          --no-error-on-unmatched-pattern
+          "src/**/*.{ts,tsx,js,jsx}"
+          "e2e/**/*.{ts,tsx,js,jsx}"
+          "playwright.config.ts"
 
       - name: Typecheck
         run: pnpm exec tsc -p tsconfig.json --noEmit
