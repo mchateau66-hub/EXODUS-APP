@@ -6,18 +6,26 @@
   "engines": {
     "node": ">=20.0.0"
   },
-  "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
-    "lint": "eslint .",
-    "postinstall": "node -e \"const { existsSync } = require('fs'); const { execSync } = require('child_process'); const p1='./prisma/schema.prisma'; const p2='schema.prisma'; if (existsSync(p1) || existsSync(p2)) { console.log('✔ prisma schema found, generating...'); execSync('pnpm prisma generate', { stdio: 'inherit' }); } else { console.log('ℹ no prisma schema found, skipping prisma generate'); }\"",
-    "e2e": "playwright test",
-    "e2e:ui": "playwright test --ui",
-    "e2e:html": "playwright test --reporter=html",
-    "e2e:report": "playwright show-report",
-    "e2e:ci": "playwright test -c ./playwright.config.ts --reporter=html && playwright show-report --port 0"
-  },
+  
+"scripts": {
+  "dev": "next dev",
+  "build": "next build",
+  "start": "next start",
+
+  "lint": "eslint . --max-warnings=0",
+  "typecheck": "tsc --noEmit",
+
+  "test:e2e": "playwright test",
+  "e2e": "playwright test",
+  "e2e:ui": "playwright test --ui",
+  "e2e:html": "playwright test --reporter=html",
+  "e2e:report": "playwright show-report",
+  "e2e:ci": "playwright test -c ./playwright.config.ts --reporter=html && playwright show-report --port 0",
+
+  "postinstall": "node -e \"const { existsSync } = require('fs'); const { execSync } = require('child_process'); const p1='./prisma/schema.prisma'; if (existsSync(p1)) { console.log('› prisma generate'); execSync('pnpm prisma generate', { stdio: 'inherit' }); }\"",
+
+  "ci:lint-typecheck": "pnpm lint && pnpm typecheck"
+}
   "dependencies": {
     "@prisma/client": "^6.17.1",
     "next": "15.5.5",
