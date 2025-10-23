@@ -4,7 +4,12 @@ on:
   pull_request:
   push:
     branches: [ main ]
-  workflow_dispatch: {}
+  workflow_dispatch:
+
+# ✅ Évite les runs concurrents inutiles sur la même ref
+concurrency:
+  group: ci-lint-typecheck-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -13,27 +18,39 @@ jobs:
   lint-typecheck:
     runs-on: ubuntu-latest
 
+    # Bloque les generate implicites pendant l'install
     env:
-      # Empêche les "generate" implicites pendant l'install
       PRISMA_SKIP_GENERATE: "1"
 
     steps:
       - uses: actions/checkout@v4
 
-      # pnpm d'abord (pour que Node @setup puisse cacher pnpm)
-      - uses: pnpm/action-setup@v2
+      # PNPM d'abord (pour que setup-node puisse cacher pnpm)
+      - name: Setup PNPM 9.15.9
+        uses: pnpm/action-setup@v2
         with:
-          version: 9
+          version: 9.15.9
 
-      - uses: actions/setup-node@v4
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      # ✅ Cache dédié du store PNPM (booste les installs)
+      - name: PNPM store cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.pnpm-store
+          key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-store-${{ runner.os }}-
 
       - name: Install deps (lockfile strict)
         run: pnpm install --frozen-lockfile
 
-      # Optionnel : si un schéma Prisma existe, on génère les types
+      # Optionnel/auto : si un schéma Prisma existe, on génère les types
       - name: Prisma generate (if schema exists)
         if: ${{ hashFiles('prisma/schema.prisma') != '' }}
         env:
