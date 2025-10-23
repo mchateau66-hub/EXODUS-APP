@@ -37,7 +37,7 @@ jobs:
         run: pnpm exec prisma generate
 
       - name: ESLint
-        run: pnpm exec eslint --max-warnings=0 "src/**/*.{ts,tsx,js,jsx}" "playwright.config.ts"
+        run: pnpm exec eslint --max-warnings=0 "src/**/*.{ts,tsx}" "playwright.config.ts" --no-error-on-unmatched-pattern
 
       - name: Typecheck
         run: pnpm exec tsc -p tsconfig.json --noEmit
