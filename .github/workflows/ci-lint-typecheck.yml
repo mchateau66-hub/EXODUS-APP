@@ -1,10 +1,10 @@
-name: CI — Lint & Typecheck
+name: CI – Lint & Typecheck
 
 on:
   pull_request:
   push:
     branches: [ main ]
-  workflow_dispatch:
+  workflow_dispatch: {}
 
 permissions:
   contents: read
@@ -12,32 +12,36 @@ permissions:
 jobs:
   lint-typecheck:
     runs-on: ubuntu-latest
+
     env:
+      # Empêche les "generate" implicites pendant l'install
       PRISMA_SKIP_GENERATE: "1"
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v3
+      # pnpm d'abord (pour que Node @setup puisse cacher pnpm)
+      - uses: pnpm/action-setup@v2
         with:
           version: 9
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: pnpm
 
-      - name: Install deps (frozen lockfile)
+      - name: Install deps (lockfile strict)
         run: pnpm install --frozen-lockfile
 
-      # - name: Prisma generate (if schema exists)
-      #   if: ${{ hashFiles('prisma/schema.prisma') != '' || hashFiles('exodus-app/prisma/schema.prisma') != '' }}
-      #   run: pnpm exec prisma generate
+      # Optionnel : si un schéma Prisma existe, on génère les types
+      - name: Prisma generate (if schema exists)
+        if: ${{ hashFiles('prisma/schema.prisma') != '' }}
+        env:
+          PRISMA_SKIP_GENERATE: "0"
+          DATABASE_URL: "file:./prisma/ci.db"
+        run: pnpm exec prisma generate
 
-      - name: ESLint (src + config E2E)
+      - name: ESLint (fail on warnings)
         run: pnpm exec eslint --max-warnings=0 "src/**/*.{ts,tsx,js,jsx}" "playwright.config.ts"
 
       - name: Typecheck (no emit)
