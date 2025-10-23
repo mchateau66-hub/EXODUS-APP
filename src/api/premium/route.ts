@@ -1,22 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-type ProPayload = { email: string };
+type PremiumOk = { ok: true };
 
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === 'object' && v !== null;
-}
-function isProPayload(v: unknown): v is ProPayload {
-  return isRecord(v) && typeof v.email === 'string';
-}
+export async function GET(
+  req: NextRequest,
+): Promise<NextResponse<PremiumOk>> {
+  // Exemple d'accès aux query params sans any :
+  const url = new URL(req.url);
+  const from = url.searchParams.get('from') ?? undefined; // string | undefined
 
-export async function POST(req: NextRequest) {
-  const bodyUnknown = await req.json().catch(() => null) as unknown;
+  // ... ta logique ici (aucun any)
 
-  if (!isProPayload(bodyUnknown)) {
-    return NextResponse.json({ error: 'bad payload' }, { status: 400 });
-  }
-
-  const { email } = bodyUnknown;
-  // … ton traitement …
-  return NextResponse.json({ ok: true, email });
+  return NextResponse.json({ ok: true });
 }
