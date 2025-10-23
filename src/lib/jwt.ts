@@ -1,5 +1,13 @@
-import jwt, { SignOptions } from 'jsonwebtoken';
+// src/lib/jwt.ts
+import { sign, type SignOptions } from 'jsonwebtoken';
 
-export function signJwt(payload: Record<string, unknown>, opts?: SignOptions) {
-  return jwt.sign(payload, process.env.JWT_SECRET!, { ...(opts ?? {}), algorithm: 'HS256' });
+type JwtPayload = Record<string, unknown>;
+
+export function signJwt(payload: JwtPayload, opts?: SignOptions): string {
+  const secret = process.env.JWT_SECRET;
+  if (!secret) {
+    throw new Error('JWT_SECRET is not set');
+  }
+
+  return sign(payload, secret, { ...(opts ?? {}) });
 }
