@@ -11,10 +11,14 @@ concurrency:
 permissions:
   contents: read
 
-# Variables globales au job (evitent des 500 si ton code lit ces envs)
+# Variables job (évite les 500 si ton code lit ces envs)
 env:
-  E2E_BASE_URL: ${{ vars.E2E_BASE_URL }}     # optionnel (URL staging)
+  # URL distante/staging optionnelle. Si vide, ton config Playwright
+  # peut démarrer le webServer local.
+  E2E_BASE_URL: ${{ vars.E2E_BASE_URL || '' }}
+
   NEXT_TELEMETRY_DISABLED: "1"
+  # Secrets "dummy" sûrs pour la CI (remplace par secrets.* si tu as branché)
   ENTITLEMENTS_JWT_SECRET: ci_secret
   SAT_JWT_SECRET: ci_secret
   NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: pk_test_dummy
@@ -24,29 +28,30 @@ jobs:
   e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 45
-
     steps:
       - uses: actions/checkout@v4
 
+      # PNPM 9.15.9
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.9
+
+      # Node 20 + cache PNPM
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: pnpm
 
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 9.0.0
-
       - name: Install deps
         run: pnpm install --frozen-lockfile
 
-      # Prisma: uniquement si un schéma existe
+      # Prisma (facultatif) → ne s’exécute que si un schéma existe
       - name: Prisma generate (if schema exists)
         if: ${{ hashFiles('prisma/schema.prisma') != '' }}
         env:
           PRISMA_SKIP_GENERATE: "0"
           DATABASE_URL: "file:./prisma/ci.db"
-        run: pnpm prisma:generate
+        run: pnpm exec prisma generate
 
       - name: Build Next.js
         run: pnpm build
@@ -54,8 +59,8 @@ jobs:
       - name: Install Playwright (browsers & deps)
         run: pnpm exec playwright install --with-deps
 
-      # Si E2E_BASE_URL est défini, Playwright n'ouvre pas de serveur (webServer désactivé par config)
-      # Sinon, il démarre 'pnpm start' via webServer (config).
+      # Si E2E_BASE_URL est défini, Playwright n’ouvre pas de serveur (config).
+      # Sinon, il démarre via `webServer` défini dans playwright.config.ts.
       - name: Run E2E tests
         run: pnpm e2e
 
