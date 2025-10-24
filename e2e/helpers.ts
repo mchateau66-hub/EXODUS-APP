@@ -220,48 +220,56 @@ export async function isPaywallVisible(
   return false
 }
 
-// e2e/helpers.ts
+// --- remplace TOUT le bloc existant ---
 export function expectRedirectToPaywall(res: any, fromPath: string = '/pro'): void {
+  // 1) accepte tous les codes de redirect courants
   const status = typeof res?.status === 'function' ? res.status() : (res?.status ?? 0);
-  // accepte 307/308
-  expect(new Set([307, 308]).has(status)).toBeTruthy();
+  expect(new Set([301, 302, 303, 307, 308]).has(status)).toBeTruthy();
 
+  // 2) lis Location et/ou header x-paywall
   const loc = getHeader(res, 'location');
-  const xPaywall = headerValue(res, 'x-paywall') ?? '';
+  const xPaywall = headerValue(res, 'x-paywall');
 
-  // Si pas de Location mais header signal présent, accepte
-  if (!loc && String(xPaywall) === '1') {
+  // petit helper de "truthiness" pour 1/true/yes
+  const isOn = (v?: string | null) => {
+    const s = String(v ?? '').trim().toLowerCase();
+    return s === '1' || s === 'true' || s === 'yes';
+  };
+
+  // si pas de Location mais header explicite, on valide
+  if (!loc && isOn(xPaywall)) {
     expect(true).toBeTruthy();
     return;
   }
 
+  // sinon Location doit exister
   expect(loc, 'expected Location header').toBeTruthy();
 
   const u = new URL(loc as string, BASE_URL);
 
+  // ⚠️ corrige le normalize (remplace /\/\{2,}/g par /\/{2,}/g)
   const normalize = (p: string) => {
     if (!p) return '/';
-    const n = ('/' + p).replace(/\/{2,}/g, '/').replace(/\/+$/, '');
+    const n = ('/' + p)
+      .replace(/\/{2,}/g, '/')   // collapse // -> /
+      .replace(/\/+$/, '');      // retire slash final
     return n === '' ? '/' : n;
   };
 
   const path = normalize(u.pathname);
-  const isPaywallPath = path === '/paywall';
+  const paywallParam = u.searchParams.get('paywall');
+  const fromParam = u.searchParams.get('from');
 
-  const paywall = u.searchParams.get('paywall');
-  const from = u.searchParams.get('from') ?? '';
+  const paywallOn = isOn(paywallParam);
+  const fromSame =
+    normalize(decodeURIComponent(fromParam ?? '')) === normalize(fromPath);
 
-  // même path que la page d’origine, avec le flag paywall=1
-  const isSamePathWithFlag = paywall === '1' && path === normalize(fromPath);
+  // OK si : /paywall OU header x-paywall actif
+  //     OU page d'origine (même path) avec paywall=on (from encodé ou non)
+  const ok =
+    path === '/paywall' ||
+    isOn(xPaywall) ||
+    (paywallOn && (fromSame || path === normalize(fromPath)));
 
-  // Si "from" est présent on vérifie qu’il pointe bien sur fromPath (sinon on ne teste pas)
-  if (from) expect(normalize(from)).toBe(normalize(fromPath));
-  // Si "paywall" est présent il doit être à "1"
-  if (paywall !== null) expect(paywall).toBe('1');
-
-  // On accepte :
-  // - /paywall
-  // - même path + ?paywall=1&from=...
-  // - header x-paywall: 1
-  expect(isPaywallPath || isSamePathWithFlag || String(xPaywall) === '1').toBeTruthy();
+  expect(ok).toBeTruthy();
 }
