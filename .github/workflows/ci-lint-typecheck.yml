@@ -4,26 +4,27 @@ on:
   pull_request:
   push:
     branches: [ main ]
-  workflow_dispatch:
+
+concurrency:
+  group: ci-lint-typecheck-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
 
-# pas de working-directory: on travaille à la racine
 jobs:
   lint-typecheck:
     runs-on: ubuntu-latest
-    env:
-      PRISMA_SKIP_GENERATE: "1"
 
     steps:
       - uses: actions/checkout@v4
 
-      # Installe pnpm avant setup-node (pour que cache: pnpm fonctionne)
-      - uses: pnpm/action-setup@v2
+      # 1) Installer PNPM d'abord (pour que setup-node puisse faire cache: pnpm)
+      - uses: pnpm/action-setup@v4
         with:
-          version: 9
+          version: 9.0.0
 
+      # 2) Node 20 + cache PNPM (maintenant pnpm est dispo)
       - uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -34,10 +35,13 @@ jobs:
 
       - name: Prisma generate (if schema exists)
         if: ${{ hashFiles('prisma/schema.prisma') != '' }}
-        run: pnpm exec prisma generate
+        env:
+          PRISMA_SKIP_GENERATE: "0"
+          DATABASE_URL: "file:./prisma/ci.db"
+        run: pnpm prisma:generate
 
       - name: ESLint
-        run: pnpm exec eslint --max-warnings=0 "src/**/*.{ts,tsx}" "playwright.config.ts" --no-error-on-unmatched-pattern
+        run: pnpm lint
 
       - name: Typecheck
-        run: pnpm exec tsc -p tsconfig.json --noEmit
+        run: pnpm typecheck
