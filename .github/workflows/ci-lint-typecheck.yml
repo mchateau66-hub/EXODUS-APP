@@ -4,9 +4,7 @@ on:
   pull_request:
   push:
     branches: [ main ]
-  workflow_dispatch:
 
-# ✅ Évite les runs concurrents inutiles sur la même ref
 concurrency:
   group: ci-lint-typecheck-${{ github.ref }}
   cancel-in-progress: true
@@ -18,48 +16,34 @@ jobs:
   lint-typecheck:
     runs-on: ubuntu-latest
 
-    # Bloque les generate implicites pendant l'install
-    env:
-      PRISMA_SKIP_GENERATE: "1"
-
     steps:
       - uses: actions/checkout@v4
 
-      # PNPM d'abord (pour que setup-node puisse cacher pnpm)
-      - name: Setup PNPM 9.15.9
-        uses: pnpm/action-setup@v2
-        with:
-          version: 9.15.9
-
-      - name: Setup Node 20
-        uses: actions/setup-node@v4
+      # Node 20 + cache PNPM
+      - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: pnpm
-          cache-dependency-path: pnpm-lock.yaml
 
-      # ✅ Cache dédié du store PNPM (booste les installs)
-      - name: PNPM store cache
-        uses: actions/cache@v4
+      # PNPM 9.x
+      - uses: pnpm/action-setup@v4
         with:
-          path: ~/.pnpm-store
-          key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: |
-            pnpm-store-${{ runner.os }}-
+          version: 9.0.0
 
-      - name: Install deps (lockfile strict)
+      # Install figé (lockfile requis)
+      - name: Install deps
         run: pnpm install --frozen-lockfile
 
-      # Optionnel/auto : si un schéma Prisma existe, on génère les types
+      # Optionnel : génère Prisma uniquement si un schéma existe
       - name: Prisma generate (if schema exists)
         if: ${{ hashFiles('prisma/schema.prisma') != '' }}
         env:
           PRISMA_SKIP_GENERATE: "0"
           DATABASE_URL: "file:./prisma/ci.db"
-        run: pnpm exec prisma generate
+        run: pnpm prisma:generate
 
-      - name: ESLint (fail on warnings)
-        run: pnpm exec eslint --max-warnings=0 "src/**/*.{ts,tsx,js,jsx}" "playwright.config.ts"
+      - name: ESLint
+        run: pnpm lint
 
-      - name: Typecheck (no emit)
-        run: pnpm exec tsc -p tsconfig.json --noEmit
+      - name: Typecheck
+        run: pnpm typecheck

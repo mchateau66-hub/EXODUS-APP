@@ -11,10 +11,10 @@ concurrency:
 permissions:
   contents: read
 
+# Si tu as une URL de staging, définis-la dans Actions → Variables (E2E_BASE_URL)
 env:
-  # Renseigne vars.E2E_BASE_URL dans Actions → Variables si tu as un staging (ex: https://staging.example.com)
   E2E_BASE_URL: ${{ vars.E2E_BASE_URL }}
-  E2E_PORT: "3000"
+  NEXT_TELEMETRY_DISABLED: "1"
 
 jobs:
   e2e:
@@ -24,54 +24,38 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup PNPM 9.15.9
-        uses: pnpm/action-setup@v2
-        with:
-          version: 9.15.9
-
-      - name: Setup Node 20
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: pnpm
-          cache-dependency-path: pnpm-lock.yaml
 
-      - name: PNPM store cache
-        uses: actions/cache@v4
+      - uses: pnpm/action-setup@v4
         with:
-          path: ~/.pnpm-store
-          key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: |
-            pnpm-store-${{ runner.os }}-
+          version: 9.0.0
 
-      - name: Install deps (frozen lockfile)
+      - name: Install deps
         run: pnpm install --frozen-lockfile
+
+      # Optionnel : génère Prisma uniquement si un schéma existe
+      - name: Prisma generate (if schema exists)
+        if: ${{ hashFiles('prisma/schema.prisma') != '' }}
+        env:
+          PRISMA_SKIP_GENERATE: "0"
+          DATABASE_URL: "file:./prisma/ci.db"
+        run: pnpm prisma:generate
+
+      - name: Build Next.js
+        run: pnpm build
 
       - name: Install Playwright (browsers & deps)
         run: pnpm exec playwright install --with-deps
 
-      # ▶️ Fallback LOCAL si aucune URL fournie
-      - name: Start local Next server (fallback)
-        if: env.E2E_BASE_URL == ''
-        env:
-          NEXT_TELEMETRY_DISABLED: "1"
-          PORT: ${{ env.E2E_PORT }}
-          JWT_SECRET: "ci_dummy_secret"   # requis par ton helper JWT en build/start
-        run: |
-          echo "No E2E_BASE_URL found → running locally on http://localhost:${PORT}"
-          pnpm build
-          pnpm start -- -p $PORT & npx --yes wait-on http://localhost:${PORT}
-          echo "E2E_BASE_URL=http://localhost:${PORT}" >> $GITHUB_ENV
+      # Si E2E_BASE_URL est défini, le webServer Playwright est désactivé (config).
+      # Sinon, Playwright démarre 'pnpm start' (webServer) automatiquement.
+      - name: Run E2E tests
+        run: pnpm e2e
 
-      # ▶️ Mode REMOTE si URL fournie
-      - name: Use remote base URL
-        if: env.E2E_BASE_URL != ''
-        run: echo "E2E_BASE_URL=${E2E_BASE_URL}" >> $GITHUB_ENV
-
-      - name: Run Playwright tests
-        run: pnpm exec playwright test -c ./playwright.config.ts
-
-      - name: Upload Playwright report
+      - name: Upload Playwright HTML report
         if: always()
         uses: actions/upload-artifact@v4
         with:
