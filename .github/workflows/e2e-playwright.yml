@@ -11,10 +11,14 @@ concurrency:
 permissions:
   contents: read
 
-# Si tu as une URL de staging, définis-la dans Actions → Variables (E2E_BASE_URL)
+# Variables globales au job (evitent des 500 si ton code lit ces envs)
 env:
-  E2E_BASE_URL: ${{ vars.E2E_BASE_URL }}
+  E2E_BASE_URL: ${{ vars.E2E_BASE_URL }}     # optionnel (URL staging)
   NEXT_TELEMETRY_DISABLED: "1"
+  ENTITLEMENTS_JWT_SECRET: ci_secret
+  SAT_JWT_SECRET: ci_secret
+  NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: pk_test_dummy
+  STRIPE_SECRET_KEY: sk_test_dummy
 
 jobs:
   e2e:
@@ -36,7 +40,7 @@ jobs:
       - name: Install deps
         run: pnpm install --frozen-lockfile
 
-      # Optionnel : génère Prisma uniquement si un schéma existe
+      # Prisma: uniquement si un schéma existe
       - name: Prisma generate (if schema exists)
         if: ${{ hashFiles('prisma/schema.prisma') != '' }}
         env:
@@ -50,12 +54,12 @@ jobs:
       - name: Install Playwright (browsers & deps)
         run: pnpm exec playwright install --with-deps
 
-      # Si E2E_BASE_URL est défini, le webServer Playwright est désactivé (config).
-      # Sinon, Playwright démarre 'pnpm start' (webServer) automatiquement.
+      # Si E2E_BASE_URL est défini, Playwright n'ouvre pas de serveur (webServer désactivé par config)
+      # Sinon, il démarre 'pnpm start' via webServer (config).
       - name: Run E2E tests
         run: pnpm e2e
 
-      - name: Upload Playwright HTML report
+      - name: Upload Playwright report
         if: always()
         uses: actions/upload-artifact@v4
         with:

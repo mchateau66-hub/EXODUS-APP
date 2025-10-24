@@ -34,7 +34,7 @@ jobs:
       - name: Install deps
         run: pnpm install --frozen-lockfile
 
-      # Optionnel : génère Prisma uniquement si un schéma existe
+      # Prisma: uniquement si un schéma existe
       - name: Prisma generate (if schema exists)
         if: ${{ hashFiles('prisma/schema.prisma') != '' }}
         env:
