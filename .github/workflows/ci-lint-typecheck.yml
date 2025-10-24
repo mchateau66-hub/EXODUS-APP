@@ -18,17 +18,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: pnpm
-
+      # 1) Installer pnpm AVANT setup-node (sinon cache pnpm casse)
       - name: Setup pnpm (match packageManager)
         uses: pnpm/action-setup@v4
         with:
           version: 9.15.9
           run_install: false
+
+      # 2) Node + cache pnpm (maintenant pnpm existe)
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
 
       - name: Install deps
         run: pnpm install --frozen-lockfile
