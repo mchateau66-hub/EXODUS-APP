@@ -2,71 +2,74 @@ name: E2E Playwright
 
 on:
   pull_request:
-    branches: [ main ]
-  push:
-    branches: [ main ]
-  workflow_dispatch: {}
+  workflow_dispatch:
 
-permissions:
-  contents: read
-
-# évite de faire tourner plusieurs E2E en parallèle sur la même branche
 concurrency:
   group: e2e-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
+env:
+  # Optionnel : définis E2E_BASE_URL dans Actions → Variables si tu testes un staging
+  E2E_BASE_URL: ${{ vars.E2E_BASE_URL }}
+  NEXT_TELEMETRY_DISABLED: "1"
+  # Secrets “dummy” sûrs pour éviter des 500 en build/test si ton code les lit
+  ENTITLEMENTS_JWT_SECRET: ci_secret
+  SAT_JWT_SECRET: ci_secret
+  NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: pk_test_dummy
+  STRIPE_SECRET_KEY: sk_test_dummy
+
 jobs:
   e2e:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-
-    env:
-      # Valeurs surchargables depuis "Repository → Settings → Variables → Actions"
-      E2E_BASE_URL: ${{ vars.E2E_BASE_URL || 'http://127.0.0.1:3000' }}
-      E2E_SMOKE_PATH: ${{ vars.E2E_SMOKE_PATH || '/api/health' }}
-      E2E_PORT:      ${{ vars.E2E_PORT      || '3000' }}
-      # Heuristique visuelle désactivée par défaut en CI
-      E2E_CHECK_VISUAL: ${{ vars.E2E_CHECK_VISUAL || '0' }}
+    timeout-minutes: 45
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      # Node 20 + cache pnpm
+      - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: pnpm
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v2
+      # PNPM 9 (respecte packageManager / lockfile)
+      - uses: pnpm/action-setup@v4
         with:
-          version: 9
-          run_install: false
+          version: 9.0.0
 
-      - name: Install deps (frozen lockfile)
+      # Install figé
+      - name: Install deps
         run: pnpm install --frozen-lockfile
 
-      - name: Install Playwright browsers
+      # Prisma (seulement si un schéma existe)
+      - name: Prisma generate (if schema exists)
+        if: ${{ hashFiles('prisma/schema.prisma') != '' }}
+        env:
+          PRISMA_SKIP_GENERATE: "0"
+          DATABASE_URL: "file:./prisma/ci.db"
+        run: pnpm prisma:generate
+
+      # Build Next (prod)
+      - name: Build Next.js
+        run: pnpm build
+
+      # Browsers Playwright (cacheable sur runners GitHub)
+      - name: Install Playwright (browsers & deps)
         run: pnpm exec playwright install --with-deps
 
+      # Lance les tests :
+      # - si E2E_BASE_URL est défini ⇒ Playwright n'ouvre PAS de serveur (config)
+      # - sinon ⇒ Playwright démarre 'pnpm start' via webServer (config)
       - name: Run E2E tests
-        run: pnpm exec playwright test -c ./playwright.config.ts
+        run: pnpm e2e
 
-      - name: Upload HTML report
+      # Rapport HTML en artefact (toujours)
+      - name: Upload Playwright report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: playwright-report
           path: playwright-report
-          if-no-files-found: ignore
-          retention-days: 7
-
-      - name: Upload traces (on failure)
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: playwright-traces
-          path: test-results
-          if-no-files-found: ignore
-          retention-days: 7
