@@ -1,4 +1,4 @@
-name: CI – Lint & Typecheck
+name: CI — Lint & Typecheck
 
 on:
   pull_request:
@@ -15,28 +15,30 @@ permissions:
 jobs:
   lint-typecheck:
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
 
-      # 1) PNPM d'abord (sans préciser de version → lit package.json: "packageManager")
-      - uses: pnpm/action-setup@v4
-
-      # 2) Node 20 + cache pnpm
-      - uses: actions/setup-node@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: pnpm
+
+      - name: Setup pnpm (match packageManager)
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.9
+          run_install: false
 
       - name: Install deps
         run: pnpm install --frozen-lockfile
 
       - name: Prisma generate (if schema exists)
-        if: ${{ hashFiles('prisma/schema.prisma') != '' }}
+        if: ${{ hashFiles('prisma/schema.prisma') != '' || hashFiles('exodus-app/prisma/schema.prisma') != '' }}
         env:
           PRISMA_SKIP_GENERATE: "0"
           DATABASE_URL: "file:./prisma/ci.db"
-        run: pnpm prisma:generate
+        run: pnpm prisma generate
 
       - name: ESLint
         run: pnpm lint
