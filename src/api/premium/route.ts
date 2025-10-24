@@ -1,14 +1,12 @@
-type PremiumRequest = { email: string };
+import { NextRequest, NextResponse } from 'next/server';
 
-function isPremiumRequest(x: unknown): x is PremiumRequest {
-  if (typeof x !== 'object' || x === null) return false;
-  const r = x as Record<string, unknown>;
-  return typeof r.email === 'string';
-}
+type PremiumOk = { ok: true };
 
-// ...
-const body: unknown = await req.json();
-if (!isPremiumRequest(body)) {
-  return NextResponse.json({ error: 'bad payload' }, { status: 400 });
+export async function GET(_req: NextRequest): Promise<NextResponse<PremiumOk>> {
+  // const url = new URL(_req.url);
+  // const from = url.searchParams.get('from'); // <-- supprimer si non utilisé
+
+  // ... ta logique
+
+  return NextResponse.json({ ok: true });
 }
-// body.email est typé ici

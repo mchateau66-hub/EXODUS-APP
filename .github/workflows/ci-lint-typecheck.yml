@@ -15,28 +15,31 @@ permissions:
 jobs:
   lint-typecheck:
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
 
-      # 1) PNPM d'abord (sans préciser de version → lit package.json: "packageManager")
+      # PNPM 9.15.9 (pris en compte par Corepack + packageManager)
       - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.9
 
-      # 2) Node 20 + cache pnpm
+      # Node 20 + cache PNPM
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: pnpm
 
+      # Install strict (échec si lockfile pas à jour)
       - name: Install deps
         run: pnpm install --frozen-lockfile
 
+      # Prisma (facultatif) → ne s’exécute que si un schéma existe
       - name: Prisma generate (if schema exists)
         if: ${{ hashFiles('prisma/schema.prisma') != '' }}
         env:
           PRISMA_SKIP_GENERATE: "0"
           DATABASE_URL: "file:./prisma/ci.db"
-        run: pnpm prisma:generate
+        run: pnpm exec prisma generate
 
       - name: ESLint
         run: pnpm lint
