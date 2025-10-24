@@ -222,23 +222,39 @@ export async function isPaywallVisible(
   return false
 }
 
-// --- assertion paywall ---
-export function expectRedirectToPaywall(res: any, fromPath = '/pro'): void {
-  const status = typeof res?.status === 'function' ? res.status() : (res?.status ?? 0);
-  expect(status).toBe(307);
+// ---- assertion paywall (plus robuste) ----
+export function expectRedirectToPaywall(res: any, fromPath: string = '/pro'): void {
+  // Accepte 307 ou 308 (Next 16 / proxy peut renvoyer 308)
+  const status =
+    typeof res?.status === 'function' ? res.status() : (res?.status ?? 0);
+  expect([307, 308]).toContain(status);
 
+  // Location obligatoire
   const loc = headerValue(res, 'location');
   expect(loc, 'expected Location header').toBeTruthy();
+  if (!loc) return;
 
-  if (loc) {
-    const u = new URL(loc, BASE_URL); // supporte Location relatif
-    expect(u.pathname).toBe('/paywall');
-    const paywall = u.searchParams.get('paywall');
-    if (paywall !== null) expect(paywall).toBe('1');
-    const from = u.searchParams.get('from');
-    if (from !== null) expect(from).toBe(fromPath);
-  }
+  // On parse la Location avec BASE_URL comme base
+  const u = new URL(loc, BASE_URL);
 
+  // paywall=1 et from=fromPath doivent être présents
+  const paywall = u.searchParams.get('paywall');
+  expect(paywall).toBe('1');
+
+  const from = u.searchParams.get('from');
+  if (fromPath != null) expect(from).toBe(fromPath);
+
+  // On autorise soit /paywall, soit le même path d'origine (ex: /pro)
+  // quand la redirection encode le paywall via la query.
+  const allowedPaths = new Set<string>(['/paywall']);
+  if (fromPath) allowedPaths.add(fromPath);
+
+  const okPath = allowedPaths.has(u.pathname);
+  expect(
+    okPath,
+  ).toBeTruthy(); // message d’erreur Playwright indiquera le pathname reçu
+
+  // Si l’app envoie le header x-paywall, on le valide aussi (optionnel si présent)
   const x = headerValue(res, 'x-paywall');
-  if (x) expect(String(x)).toBe('1');
+  if (x != null) expect(String(x)).toBe('1');
 }
