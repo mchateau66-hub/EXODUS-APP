@@ -12,10 +12,8 @@ permissions:
   contents: read
 
 env:
-  # Optionnel : définis E2E_BASE_URL dans Actions → Variables si tu testes un staging
   E2E_BASE_URL: ${{ vars.E2E_BASE_URL }}
   NEXT_TELEMETRY_DISABLED: "1"
-  # Secrets “dummy” sûrs pour éviter des 500 en build/test si ton code les lit
   ENTITLEMENTS_JWT_SECRET: ci_secret
   SAT_JWT_SECRET: ci_secret
   NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: pk_test_dummy
@@ -29,22 +27,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Node 20 + cache pnpm
+      # 1) PNPM d'abord
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.0.0
+
+      # 2) Node + cache pnpm
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: pnpm
 
-      # PNPM 9 (respecte packageManager / lockfile)
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 9.0.0
-
-      # Install figé
       - name: Install deps
         run: pnpm install --frozen-lockfile
 
-      # Prisma (seulement si un schéma existe)
       - name: Prisma generate (if schema exists)
         if: ${{ hashFiles('prisma/schema.prisma') != '' }}
         env:
@@ -52,21 +48,15 @@ jobs:
           DATABASE_URL: "file:./prisma/ci.db"
         run: pnpm prisma:generate
 
-      # Build Next (prod)
       - name: Build Next.js
         run: pnpm build
 
-      # Browsers Playwright (cacheable sur runners GitHub)
       - name: Install Playwright (browsers & deps)
         run: pnpm exec playwright install --with-deps
 
-      # Lance les tests :
-      # - si E2E_BASE_URL est défini ⇒ Playwright n'ouvre PAS de serveur (config)
-      # - sinon ⇒ Playwright démarre 'pnpm start' via webServer (config)
       - name: Run E2E tests
         run: pnpm e2e
 
-      # Rapport HTML en artefact (toujours)
       - name: Upload Playwright report
         if: always()
         uses: actions/upload-artifact@v4
