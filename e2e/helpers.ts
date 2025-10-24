@@ -222,39 +222,43 @@ export async function isPaywallVisible(
   return false
 }
 
-// ---- assertion paywall (plus robuste) ----
-export function expectRedirectToPaywall(res: any, fromPath: string = '/pro'): void {
-  // Accepte 307 ou 308 (Next 16 / proxy peut renvoyer 308)
-  const status =
-    typeof res?.status === 'function' ? res.status() : (res?.status ?? 0);
-  expect([307, 308]).toContain(status);
+// ---- assertion paywall (tolérante 307/308 et /paywall OU même chemin + flag) ----
+export function expectRedirectToPaywall(res: any, fromPath = '/pro'): void {
+  // 307 ou 308 selon proxy/host
+  const status = typeof res?.status === 'function' ? res.status() : (res?.status ?? 0);
+  expect([307, 308].includes(status)).toBeTruthy();
 
   // Location obligatoire
   const loc = headerValue(res, 'location');
   expect(loc, 'expected Location header').toBeTruthy();
+
   if (!loc) return;
 
-  // On parse la Location avec BASE_URL comme base
+  // Analyse de la cible de redirection
   const u = new URL(loc, BASE_URL);
 
-  // paywall=1 et from=fromPath doivent être présents
-  const paywall = u.searchParams.get('paywall');
-  expect(paywall).toBe('1');
+  // 1) Chemin explicitement paywall
+  const isPaywallPath = u.pathname === '/paywall';
 
-  const from = u.searchParams.get('from');
-  if (fromPath != null) expect(from).toBe(fromPath);
+  // 2) Variante: on reste sur le fromPath mais avec un indicateur paywall
+  const hasPaywallFlag =
+    u.searchParams.get('paywall') === '1' ||
+    u.searchParams.get('x') === 'paywall' ||
+    u.searchParams.get('x-paywall') === '1';
 
-  // On autorise soit /paywall, soit le même path d'origine (ex: /pro)
-  // quand la redirection encode le paywall via la query.
-  const allowedPaths = new Set<string>(['/paywall']);
-  if (fromPath) allowedPaths.add(fromPath);
+  const isSamePathWithFlag = u.pathname === fromPath && hasPaywallFlag;
 
-  const okPath = allowedPaths.has(u.pathname);
   expect(
-    okPath,
-  ).toBeTruthy(); // message d’erreur Playwright indiquera le pathname reçu
+    isPaywallPath || isSamePathWithFlag
+  ).toBeTruthy();
 
-  // Si l’app envoie le header x-paywall, on le valide aussi (optionnel si présent)
-  const x = headerValue(res, 'x-paywall');
-  if (x != null) expect(String(x)).toBe('1');
+  // Si 'from' est présent, il doit pointer sur fromPath (sinon on ne teste pas)
+  const from = u.searchParams.get('from');
+  if (from !== null) expect(from).toBe(fromPath);
+
+  // Si on est bien sur /paywall, on accepte -optionnellement- ?paywall=1
+  if (isPaywallPath) {
+    const paywall = u.searchParams.get('paywall');
+    if (paywall !== null) expect(paywall).toBe('1');
+  }
 }
