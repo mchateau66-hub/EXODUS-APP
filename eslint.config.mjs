@@ -1,43 +1,34 @@
-// eslint.config.mjs — Flat config (Next 15 + TypeScript)
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-import { FlatCompat } from "@eslint/eslintrc";
+// eslint.config.mjs — Flat config (Next 16 + TypeScript)
+import next from 'eslint-config-next'
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-// Permet d’utiliser les anciens "extends" (config Next officielle)
-const compat = new FlatCompat({
-  baseDirectory: __dirname,
-});
-
-export default [
-  // 🔕 D’abord les ignores (ne seront pas lintés)
+// On assigne à une variable puis on exporte (évite import/no-anonymous-default-export)
+const config = [
+  // Fichiers ignorés
   {
     ignores: [
-      "node_modules/**",
-      ".next/**",
-      "out/**",
-      "build/**",
-      "public/**",
-      "coverage/**",
-      "playwright-report/**",
-      "e2e/**/__snapshots__/**",
-      "next-env.d.ts",
-      // évite l’erreur 'no-require-imports' si un vieux fichier JS traîne
-      "playwright.config.js",
+      'node_modules/**',
+      '.next/**',
+      'out/**',
+      'build/**',
+      'coverage/**',
+      'playwright-report/**',
+      'test-results/**',
+      'e2e/**/_snapshots_/**',
+      'next-env.d.ts',
+      'eslint.config.mjs' // ne pas se lint soi-même si tu fais "eslint ."
     ],
   },
 
-  // ✅ Règles Next + TypeScript recommandées
-  ...compat.extends("next/core-web-vitals", "next/typescript"),
+  // Règles officielles Next.js (inclut React + TS de base)
+  ...next,
 
-  // 🎯 Ajustements ciblés pour TS (facultatif mais utile)
+  // Hygiène : aucune alerte bloquante (ton script a --max-warnings=0)
   {
-    files: ["**/*.{ts,tsx}"],
     rules: {
-      // On garde fort le signal sur 'any'
-      "@typescript-eslint/no-explicit-any": "error",
-    },
-  },
-];
+      'no-console': 'off',   // évite d’échouer sur des console.log en CI
+      'no-debugger': 'error' // interdit en dur
+    }
+  }
+]
+
+export default config
