@@ -1,54 +1,36 @@
 {
-  "name": "exodus-app",
-  "version": "0.1.0",
   "private": true,
-  "packageManager": "pnpm@9.15.9",
+  "packageManager": "pnpm@9.0.0",
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=20.10.0",
+    "pnpm": ">=9.0.0"
   },
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev -p ${PORT:-3000}",
     "build": "next build",
-    "start": "next start",
-    "lint": "eslint . --max-warnings=0",
-    "typecheck": "tsc --noEmit",
-    "test:e2e": "playwright test",
-    "e2e": "playwright test",
+    "start": "next start -p ${PORT:-3000}",
+    "lint": "eslint . --ext .ts,.tsx,.js,.jsx --max-warnings=0",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "ci:lint-typecheck": "pnpm lint && pnpm typecheck",
+    "e2e": "playwright test --reporter=github,html",
     "e2e:ui": "playwright test --ui",
     "e2e:html": "playwright test --reporter=html",
-    "e2e:report": "playwright show-report",
-    "e2e:ci": "playwright test -c ./playwright.config.ts --reporter=html && playwright show-report --port 0",
-    "ci:lint-typecheck": "pnpm lint && pnpm typecheck",
-    "postinstall": "node -e \"const { existsSync } = require('fs'); const { execSync } = require('child_process'); const paths=['./prisma/schema.prisma','./exodus-app/prisma/schema.prisma']; if (paths.some(p=>existsSync(p))) execSync('pnpm exec prisma generate',{stdio:'inherit'})\""
+    "prisma:generate": "prisma generate",
+    "postinstall": "node -e \"const {existsSync}=require('fs');const {execSync}=require('child_process');const has=['./prisma/schema.prisma','./exodus-app/prisma/schema.prisma'].some(p=>existsSync(p));if(has && !process.env.CI && !process.env.VERCEL){execSync('pnpm exec prisma generate',{stdio:'inherit'})}\""
   },
   "dependencies": {
-    "@prisma/client": "^6.17.1",
     "jsonwebtoken": "^9.0.2",
-    "next": "15.5.5",
-    "react": "19.1.0",
-    "react-dom": "19.1.0"
+    "next": "^16.0.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
   },
   "devDependencies": {
-    "@eslint/eslintrc": "^3",
-    "@playwright/test": "^1.56.0",
-    "@tailwindcss/postcss": "^4",
-    "@types/eslint": "^9.6.1",
+    "@playwright/test": "^1.56.1",
     "@types/jsonwebtoken": "^9.0.10",
-    "@types/node": "^20",
-    "@types/react": "^19",
-    "@types/react-dom": "^19",
-    "@typescript-eslint/eslint-plugin": "^8.46.1",
-    "@typescript-eslint/parser": "^8.46.1",
-    "autoprefixer": "^10.4.21",
-    "eslint": "^9.37.0",
-    "eslint-config-next": "15.5.5",
-    "eslint-plugin-import": "^2.32.0",
-    "eslint-plugin-playwright": "^2.2.2",
-    "eslint-plugin-security": "^3.0.1",
-    "playwright": "^1.56.0",
-    "postcss": "^8.5.6",
-    "prisma": "^6.17.1",
-    "tailwindcss": "^4.1.4",
-    "typescript": "^5"
+    "@types/node": "^24.9.1",
+    "@types/react": "19.2.2",
+    "eslint": "^9.38.0",
+    "eslint-config-next": "^16.0.0",
+    "typescript": "^5.9.3"
   }
 }
