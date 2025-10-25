@@ -12,12 +12,8 @@ permissions:
   contents: read
 
 env:
+  E2E_BASE_URL: ${{ vars.E2E_BASE_URL || '' }}
   NEXT_TELEMETRY_DISABLED: "1"
-  # Remplace ces “dummy” par des secrets si besoin :
-  ENTITLEMENTS_JWT_SECRET: ci_secret
-  SAT_JWT_SECRET: ci_secret
-  NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: pk_test_dummy
-  STRIPE_SECRET_KEY: sk_test_dummy
 
 jobs:
   e2e:
@@ -26,29 +22,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # 1) pnpm d’abord
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 9.15.9
-          run_install: false
-
-      # 2) Node + cache pnpm
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: pnpm
 
+      - name: Setup PNPM 9.15.9
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.9
+
       - name: Install deps
         run: pnpm install --frozen-lockfile
-
-      - name: Prisma generate (if schema exists)
-        if: ${{ hashFiles('prisma/schema.prisma') != '' || hashFiles('exodus-app/prisma/schema.prisma') != '' }}
-        env:
-          PRISMA_SKIP_GENERATE: "0"
-          DATABASE_URL: "file:./prisma/ci.db"
-        run: pnpm prisma generate
 
       - name: Build Next.js
         run: pnpm build
