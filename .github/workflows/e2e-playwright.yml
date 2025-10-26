@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
 name: E2E Playwright
 
 on:
@@ -11,21 +12,24 @@ concurrency:
 permissions:
   contents: read
 
-# Vars utiles aux tests
+# Variables utiles aux tests
 env:
+  # si défini côté repo/environnements, Playwright utilisera cette URL plutôt que le webServer local
   E2E_BASE_URL: ${{ vars.E2E_BASE_URL || '' }}
   NEXT_TELEMETRY_DISABLED: '1'
+  # tolère /paywall ↔ même path + flag (?paywall=1) dans les redirects (helpers.ts)
   E2E_ACCEPT_SAME_PATH_REDIRECT: '1'
 
 jobs:
   e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # 1) Installer pnpm AVANT le cache setup-node
+      # 1) PNPM avant setup-node (évite "pnpm not found" avec cache: pnpm)
       - name: Setup PNPM 9.15.9
         uses: pnpm/action-setup@v4
         with:
@@ -40,9 +44,11 @@ jobs:
           cache: pnpm
           cache-dependency-path: '**/pnpm-lock.yaml'
 
+      # 3) Install strict (échec si pnpm-lock.yaml n'est pas synchro)
       - name: Install deps
         run: pnpm install --frozen-lockfile
 
+      # 4) Prisma (facultatif) — seulement si un schema existe (racine ou exodus-app)
       - name: Prisma generate (if schema exists)
         if: ${{ hashFiles('**/prisma/schema.prisma') != '' }}
         env:
@@ -53,15 +59,19 @@ jobs:
           if [ -f prisma/schema.prisma ]; then pnpm exec prisma generate; fi
           if [ -f exodus-app/prisma/schema.prisma ]; then (cd exodus-app && pnpm exec prisma generate); fi
 
+      # 5) Build Next.js (utile si tes tests pointent sur E2E_BASE_URL vide => webServer local)
       - name: Build Next.js
         run: pnpm build
 
+      # 6) Installer les navigateurs Playwright
       - name: Install Playwright (browsers & deps)
         run: pnpm exec playwright install --with-deps
 
+      # 7) Lancer les tests
       - name: Run E2E tests
         run: pnpm e2e
 
+      # 8) Uploader le rapport (même en cas d'échec)
       - name: Upload Playwright report
         if: always()
         uses: actions/upload-artifact@v4
