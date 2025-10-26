@@ -11,30 +11,47 @@ concurrency:
 permissions:
   contents: read
 
+# Vars utiles aux tests
 env:
   E2E_BASE_URL: ${{ vars.E2E_BASE_URL || '' }}
-  NEXT_TELEMETRY_DISABLED: "1"
+  NEXT_TELEMETRY_DISABLED: '1'
+  E2E_ACCEPT_SAME_PATH_REDIRECT: '1'
 
 jobs:
   e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: pnpm
-
+      # 1) Installer pnpm AVANT le cache setup-node
       - name: Setup PNPM 9.15.9
         uses: pnpm/action-setup@v4
         with:
           version: 9.15.9
+          run_install: false
+
+      # 2) Node + cache pnpm
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: '**/pnpm-lock.yaml'
 
       - name: Install deps
         run: pnpm install --frozen-lockfile
+
+      - name: Prisma generate (if schema exists)
+        if: ${{ hashFiles('**/prisma/schema.prisma') != '' }}
+        env:
+          PRISMA_SKIP_GENERATE: '0'
+          DATABASE_URL: 'file:./prisma/ci.db'
+        run: |
+          set -euo pipefail
+          if [ -f prisma/schema.prisma ]; then pnpm exec prisma generate; fi
+          if [ -f exodus-app/prisma/schema.prisma ]; then (cd exodus-app && pnpm exec prisma generate); fi
 
       - name: Build Next.js
         run: pnpm build
