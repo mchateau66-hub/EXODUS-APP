@@ -1,4 +1,5 @@
-name: CI – Lint & Typecheck
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+name: CI — Lint & Typecheck
 
 on:
   pull_request:
@@ -15,34 +16,44 @@ permissions:
 jobs:
   lint-typecheck:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      # PNPM 9.15.9 (pris en compte par Corepack + packageManager)
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 9.15.9
-
-      # Node 20 + cache PNPM
-      - uses: actions/setup-node@v4
+      # Node + cache pnpm (basé sur **/pnpm-lock.yaml)
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: pnpm
+          cache-dependency-path: '**/pnpm-lock.yaml'
 
-      # Install strict (échec si lockfile pas à jour)
+      # Installer pnpm (on ne laisse pas GitHub le faire pour garder la main)
+      - name: Setup PNPM 9.15.9
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.9
+          run_install: false
+
       - name: Install deps
         run: pnpm install --frozen-lockfile
 
-      # Prisma (facultatif) → ne s’exécute que si un schéma existe
+      # Prisma facultatif (s’exécute seulement si un schema existe à la racine ou dans exodus-app/)
       - name: Prisma generate (if schema exists)
-        if: ${{ hashFiles('prisma/schema.prisma') != '' }}
+        if: ${{ hashFiles('**/prisma/schema.prisma') != '' }}
         env:
-          PRISMA_SKIP_GENERATE: "0"
-          DATABASE_URL: "file:./prisma/ci.db"
-        run: pnpm exec prisma generate
+          PRISMA_SKIP_GENERATE: '0'
+          DATABASE_URL: 'file:./prisma/ci.db'
+        shell: bash
+        run: |
+          set -eo pipefail
+          if [ -f prisma/schema.prisma ]; then pnpm exec prisma generate; fi
+          if [ -f exodus-app/prisma/schema.prisma ]; then (cd exodus-app && pnpm exec prisma generate); fi
 
       - name: ESLint
-        run: pnpm lint
+        run: pnpm run lint
 
       - name: Typecheck
-        run: pnpm typecheck
+        run: pnpm run typecheck

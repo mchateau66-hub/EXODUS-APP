@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
 name: E2E Playwright
 
 on:
@@ -11,59 +12,64 @@ concurrency:
 permissions:
   contents: read
 
-# Variables job (évite les 500 si ton code lit ces envs)
 env:
-  # URL distante/staging optionnelle. Si vide, ton config Playwright
-  # peut démarrer le webServer local.
+  # Optionnel (si vide, Playwright démarre le webServer défini dans playright.config.ts)
   E2E_BASE_URL: ${{ vars.E2E_BASE_URL || '' }}
-
+  # Anti-bruit Next.js en CI
   NEXT_TELEMETRY_DISABLED: "1"
-  # Secrets "dummy" sûrs pour la CI (remplace par secrets.* si tu as branché)
-  ENTITLEMENTS_JWT_SECRET: ci_secret
-  SAT_JWT_SECRET: ci_secret
-  NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: pk_test_dummy
-  STRIPE_SECRET_KEY: sk_test_dummy
+  # Tolérer redirect vers même path si 307/308 (cf helpers.ts)
+  E2E_ACCEPT_SAME_PATH_REDIRECT: "1"
 
 jobs:
   e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      # PNPM 9.15.9
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 9.15.9
-
-      # Node 20 + cache PNPM
-      - uses: actions/setup-node@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: pnpm
+          cache-dependency-path: '**/pnpm-lock.yaml'
+
+      - name: Setup PNPM 9.15.9
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.9
+          run_install: false
 
       - name: Install deps
         run: pnpm install --frozen-lockfile
 
-      # Prisma (facultatif) → ne s’exécute que si un schéma existe
+      # Prisma facultatif (s’exécute seulement si un schema existe à la racine ou dans exodus-app/)
       - name: Prisma generate (if schema exists)
-        if: ${{ hashFiles('prisma/schema.prisma') != '' }}
+        if: ${{ hashFiles('**/prisma/schema.prisma') != '' }}
         env:
-          PRISMA_SKIP_GENERATE: "0"
-          DATABASE_URL: "file:./prisma/ci.db"
-        run: pnpm exec prisma generate
+          PRISMA_SKIP_GENERATE: '0'
+          DATABASE_URL: 'file:./prisma/ci.db'
+        shell: bash
+        run: |
+          set -eo pipefail
+          if [ -f prisma/schema.prisma ]; then pnpm exec prisma generate; fi
+          if [ -f exodus-app/prisma/schema.prisma ]; then (cd exodus-app && pnpm exec prisma generate); fi
 
+      # Build Next (souvent requis par le webServer Playwright)
       - name: Build Next.js
-        run: pnpm build
+        run: pnpm run build
 
+      # Installer navigateurs Playwright (et deps système)
       - name: Install Playwright (browsers & deps)
         run: pnpm exec playwright install --with-deps
 
-      # Si E2E_BASE_URL est défini, Playwright n’ouvre pas de serveur (config).
-      # Sinon, il démarre via `webServer` défini dans playwright.config.ts.
+      # Lancer les tests
       - name: Run E2E tests
-        run: pnpm e2e
+        run: pnpm run e2e
 
+      # Toujours uploader le rapport (même en cas d’échec)
       - name: Upload Playwright report
         if: always()
         uses: actions/upload-artifact@v4
