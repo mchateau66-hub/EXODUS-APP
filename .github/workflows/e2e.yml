@@ -1,0 +1,38 @@
+name: CI — E2E
+
+on:
+  pull_request:
+    branches: [main, staging]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  E2E_BASE_URL: ${{ vars.E2E_BASE_URL }}
+  E2E_ACCEPT_SAME_PATH_REDIRECT: '1'
+  NEXT_TELEMETRY_DISABLED: '1'
+  E2E_SESSION_COOKIE: ${{ secrets.E2E_SESSION_COOKIE }}
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup PNPM 9.15.9
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.9
+
+      - name: Setup Node 20 + cache pnpm
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: '**/pnpm-lock.yaml'
