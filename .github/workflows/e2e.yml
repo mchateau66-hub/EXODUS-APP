@@ -12,16 +12,25 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# ── Variables globales (depuis Settings ▸ Actions ▸ Variables/Secrets)
 env:
+  # URL cible par défaut (staging) si on NE démarre PAS de serveur local
   E2E_BASE_URL: ${{ vars.E2E_BASE_URL }}
+  # Mettre à 1 dans repo variables pour démarrer un serveur local Next en CI
+  E2E_WEBSERVER: ${{ vars.E2E_WEBSERVER }}
+  # Optionnel: chemin du healthcheck, ex: /api/health/live
+  E2E_SMOKE_PATH: ${{ vars.E2E_SMOKE_PATH }}
+  # Divers flags e2e
   E2E_ACCEPT_SAME_PATH_REDIRECT: '1'
   NEXT_TELEMETRY_DISABLED: '1'
+  # Secret optionnel: cookie de session (Set-Cookie complet)
   E2E_SESSION_COOKIE: ${{ secrets.E2E_SESSION_COOKIE }}
 
 jobs:
   e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+
     steps:
       - uses: actions/checkout@v4
 
@@ -36,3 +45,75 @@ jobs:
           node-version: 20
           cache: pnpm
           cache-dependency-path: '**/pnpm-lock.yaml'
+
+      - name: Install deps (frozen)
+        id: install
+        run: pnpm install --frozen-lockfile
+
+      - name: Diagnose lockfile mismatch (only if install failed)
+        if: ${{ failure() && steps.install.outcome == 'failure' }}
+        run: |
+          echo "PNPM=$(pnpm -v)  Node=$(node -v)"
+          awk -F': ' '/^lockfileVersion:/{print "LockfileVersion=" $2}' pnpm-lock.yaml || true
+          echo "::group::Preview diff if lockfile were re-generated"
+          pnpm install --lockfile-only || true
+          git --no-pager diff --minimal -U0 -- pnpm-lock.yaml | sed -n '1,300p'
+          echo "::endgroup::"
+
+      # ── Démarrage d'un serveur local en CI si E2E_WEBSERVER=1 ─────────
+      - name: Build app
+        if: ${{ env.E2E_WEBSERVER == '1' }}
+        run: pnpm build
+
+      - name: Start app (background)
+        if: ${{ env.E2E_WEBSERVER == '1' }}
+        run: pnpm start -- -p 3000 &
+
+      - name: Wait for app
+        if: ${{ env.E2E_WEBSERVER == '1' }}
+        shell: bash
+        run: |
+          URL="http://127.0.0.1:3000${E2E_SMOKE_PATH:-/}"
+          echo "Waiting on $URL"
+          pnpm dlx wait-on "http-get://${URL}"
+
+      # ── Résolution de l'URL de base utilisée par les tests ────────────
+      - name: Resolve base URL
+        id: cfg
+        shell: bash
+        run: |
+          if [ "${E2E_WEBSERVER}" = "1" ]; then
+            echo "base=http://127.0.0.1:3000" >> "$GITHUB_OUTPUT"
+          else
+            if [ -z "${E2E_BASE_URL}" ]; then
+              echo "::error::E2E_BASE_URL is empty and E2E_WEBSERVER != 1"
+              exit 1
+            fi
+            echo "base=${E2E_BASE_URL}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Write .env.e2e for tests
+        run: |
+          cat > .env.e2e <<EOF
+          E2E_BASE_URL=${{ steps.cfg.outputs.base }}
+          E2E_SESSION_COOKIE=${E2E_SESSION_COOKIE}
+          E2E_ACCEPT_SAME_PATH_REDIRECT=${E2E_ACCEPT_SAME_PATH_REDIRECT}
+          NEXT_TELEMETRY_DISABLED=${NEXT_TELEMETRY_DISABLED}
+          E2E_SMOKE_PATH=${E2E_SMOKE_PATH}
+          EOF
+          echo "Using E2E_BASE_URL=$(grep '^E2E_BASE_URL=' .env.e2e | cut -d= -f2-)"
+
+      - name: Install Playwright browsers
+        run: pnpm exec playwright install --with-deps
+
+      - name: Run E2E (GitHub + HTML reporters)
+        run: pnpm exec playwright test --reporter=github,html
+
+      - name: Upload Playwright HTML report (always)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report
+          if-no-files-found: warn
+          retention-days: 7
