@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
 name: CI — Lint & Typecheck
 
 on:
@@ -17,18 +18,19 @@ jobs:
   lint-typecheck:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # 1) Installer pnpm AVANT le cache setup-node
+      # 1) Installer PNPM (binaire) AVANT setup-node pour que "cache: pnpm" puisse fonctionner
       - name: Setup PNPM 9.15.9
         uses: pnpm/action-setup@v4
         with:
           version: 9.15.9
           run_install: false
 
-      # 2) Node + cache pnpm (dépend de pnpm)
+      # 2) Node + cache pnpm basé sur **/pnpm-lock.yaml
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -36,10 +38,11 @@ jobs:
           cache: pnpm
           cache-dependency-path: '**/pnpm-lock.yaml'
 
+      # 3) Install strict (échec si lockfile n'est pas synchro)
       - name: Install deps
         run: pnpm install --frozen-lockfile
 
-      # Optionnel : Prisma uniquement si un schema existe (racine ou exodus-app)
+      # 4) Prisma (facultatif) — tourne seulement si un schema existe (racine ou exodus-app)
       - name: Prisma generate (if schema exists)
         if: ${{ hashFiles('**/prisma/schema.prisma') != '' }}
         env:
@@ -50,6 +53,7 @@ jobs:
           if [ -f prisma/schema.prisma ]; then pnpm exec prisma generate; fi
           if [ -f exodus-app/prisma/schema.prisma ]; then (cd exodus-app && pnpm exec prisma generate); fi
 
+      # 5) Lint + typecheck
       - name: ESLint
         run: pnpm run lint
 
