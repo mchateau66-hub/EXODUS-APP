@@ -1,25 +1,9 @@
 // src/app/api/logout/route.ts
-export const runtime = 'nodejs'
-
-function expireSessionCookie() {
-  // Efface le cookie côté navigateur
-  const parts = [
-    'session=',
-    'Path=/',
-    'HttpOnly',
-    'Secure',
-    'SameSite=Lax',
-    'Max-Age=0',
-    'Expires=Thu, 01 Jan 1970 00:00:00 GMT',
-  ]
-  return parts.join('; ')
-}
-
 export async function POST() {
-  return new Response(null, {
-    status: 204,
-    headers: {
-      'Set-Cookie': expireSessionCookie(),
-    },
-  })
+  const headers = new Headers();
+  headers.set('content-type', 'application/json; charset=utf-8');
+  // Supprime le cookie
+  headers.append('set-cookie', `sid=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
+
+  return new Response(JSON.stringify({ ok: true }), { status: 204, headers });
 }

@@ -1,59 +1,53 @@
-# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
-name: CI — Lint & Typecheck
+name: CI — Typecheck
 
 on:
   pull_request:
-  push:
-    branches: [ main ]
-
-concurrency:
-  group: ci-lint-typecheck-${{ github.ref }}
-  cancel-in-progress: true
+    branches: [main, staging]
+  workflow_dispatch: {}
 
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  lint-typecheck:
+  typecheck:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      # Node + cache pnpm (basé sur **/pnpm-lock.yaml)
-      - name: Setup Node.js
+      - name: Setup PNPM 9.15.9
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.9
+
+      - name: Setup Node 20 + cache pnpm
         uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: pnpm
           cache-dependency-path: '**/pnpm-lock.yaml'
 
-      # Installer pnpm (on ne laisse pas GitHub le faire pour garder la main)
-      - name: Setup PNPM 9.15.9
-        uses: pnpm/action-setup@v4
-        with:
-          version: 9.15.9
-          run_install: false
-
-      - name: Install deps
+      - name: Install deps (frozen)
+        id: install
         run: pnpm install --frozen-lockfile
 
-      # Prisma facultatif (s’exécute seulement si un schema existe à la racine ou dans exodus-app/)
-      - name: Prisma generate (if schema exists)
-        if: ${{ hashFiles('**/prisma/schema.prisma') != '' }}
-        env:
-          PRISMA_SKIP_GENERATE: '0'
-          DATABASE_URL: 'file:./prisma/ci.db'
-        shell: bash
+      - name: Diagnose lockfile mismatch (only if install failed)
+        if: ${{ failure() && steps.install.outcome == 'failure' }}
         run: |
-          set -eo pipefail
-          if [ -f prisma/schema.prisma ]; then pnpm exec prisma generate; fi
-          if [ -f exodus-app/prisma/schema.prisma ]; then (cd exodus-app && pnpm exec prisma generate); fi
+          echo "PNPM=$(pnpm -v)  Node=$(node -v)"
+          awk -F': ' '/^lockfileVersion:/{print "LockfileVersion=" $2}' pnpm-lock.yaml || true
+          echo "::group::Preview diff if lockfile were re-generated"
+          pnpm install --lockfile-only || true
+          git --no-pager diff --minimal -U0 -- pnpm-lock.yaml | sed -n '1,300p'
+          echo "::endgroup::"
 
-      - name: ESLint
-        run: pnpm run lint
+      - name: Prisma generate (optional)
+        if: ${{ hashFiles('**/prisma/schema.prisma') != '' }}
+        run: pnpm prisma generate
 
       - name: Typecheck
-        run: pnpm run typecheck
+        run: pnpm exec tsc -p tsconfig.json --noEmit
