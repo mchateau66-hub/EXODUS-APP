@@ -1,11 +1,19 @@
-name: E2E (Vercel URL)
+name: CI – E2E
 
 on:
   pull_request:
-    branches: [main, staging]
-  push:
-    branches: [staging]
+    branches: [ main, staging ]
   workflow_dispatch:
+    inputs:
+      base_url:
+        description: "Base URL à tester (override vars.E2E_BASE_URL)"
+        required: false
+        type: string
+      use_session_cookie:
+        description: "Injecter E2E_SESSION_COOKIE dans .env.e2e"
+        required: false
+        type: boolean
+        default: false
 
 concurrency:
   group: e2e-${{ github.ref }}
@@ -15,49 +23,71 @@ permissions:
   contents: read
 
 env:
-  # Renseigne cette variable dans GitHub → Settings → Variables (Repository)
-  E2E_BASE_URL: ${{ vars.E2E_BASE_URL }}
-  E2E_WEBSERVER: '0'
-  E2E_SMOKE_PATH: '/api/health'
-  E2E_PAYWALL_PATH: '/pro'
+  # Repo Variables attendues côté Settings → Secrets and variables → Actions → Variables
+  E2E_BASE_URL: ${{ vars.E2E_BASE_URL || 'http://127.0.0.1:3000' }}
+  E2E_WEBSERVER: ${{ vars.E2E_WEBSERVER || '1' }}            # 1 = lance Next local ; 0 = utilise BASE_URL tel quel
+  E2E_SMOKE_PATH: ${{ vars.E2E_SMOKE_PATH || '/api/health/live' }}
+  E2E_PAYWALL_ALLOW_404_AS_BLOCK: ${{ vars.E2E_PAYWALL_ALLOW_404_AS_BLOCK || '0' }}
+  # Secret attendu côté Settings → Secrets and variables → Actions → Secrets
+  E2E_SESSION_COOKIE: ${{ secrets.E2E_SESSION_COOKIE }}
 
 jobs:
   e2e:
+    name: e2e
     runs-on: ubuntu-latest
-    timeout-minutes: 30
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: pnpm
 
-      - name: Enable corepack & pin pnpm
+      - name: Install deps
         run: |
           corepack enable
-          corepack prepare pnpm@9.15.9 --activate
+          corepack prepare pnpm@9 --activate
+          pnpm install --frozen-lockfile
+          pnpm exec playwright install --with-deps
 
-      - name: Install deps
-        run: pnpm install --frozen-lockfile
-
-      - name: Install Playwright (browsers & deps)
-        run: pnpm exec playwright install --with-deps
-
-      - name: Debug env
+      - name: Resolve base URL
+        id: cfg
+        shell: bash
         run: |
-          echo "E2E_BASE_URL=${E2E_BASE_URL}"
-          echo "E2E_WEBSERVER=${E2E_WEBSERVER}"
-          echo "E2E_SMOKE_PATH=${E2E_SMOKE_PATH}"
-          echo "E2E_PAYWALL_PATH=${E2E_PAYWALL_PATH}"
+          # Si on démarre un webserver local, on force 127.0.0.1:3000
+          if [ "${{ env.E2E_WEBSERVER }}" = "1" ]; then
+            BASE="http://127.0.0.1:3000"
+          else
+            BASE_INPUT="${{ github.event.inputs.base_url }}"
+            BASE="${BASE_INPUT:-${{ env.E2E_BASE_URL }}}"
+          fi
+          echo "base=$BASE" >> "$GITHUB_OUTPUT"
 
-      - name: Run E2E (remote Vercel)
-        run: pnpm e2e
+      - name: Start Next.js (if E2E_WEBSERVER=1)
+        if: env.E2E_WEBSERVER == '1'
+        env:
+          BASE: ${{ steps.cfg.outputs.base }}
+        run: |
+          pnpm build
+          pnpm start &>/tmp/next.log &
+          npx -y wait-on@7 "$BASE${{ env.E2E_SMOKE_PATH }}" -t 120000
+          echo "Server up on $BASE"
 
-      - name: Upload HTML report
+      - name: Prepare .env.e2e
+        shell: bash
+        run: |
+          echo "E2E_BASE_URL=${{ steps.cfg.outputs.base }}" > .env.e2e
+          echo "E2E_PAYWALL_ALLOW_404_AS_BLOCK=${{ env.E2E_PAYWALL_ALLOW_404_AS_BLOCK }}" >> .env.e2e
+          if [ "${{ github.event.inputs.use_session_cookie }}" = "true" ] && [ -n "${{ env.E2E_SESSION_COOKIE }}" ]; then
+            echo "E2E_SESSION_COOKIE=${{ env.E2E_SESSION_COOKIE }}" >> .env.e2e
+          fi
+          printf "---- .env.e2e ----\n"; sed 's/=.*/=***redacted***/' .env.e2e
+
+      - name: Run Playwright
+        run: pnpm exec playwright test --reporter=github,html
+
+      - name: Upload Playwright report
         if: always()
         uses: actions/upload-artifact@v4
         with:
