@@ -1,53 +1,55 @@
-name: CI — Typecheck
+name: CI – Lint & Typecheck
 
 on:
   pull_request:
-    branches: [main, staging]
+    branches: [ main, staging ]
   workflow_dispatch: {}
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ci-lint-typecheck-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   typecheck:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Setup PNPM 9.15.9
-        uses: pnpm/action-setup@v4
-        with:
-          version: 9.15.9
-
-      - name: Setup Node 20 + cache pnpm
+      - name: Setup Node & PNPM (cache pnpm)
         uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: pnpm
-          cache-dependency-path: '**/pnpm-lock.yaml'
 
       - name: Install deps (frozen)
         id: install
-        run: pnpm install --frozen-lockfile
+        run: |
+          set -euxo pipefail
+          corepack enable
+          corepack prepare pnpm@9 --activate
+          pnpm install --frozen-lockfile
 
-      - name: Diagnose lockfile mismatch (only if install failed)
+      # (facultatif) Diagnose lockfile if install failed
+      - name: Diagnose lockfile mismatch
         if: ${{ failure() && steps.install.outcome == 'failure' }}
         run: |
-          echo "PNPM=$(pnpm -v)  Node=$(node -v)"
-          awk -F': ' '/^lockfileVersion:/{print "LockfileVersion=" $2}' pnpm-lock.yaml || true
-          echo "::group::Preview diff if lockfile were re-generated"
-          pnpm install --lockfile-only || true
-          git --no-pager diff --minimal -U0 -- pnpm-lock.yaml | sed -n '1,300p'
+          echo "::group::Lockfile preview"
+          git --no-pager diff --minimal -U0 -- pnpm-lock.yaml | sed -n '1,300p' || true
           echo "::endgroup::"
 
+      # Prisma uniquement si un schema existe (racine ou sous-dossier)
       - name: Prisma generate (optional)
         if: ${{ hashFiles('**/prisma/schema.prisma') != '' }}
         run: pnpm prisma generate
+
+      - name: ESLint
+        run: pnpm run lint
 
       - name: Typecheck
         run: pnpm exec tsc -p tsconfig.json --noEmit

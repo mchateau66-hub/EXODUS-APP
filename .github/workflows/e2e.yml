@@ -1,119 +1,120 @@
-name: CI — E2E
+name: CI – E2E
 
 on:
   pull_request:
-    branches: [main, staging]
-  workflow_dispatch: {}
+    branches: [ main, staging ]
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: "Base URL à tester (override vars.E2E_BASE_URL)"
+        required: false
+        type: string
+      use_session_cookie:
+        description: "Injecter E2E_SESSION_COOKIE dans .env.e2e"
+        required: false
+        type: boolean
+        default: false
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
-# ── Variables globales (depuis Settings ▸ Actions ▸ Variables/Secrets)
 env:
-  # URL cible par défaut (staging) si on NE démarre PAS de serveur local
-  E2E_BASE_URL: ${{ vars.E2E_BASE_URL }}
-  # Mettre à 1 dans repo variables pour démarrer un serveur local Next en CI
-  E2E_WEBSERVER: ${{ vars.E2E_WEBSERVER }}
-  # Optionnel: chemin du healthcheck, ex: /api/health/live
-  E2E_SMOKE_PATH: ${{ vars.E2E_SMOKE_PATH }}
-  # Divers flags e2e
-  E2E_ACCEPT_SAME_PATH_REDIRECT: '1'
-  NEXT_TELEMETRY_DISABLED: '1'
-  # Secret optionnel: cookie de session (Set-Cookie complet)
+  E2E_BASE_URL: ${{ vars.E2E_BASE_URL || 'http://127.0.0.1:3000' }}
+  E2E_WEBSERVER: ${{ vars.E2E_WEBSERVER || '1' }}          # 1 = Next local ; 0 = utilise BASE_URL tel quel
+  E2E_SMOKE_PATH: ${{ vars.E2E_SMOKE_PATH || '/api/health/live' }}
+  E2E_PAYWALL_ALLOW_404_AS_BLOCK: ${{ vars.E2E_PAYWALL_ALLOW_404_AS_BLOCK || '0' }}
   E2E_SESSION_COOKIE: ${{ secrets.E2E_SESSION_COOKIE }}
 
 jobs:
   e2e:
+    name: e2e
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 25
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Setup PNPM 9.15.9
-        uses: pnpm/action-setup@v4
-        with:
-          version: 9.15.9
-
-      - name: Setup Node 20 + cache pnpm
+      - name: Setup Node & PNPM
         uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: pnpm
-          cache-dependency-path: '**/pnpm-lock.yaml'
 
-      - name: Install deps (frozen)
-        id: install
-        run: pnpm install --frozen-lockfile
-
-      - name: Diagnose lockfile mismatch (only if install failed)
-        if: ${{ failure() && steps.install.outcome == 'failure' }}
+      - name: Install deps & browsers
         run: |
-          echo "PNPM=$(pnpm -v)  Node=$(node -v)"
-          awk -F': ' '/^lockfileVersion:/{print "LockfileVersion=" $2}' pnpm-lock.yaml || true
-          echo "::group::Preview diff if lockfile were re-generated"
-          pnpm install --lockfile-only || true
-          git --no-pager diff --minimal -U0 -- pnpm-lock.yaml | sed -n '1,300p'
-          echo "::endgroup::"
+          set -euxo pipefail
+          corepack enable
+          corepack prepare pnpm@9 --activate
+          pnpm install --frozen-lockfile
+          pnpm exec playwright install --with-deps
 
-      # ── Démarrage d'un serveur local en CI si E2E_WEBSERVER=1 ─────────
-      - name: Build app
-        if: ${{ env.E2E_WEBSERVER == '1' }}
-        run: pnpm build
-
-      - name: Start app (background)
-        if: ${{ env.E2E_WEBSERVER == '1' }}
-        run: pnpm start -- -p 3000 &
-
-      - name: Wait for app
-        if: ${{ env.E2E_WEBSERVER == '1' }}
-        shell: bash
-        run: |
-          URL="http://127.0.0.1:3000${E2E_SMOKE_PATH:-/}"
-          echo "Waiting on $URL"
-          pnpm dlx wait-on "http-get://${URL}"
-
-      # ── Résolution de l'URL de base utilisée par les tests ────────────
       - name: Resolve base URL
         id: cfg
         shell: bash
         run: |
-          if [ "${E2E_WEBSERVER}" = "1" ]; then
-            echo "base=http://127.0.0.1:3000" >> "$GITHUB_OUTPUT"
+          if [ "${{ env.E2E_WEBSERVER }}" = "1" ]; then
+            BASE="http://127.0.0.1:3000"
           else
-            if [ -z "${E2E_BASE_URL}" ]; then
-              echo "::error::E2E_BASE_URL is empty and E2E_WEBSERVER != 1"
-              exit 1
-            fi
-            echo "base=${E2E_BASE_URL}" >> "$GITHUB_OUTPUT"
+            BASE_INPUT="${{ github.event.inputs.base_url }}"
+            BASE="${BASE_INPUT:-${{ env.E2E_BASE_URL }}}"
           fi
+          echo "base=$BASE" >> "$GITHUB_OUTPUT"
 
-      - name: Write .env.e2e for tests
+      - name: Start Next.js (if E2E_WEBSERVER=1)
+        if: env.E2E_WEBSERVER == '1'
+        env:
+          BASE: ${{ steps.cfg.outputs.base }}
+          SMOKE: ${{ env.E2E_SMOKE_PATH }}
+        shell: bash
         run: |
-          cat > .env.e2e <<EOF
-          E2E_BASE_URL=${{ steps.cfg.outputs.base }}
-          E2E_SESSION_COOKIE=${E2E_SESSION_COOKIE}
-          E2E_ACCEPT_SAME_PATH_REDIRECT=${E2E_ACCEPT_SAME_PATH_REDIRECT}
-          NEXT_TELEMETRY_DISABLED=${NEXT_TELEMETRY_DISABLED}
-          E2E_SMOKE_PATH=${E2E_SMOKE_PATH}
-          EOF
-          echo "Using E2E_BASE_URL=$(grep '^E2E_BASE_URL=' .env.e2e | cut -d= -f2-)"
+          set -euxo pipefail
+          pnpm build
+          pnpm start &> /tmp/next.log &
+          if ! npx -y wait-on@7 "$BASE$SMOKE" -t 180000; then
+            echo "::group::Next.js boot log"
+            sed -n '1,200p' /tmp/next.log || true
+            echo "::endgroup::"
+            exit 1
+          fi
+          echo "Server up on $BASE"
 
-      - name: Install Playwright browsers
-        run: pnpm exec playwright install --with-deps
+      - name: Prepare .env.e2e
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "E2E_BASE_URL=${{ steps.cfg.outputs.base }}"
+            echo "E2E_PAYWALL_ALLOW_404_AS_BLOCK=${{ env.E2E_PAYWALL_ALLOW_404_AS_BLOCK }}"
+            if [ "${{ github.event.inputs.use_session_cookie }}" = "true" ] && [ -n "${{ env.E2E_SESSION_COOKIE }}" ]; then
+              echo "E2E_SESSION_COOKIE=${{ env.E2E_SESSION_COOKIE }}"
+            fi
+          } > .env.e2e
+          printf "---- .env.e2e ----\n"
+          sed 's/=.*/=***redacted***/' .env.e2e
 
-      - name: Run E2E (GitHub + HTML reporters)
+      - name: Sanity — list tests
+        run: pnpm exec playwright test --list
+
+      - name: Run Playwright
         run: pnpm exec playwright test --reporter=github,html
 
-      - name: Upload Playwright HTML report (always)
+      - name: Upload Playwright report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: playwright-report
           path: playwright-report
-          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload test-results (traces/screenshots/videos)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: test-results
           retention-days: 7
