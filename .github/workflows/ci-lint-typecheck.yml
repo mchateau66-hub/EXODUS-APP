@@ -15,47 +15,47 @@ permissions:
   contents: read
 
 jobs:
-  lint-typecheck:
+  typecheck:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # 1) Installer PNPM (binaire) AVANT setup-node pour que "cache: pnpm" puisse fonctionner
-      - name: Setup PNPM 9.15.9
+      # ✅ Assure que 'pnpm' est sur le PATH avant le cache de setup-node
+      - name: Setup PNPM (ensure binary for cache step)
         uses: pnpm/action-setup@v4
         with:
-          version: 9.15.9
+          version: 9
           run_install: false
 
-      # 2) Node + cache pnpm basé sur **/pnpm-lock.yaml
-      - name: Setup Node.js
+      - name: Setup Node & PNPM (cache pnpm)
         uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: pnpm
-          cache-dependency-path: '**/pnpm-lock.yaml'
 
-      # 3) Install strict (échec si lockfile n'est pas synchro)
-      - name: Install deps
-        run: pnpm install --frozen-lockfile
-
-      # 4) Prisma (facultatif) — tourne seulement si un schema existe (racine ou exodus-app)
-      - name: Prisma generate (if schema exists)
-        if: ${{ hashFiles('**/prisma/schema.prisma') != '' }}
-        env:
-          PRISMA_SKIP_GENERATE: '0'
-          DATABASE_URL: 'file:./prisma/ci.db'
+      - name: Install deps (frozen)
+        id: install
         run: |
-          set -euo pipefail
-          if [ -f prisma/schema.prisma ]; then pnpm exec prisma generate; fi
-          if [ -f exodus-app/prisma/schema.prisma ]; then (cd exodus-app && pnpm exec prisma generate); fi
+          set -euxo pipefail
+          corepack enable
+          corepack prepare pnpm@9 --activate
+          pnpm install --frozen-lockfile
 
-      # 5) Lint + typecheck
+      - name: Diagnose lockfile mismatch
+        if: ${{ failure() && steps.install.outcome == 'failure' }}
+        run: |
+          echo "::group::Lockfile preview"
+          git --no-pager diff --minimal -U0 -- pnpm-lock.yaml | sed -n '1,300p' || true
+          echo "::endgroup::"
+
+      - name: Prisma generate (optional)
+        if: ${{ hashFiles('**/prisma/schema.prisma') != '' }}
+        run: pnpm prisma generate
+
       - name: ESLint
         run: pnpm run lint
 
       - name: Typecheck
-        run: pnpm run typecheck
+        run: pnpm exec tsc -p tsconfig.json --noEmit
