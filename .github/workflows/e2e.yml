@@ -10,7 +10,7 @@ on:
         required: false
         type: string
       use_session_cookie:
-        description: "Injecter E2E_SESSION_COOKIE dans .env.e2e"
+        description: "Injector secrets.E2E_SESSION_COOKIE dans .env.e2e"
         required: false
         type: boolean
         default: false
@@ -23,44 +23,52 @@ permissions:
   contents: read
 
 env:
-  # Variables référencées dans Settings → Actions → Variables
+  # Variables repo (Settings → Secrets and variables → Variables)
   E2E_BASE_URL: ${{ vars.E2E_BASE_URL || 'http://127.0.0.1:3000' }}
-  E2E_WEBSERVER: ${{ vars.E2E_WEBSERVER || '1' }}                  # 1 = lance Next local ; 0 = utilise BASE_URL tel quel
+  E2E_WEBSERVER: ${{ vars.E2E_WEBSERVER || '1' }}          # 1 = lance Next local ; 0 = utilise BASE_URL tel quel
   E2E_SMOKE_PATH: ${{ vars.E2E_SMOKE_PATH || '/api/health/live' }}
   E2E_PAYWALL_ALLOW_404_AS_BLOCK: ${{ vars.E2E_PAYWALL_ALLOW_404_AS_BLOCK || '0' }}
-
-  # Secret attendu dans Settings → Actions → Secrets
-  E2E_SESSION_COOKIE: ${{ secrets.E2E_SESSION_COOKIE }}
+  # Cache PNPM déterministe
+  PNPM_STORE_PATH: .pnpm-store
 
 jobs:
   e2e:
-    name: e2e
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node & pnpm cache
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: pnpm
 
-      - name: Install deps & browsers
+      - name: Enable Corepack & PNPM
         run: |
           set -euxo pipefail
           corepack enable
           corepack use pnpm@$(node -p "require('./package.json').packageManager.split('@')[1]")
+
+      - name: Restore pnpm store cache
+        uses: actions/cache@v4
+        with:
+          path: .pnpm-store
+          key: pnpm-store-${{ runner.os }}-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-store-${{ runner.os }}-
+
+      - name: Install deps & browsers
+        run: |
+          set -euxo pipefail
           pnpm install --frozen-lockfile
           pnpm exec playwright install --with-deps
-
 
       - name: Resolve base URL
         id: cfg
         shell: bash
         run: |
-          # Si on démarre un webserver local, on force 127.0.0.1:3000
           if [ "${{ env.E2E_WEBSERVER }}" = "1" ]; then
             BASE="http://127.0.0.1:3000"
           else
@@ -73,34 +81,22 @@ jobs:
         if: env.E2E_WEBSERVER == '1'
         env:
           BASE: ${{ steps.cfg.outputs.base }}
-          SMOKE: ${{ env.E2E_SMOKE_PATH }}
-        shell: bash
         run: |
           set -euxo pipefail
           pnpm build
-          pnpm start &> /tmp/next.log &
-          # Attend la route de santé (ou échoue avec logs)
-          if ! npx -y wait-on@7 "$BASE$SMOKE" -t 180000; then
-            echo "::group::Next.js boot log"
-            sed -n '1,200p' /tmp/next.log || true
-            echo "::endgroup::"
-            exit 1
-          fi
+          pnpm start &>/tmp/next.log &
+          npx --yes wait-on@latest "$BASE${{ env.E2E_SMOKE_PATH }}" -t 120000
           echo "Server up on $BASE"
 
       - name: Prepare .env.e2e
         shell: bash
         run: |
-          set -euo pipefail
-          {
-            echo "E2E_BASE_URL=${{ steps.cfg.outputs.base }}"
-            echo "E2E_PAYWALL_ALLOW_404_AS_BLOCK=${{ env.E2E_PAYWALL_ALLOW_404_AS_BLOCK }}"
-            if [ "${{ github.event.inputs.use_session_cookie }}" = "true" ] && [ -n "${{ env.E2E_SESSION_COOKIE }}" ]; then
-              echo "E2E_SESSION_COOKIE=${{ env.E2E_SESSION_COOKIE }}"
-            fi
-          } > .env.e2e
-          printf "---- .env.e2e ----\n"
-          sed 's/=.*/=***redacted***/' .env.e2e
+          echo "E2E_BASE_URL=${{ steps.cfg.outputs.base }}" > .env.e2e
+          echo "E2E_PAYWALL_ALLOW_404_AS_BLOCK=${{ env.E2E_PAYWALL_ALLOW_404_AS_BLOCK }}" >> .env.e2e
+          if [ "${{ github.event.inputs.use_session_cookie }}" = "true" ] && [ -n "${{ secrets.E2E_SESSION_COOKIE }}" ]; then
+            echo "E2E_SESSION_COOKIE=${{ secrets.E2E_SESSION_COOKIE }}" >> .env.e2e
+          fi
+          printf "\n--- .env.e2e ---\n"; sed 's/=.*/=***redacted***/' .env.e2e || true
 
       - name: Sanity — list tests
         run: pnpm exec playwright test --list
