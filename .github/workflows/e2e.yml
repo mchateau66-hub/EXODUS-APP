@@ -41,14 +41,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # ✅ Assure que 'pnpm' existe avant le cache
-      - name: Setup PNPM (ensure binary for cache step)
+      - name: Setup PNPM (from package.json)
         uses: pnpm/action-setup@v4
         with:
-          version: 9
+          package_json_file: package.json
           run_install: false
+          standalone: false
 
-      - name: Setup Node & PNPM
+      - name: Setup Node & PNPM cache
         uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -58,9 +58,10 @@ jobs:
         run: |
           set -euxo pipefail
           corepack enable
-          corepack prepare pnpm@9 --activate
+          corepack use pnpm@$(node -p "require('./package.json').packageManager.split('@')[1]")
           pnpm install --frozen-lockfile
           pnpm exec playwright install --with-deps
+
 
       - name: Resolve base URL
         id: cfg
