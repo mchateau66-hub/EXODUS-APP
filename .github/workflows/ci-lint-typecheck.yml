@@ -22,15 +22,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # ✅ PNPM aligné sur package.json → supprime l’avertissement "Multiple versions"
-      - name: Setup PNPM (from package.json)
-        uses: pnpm/action-setup@v4
-        with:
-            package_json_file: package.json
-            run_install: false
-            standalone: false  # on laisse PNPM sur le PATH (pas de binaire autonome)
-
-      - name: Setup Node & PNPM cache
+      # Node + cache pnpm (pas besoin de pnpm/action-setup)
+      - name: Setup Node & pnpm cache
         uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -47,7 +40,7 @@ jobs:
       - name: Diagnose lockfile mismatch
         if: ${{ failure() && steps.install.outcome == 'failure' }}
         run: |
-          echo "::group::Lockfile preview"
+          echo "::group::Lockfile diff"
           git --no-pager diff --minimal -U0 -- pnpm-lock.yaml | sed -n '1,300p' || true
           echo "::endgroup::"
 

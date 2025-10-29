@@ -41,14 +41,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup PNPM (from package.json)
-        uses: pnpm/action-setup@v4
-        with:
-          package_json_file: package.json
-          run_install: false
-          standalone: false
-
-      - name: Setup Node & PNPM cache
+      - name: Setup Node & pnpm cache
         uses: actions/setup-node@v4
         with:
           node-version: 20
