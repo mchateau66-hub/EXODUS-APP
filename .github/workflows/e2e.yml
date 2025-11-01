@@ -1,4 +1,4 @@
-name: CI – E2E
+name: CI — E2E
 
 on:
   pull_request:
@@ -10,7 +10,7 @@ on:
         required: false
         type: string
       use_session_cookie:
-        description: "Injector secrets.E2E_SESSION_COOKIE dans .env.e2e"
+        description: "Injecter E2E_SESSION_COOKIE dans .env.e2e"
         required: false
         type: boolean
         default: false
@@ -23,13 +23,14 @@ permissions:
   contents: read
 
 env:
-  # Variables repo (Settings → Secrets and variables → Variables)
-  E2E_BASE_URL: ${{ vars.E2E_BASE_URL || 'http://127.0.0.1:3000' }}
-  E2E_WEBSERVER: ${{ vars.E2E_WEBSERVER || '1' }}          # 1 = lance Next local ; 0 = utilise BASE_URL tel quel
-  E2E_SMOKE_PATH: ${{ vars.E2E_SMOKE_PATH || '/api/health/live' }}
+  TZ: Europe/Paris
+
+  # Repo/Org vars & secrets attendus (avec valeurs par défaut)
+  E2E_BASE_URL: ${{ inputs.base_url || vars.E2E_BASE_URL || 'http://127.0.0.1:3000' }}
+  E2E_WEBSERVER: ${{ vars.E2E_WEBSERVER || '1' }}              # "1" => lance Next local ; "0" => pointe vers E2E_BASE_URL
+  E2E_SMOKE_PATH: ${{ vars.E2E_SMOKE_PATH || '/api/health' }}  # route de smoke
   E2E_PAYWALL_ALLOW_404_AS_BLOCK: ${{ vars.E2E_PAYWALL_ALLOW_404_AS_BLOCK || '0' }}
-  # Cache PNPM déterministe
-  PNPM_STORE_PATH: .pnpm-store
+  E2E_SESSION_COOKIE: ${{ secrets.E2E_SESSION_COOKIE }}
 
 jobs:
   e2e:
@@ -39,69 +40,84 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: pnpm
+          cache-dependency-path: '**/pnpm-lock.yaml'
 
-      - name: Enable Corepack & PNPM
-        run: |
-          set -euxo pipefail
-          corepack enable
-          corepack use pnpm@$(node -p "require('./package.json').packageManager.split('@')[1]")
-
-      - name: Restore pnpm store cache
-        uses: actions/cache@v4
+      - name: Setup PNPM (standalone)
+        uses: pnpm/action-setup@v4
         with:
-          path: .pnpm-store
-          key: pnpm-store-${{ runner.os }}-${{ hashFiles('**/pnpm-lock.yaml') }}
-          restore-keys: |
-            pnpm-store-${{ runner.os }}-
+          version: 9.15.9
+          standalone: true
+          run_install: false
 
       - name: Install deps & browsers
         run: |
           set -euxo pipefail
-          pnpm install --frozen-lockfile
+          pnpm install --no-frozen-lockfile
           pnpm exec playwright install --with-deps
+        # Quand le lockfile est clean: remplace par --frozen-lockfile
 
+      # Calcule la BASE à utiliser dans le job
       - name: Resolve base URL
         id: cfg
         shell: bash
         run: |
-          if [ "${{ env.E2E_WEBSERVER }}" = "1" ]; then
-            BASE="http://127.0.0.1:3000"
+          if [ "${E2E_WEBSERVER}" = "1" ]; then
+            echo "base=http://127.0.0.1:3000" >> "$GITHUB_OUTPUT"
           else
-            BASE_INPUT="${{ github.event.inputs.base_url }}"
-            BASE="${BASE_INPUT:-${{ env.E2E_BASE_URL }}}"
+            echo "base=${E2E_BASE_URL}" >> "$GITHUB_OUTPUT"
           fi
-          echo "base=$BASE" >> "$GITHUB_OUTPUT"
 
       - name: Start Next.js (if E2E_WEBSERVER=1)
-        if: env.E2E_WEBSERVER == '1'
+        if: ${{ env.E2E_WEBSERVER == '1' }}
         env:
           BASE: ${{ steps.cfg.outputs.base }}
         run: |
           set -euxo pipefail
           pnpm build
-          pnpm start &>/tmp/next.log &
-          npx --yes wait-on@latest "$BASE${{ env.E2E_SMOKE_PATH }}" -t 120000
-          echo "Server up on $BASE"
+          pnpm start &                     # Next.js prod server on :3000
+          # Attendre l'ouverture du port puis faire une smoke HTTP
+          npx --yes wait-on -t 120000 "tcp:127.0.0.1:3000"
+          code=$(curl -sk -o /dev/null -w "%{http_code}" "$BASE${E2E_SMOKE_PATH}" || true)
+          echo "Smoke $BASE${E2E_SMOKE_PATH} -> HTTP $code"
+          if [ "$code" = "200" ]; then
+            exit 0
+          elif [ "$code" = "404" ] && [ "${E2E_PAYWALL_ALLOW_404_AS_BLOCK}" = "1" ]; then
+            echo "404 accepté comme blocage paywall"
+            exit 0
+          else
+            echo "::error::Unexpected HTTP $code on $BASE${E2E_SMOKE_PATH}"
+            exit 1
+          fi
 
       - name: Prepare .env.e2e
         shell: bash
+        env:
+          BASE: ${{ steps.cfg.outputs.base }}
         run: |
-          echo "E2E_BASE_URL=${{ steps.cfg.outputs.base }}" > .env.e2e
-          echo "E2E_PAYWALL_ALLOW_404_AS_BLOCK=${{ env.E2E_PAYWALL_ALLOW_404_AS_BLOCK }}" >> .env.e2e
-          if [ "${{ github.event.inputs.use_session_cookie }}" = "true" ] && [ -n "${{ secrets.E2E_SESSION_COOKIE }}" ]; then
-            echo "E2E_SESSION_COOKIE=${{ secrets.E2E_SESSION_COOKIE }}" >> .env.e2e
-          fi
-          printf "\n--- .env.e2e ---\n"; sed 's/=.*/=***redacted***/' .env.e2e || true
-
-      - name: Sanity — list tests
-        run: pnpm exec playwright test --list
+          set -euxo pipefail
+          {
+            echo "E2E_BASE_URL=$BASE"
+            echo "E2E_PAYWALL_ALLOW_404_AS_BLOCK=${E2E_PAYWALL_ALLOW_404_AS_BLOCK}"
+            if [ "${{ inputs.use_session_cookie }}" = "true" ] && [ -n "${E2E_SESSION_COOKIE}" ]; then
+              echo "E2E_SESSION_COOKIE=${E2E_SESSION_COOKIE}"
+            fi
+          } > .env.e2e
+          # log (redacted)
+          sed -n '1,200p' .env.e2e | sed 's/=.*$/=***redacted***)/' || true
 
       - name: Run Playwright
+        env:
+          E2E_BASE_URL: ${{ steps.cfg.outputs.base }}
+          E2E_PAYWALL_ALLOW_404_AS_BLOCK: ${{ env.E2E_PAYWALL_ALLOW_404_AS_BLOCK }}
+          E2E_SESSION_COOKIE: ${{ env.E2E_SESSION_COOKIE }}
         run: pnpm exec playwright test --reporter=github,html
 
       - name: Upload Playwright report
@@ -111,6 +127,10 @@ jobs:
           name: playwright-report
           path: playwright-report
           retention-days: 7
+          if-no-files-found: warn
+          compression-level: 6
+          overwrite: false
+          include-hidden-files: false
 
       - name: Upload test-results (traces/screenshots/videos)
         if: always()
@@ -119,3 +139,7 @@ jobs:
           name: test-results
           path: test-results
           retention-days: 7
+          if-no-files-found: warn
+          compression-level: 6
+          overwrite: false
+          include-hidden-files: false
