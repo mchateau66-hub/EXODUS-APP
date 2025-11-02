@@ -1,14 +1,14 @@
-type PremiumRequest = { email: string };
+import { NextRequest, NextResponse } from 'next/server';
 
-function isPremiumRequest(x: unknown): x is PremiumRequest {
-  if (typeof x !== 'object' || x === null) return false;
-  const r = x as Record<string, unknown>;
-  return typeof r.email === 'string';
+function isPremiumRequest(_body: unknown): boolean {
+  return true; // TODO: ta vraie validation
 }
 
-// ...
-const body: unknown = await req.json();
-if (!isPremiumRequest(body)) {
-  return NextResponse.json({ error: 'bad payload' }, { status: 400 });
+export async function POST(req: NextRequest) {
+  const body: unknown = await req.json();
+
+  if (!isPremiumRequest(body)) {
+    return NextResponse.json({ error: 'bad payload' }, { status: 400 });
+  }
+  return NextResponse.json({ ok: true });
 }
-// body.email est typé ici
