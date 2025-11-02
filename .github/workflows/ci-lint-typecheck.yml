@@ -24,20 +24,21 @@ jobs:
         uses: actions/checkout@v4
         with: { fetch-depth: 1 }
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: pnpm
-          cache-dependency-path: '**/pnpm-lock.yaml'
-
-      # ✅ PNPM binaire autonome — aucun corepack ici
+      # 1) Installer PNPM avant setup-node (pour le cache pnpm)
       - name: Setup PNPM (standalone)
         uses: pnpm/action-setup@v4
         with:
           version: 9.15.9
           standalone: true
           run_install: false
+
+      # 2) Node + cache pnpm (maintenant pnpm est dispo dans le PATH)
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: '**/pnpm-lock.yaml'
 
       - name: Install deps (no frozen lockfile)
         run: pnpm install --no-frozen-lockfile
@@ -49,4 +50,12 @@ jobs:
           PRISMA_SKIP_GENERATE: '0'
           DATABASE_URL: 'file:./prisma/ci.db'
         run: |
-          set -euxo
+          set -euxo pipefail
+          if [ -f prisma/schema.prisma ]; then pnpm prisma generate; fi
+          if [ -f exodus-app/prisma/schema.prisma ]; then (cd exodus-app && pnpm prisma generate); fi
+
+      - name: ESLint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck

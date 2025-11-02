@@ -23,7 +23,6 @@ permissions:
 
 env:
   TZ: Europe/Paris
-  # Vars/Secrets (avec valeurs par défaut sûres)
   E2E_BASE_URL: ${{ inputs.base_url || vars.E2E_BASE_URL || 'http://127.0.0.1:3000' }}
   E2E_WEBSERVER: ${{ vars.E2E_WEBSERVER || '1' }}              # 1 => lance Next local ; 0 => cible E2E_BASE_URL
   E2E_SMOKE_PATH: ${{ vars.E2E_SMOKE_PATH || '/api/health' }}
@@ -34,21 +33,12 @@ jobs:
   e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
+        with: { fetch-depth: 1 }
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: pnpm
-          cache-dependency-path: '**/pnpm-lock.yaml'
-
-      # PNPM standalone: aucun corepack, aucune install implicite
+      # 1) PNPM d'abord (pour que setup-node puisse "cache: pnpm")
       - name: Setup PNPM (standalone)
         uses: pnpm/action-setup@v4
         with:
@@ -56,14 +46,20 @@ jobs:
           standalone: true
           run_install: false
 
+      # 2) Node + cache pnpm
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: '**/pnpm-lock.yaml'
+
       - name: Install deps & browsers
         run: |
           set -euxo pipefail
           pnpm install --no-frozen-lockfile
           pnpm exec playwright install --with-deps
-        # Quand le lockfile est clean : passe à --frozen-lockfile
 
-      # ✅ UNIQUE step de résolution de la base URL
       - name: Resolve base URL
         id: cfg
         shell: bash
@@ -101,7 +97,6 @@ jobs:
               echo "E2E_SESSION_COOKIE=${E2E_SESSION_COOKIE}"
             fi
           } > .env.e2e
-          # Log redacted du cookie (si présent)
           sed -n '1,200p' .env.e2e | sed -E 's/(E2E_SESSION_COOKIE=).*/\1***redacted***/'
 
       - name: Run Playwright
