@@ -1,8 +1,7 @@
 name: CI — E2E
 
 on:
-  pull_request:
-    branches: [ main, staging ]
+  pull_request: { branches: [ main, staging ] }
   workflow_dispatch:
     inputs:
       base_url:
@@ -24,11 +23,10 @@ permissions:
 
 env:
   TZ: Europe/Paris
-
-  # Repo/Org vars & secrets attendus (avec valeurs par défaut)
+  # Vars/Secrets (avec valeurs par défaut sûres)
   E2E_BASE_URL: ${{ inputs.base_url || vars.E2E_BASE_URL || 'http://127.0.0.1:3000' }}
-  E2E_WEBSERVER: ${{ vars.E2E_WEBSERVER || '1' }}              # "1" => lance Next local ; "0" => pointe vers E2E_BASE_URL
-  E2E_SMOKE_PATH: ${{ vars.E2E_SMOKE_PATH || '/api/health' }}  # route de smoke
+  E2E_WEBSERVER: ${{ vars.E2E_WEBSERVER || '1' }}              # 1 => lance Next local ; 0 => cible E2E_BASE_URL
+  E2E_SMOKE_PATH: ${{ vars.E2E_SMOKE_PATH || '/api/health' }}
   E2E_PAYWALL_ALLOW_404_AS_BLOCK: ${{ vars.E2E_PAYWALL_ALLOW_404_AS_BLOCK || '0' }}
   E2E_SESSION_COOKIE: ${{ secrets.E2E_SESSION_COOKIE }}
 
@@ -50,6 +48,7 @@ jobs:
           cache: pnpm
           cache-dependency-path: '**/pnpm-lock.yaml'
 
+      # PNPM standalone: aucun corepack, aucune install implicite
       - name: Setup PNPM (standalone)
         uses: pnpm/action-setup@v4
         with:
@@ -62,9 +61,9 @@ jobs:
           set -euxo pipefail
           pnpm install --no-frozen-lockfile
           pnpm exec playwright install --with-deps
-        # Quand le lockfile est clean: remplace par --frozen-lockfile
+        # Quand le lockfile est clean : passe à --frozen-lockfile
 
-      # Calcule la BASE à utiliser dans le job
+      # ✅ UNIQUE step de résolution de la base URL
       - name: Resolve base URL
         id: cfg
         shell: bash
@@ -82,23 +81,15 @@ jobs:
         run: |
           set -euxo pipefail
           pnpm build
-          pnpm start &                     # Next.js prod server on :3000
-          # Attendre l'ouverture du port puis faire une smoke HTTP
+          pnpm start &
           npx --yes wait-on -t 120000 "tcp:127.0.0.1:3000"
           code=$(curl -sk -o /dev/null -w "%{http_code}" "$BASE${E2E_SMOKE_PATH}" || true)
           echo "Smoke $BASE${E2E_SMOKE_PATH} -> HTTP $code"
-          if [ "$code" = "200" ]; then
-            exit 0
-          elif [ "$code" = "404" ] && [ "${E2E_PAYWALL_ALLOW_404_AS_BLOCK}" = "1" ]; then
-            echo "404 accepté comme blocage paywall"
-            exit 0
-          else
-            echo "::error::Unexpected HTTP $code on $BASE${E2E_SMOKE_PATH}"
-            exit 1
-          fi
+          if [ "$code" = "200" ]; then exit 0; fi
+          if [ "$code" = "404" ] && [ "${E2E_PAYWALL_ALLOW_404_AS_BLOCK}" = "1" ]; then exit 0; fi
+          echo "::error::Unexpected HTTP $code on $BASE${E2E_SMOKE_PATH}"; exit 1
 
       - name: Prepare .env.e2e
-        shell: bash
         env:
           BASE: ${{ steps.cfg.outputs.base }}
         run: |
@@ -110,8 +101,8 @@ jobs:
               echo "E2E_SESSION_COOKIE=${E2E_SESSION_COOKIE}"
             fi
           } > .env.e2e
-          # log (redacted)
-          sed -n '1,200p' .env.e2e | sed 's/=.*$/=***redacted***)/' || true
+          # Log redacted du cookie (si présent)
+          sed -n '1,200p' .env.e2e | sed -E 's/(E2E_SESSION_COOKIE=).*/\1***redacted***/'
 
       - name: Run Playwright
         env:
@@ -129,8 +120,6 @@ jobs:
           retention-days: 7
           if-no-files-found: warn
           compression-level: 6
-          overwrite: false
-          include-hidden-files: false
 
       - name: Upload test-results (traces/screenshots/videos)
         if: always()
@@ -141,5 +130,3 @@ jobs:
           retention-days: 7
           if-no-files-found: warn
           compression-level: 6
-          overwrite: false
-          include-hidden-files: false
