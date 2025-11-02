@@ -1,12 +1,9 @@
 {
-  "extends": "../tsconfig.json",
-  "compilerOptions": {
-    "types": ["@playwright/test", "node"],
-    "lib": ["ESNext", "DOM"],
-    "noEmit": true,
-    "skipLibCheck": true,
-    "strict": false
-  },
-  "include": ["./**/*.ts", "./**/*.tsx"],
-  "exclude": []            // <- important : on neutralise l'exclude hérité
-}
+    "extends": "../tsconfig.json",
+    "compilerOptions": {
+      "noEmit": true,
+      "types": ["@playwright/test"]
+    },
+    "include": ["./**/*.ts", "../playwright.config.ts"]
+  }
+  
