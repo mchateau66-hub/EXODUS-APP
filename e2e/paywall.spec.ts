@@ -18,7 +18,7 @@ test.describe('Paywall /pro', () => {
   });
 
   test.beforeEach(async ({ context }) => {
-    // si un cookie de session est fourni via ENV, on l'injecte pour le test courant
+    // Si un cookie de session est fourni via ENV, on l’injecte pour le test courant
     await setSessionCookieFromEnv(context);
   });
 
@@ -29,8 +29,10 @@ test.describe('Paywall /pro', () => {
     const first = await firstRedirectResponse(res);
     expect(first).not.toBeNull();
 
+    // Strict: 307 + header Location exact
     await expectRedirectToPaywall(first!, '/pro');
 
+    // URL finale
     const u = new URL(page.url(), BASE_URL);
     expect(u.pathname).toBe('/paywall');
 
@@ -51,10 +53,10 @@ test.describe('Paywall /pro', () => {
     expect(readStatus(r)).toBe(200);
   });
 
-  // ⛳️ Skip si PAS de token
-  test.skip(!process.env.E2E_BEARER_TOKEN, 'E2E_BEARER_TOKEN manquant');
-
   test('authorized via Authorization: Bearer <token> → /pro is 200', async ({ page }) => {
+    // ⛳️ Skip uniquement ce test si pas de token
+    test.skip(!process.env.E2E_BEARER_TOKEN, 'E2E_BEARER_TOKEN manquant');
+
     const r = await page.request.get('/pro', {
       headers: { authorization: `Bearer ${process.env.E2E_BEARER_TOKEN}` },
     });

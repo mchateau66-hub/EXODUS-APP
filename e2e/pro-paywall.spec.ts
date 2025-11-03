@@ -11,7 +11,7 @@ test.describe('Paywall /pro (cas détaillés)', () => {
     // URL finale (fiable) pour lire pathname/searchParams
     const u = new URL(page.url(), BASE_URL);
 
-    // Si ce n'est PAS /paywall, on tolère une API-block (401/403/404) quand le flag est ON
+    // Si ce n’est PAS /paywall, on tolère une API-block (401/403/404) quand le flag est ON
     if (u.pathname !== '/paywall') {
       const allow404 = process.env.E2E_PAYWALL_ALLOW_404_AS_BLOCK === '1';
       const status = readStatus(res);
@@ -28,7 +28,7 @@ test.describe('Paywall /pro (cas détaillés)', () => {
   });
 
   test('Paywall /pro | session cookie → 200 /pro', async ({ page }) => {
-    // pose un cookie "session" (ex: plan premium)
+    // Pose un cookie "session" (ex: plan premium)
     await login(page, { plan: 'premium' });
 
     const r = await page.goto(FROM, { waitUntil: 'domcontentloaded' });
@@ -38,16 +38,16 @@ test.describe('Paywall /pro (cas détaillés)', () => {
     expect(u.pathname).toBe('/pro');
   });
 
-  // ⛳️ Skip si PAS de token en ENV (fix du sens)
-  test.skip(!process.env.E2E_BEARER_TOKEN, 'E2E_BEARER_TOKEN manquant');
-
   test('Paywall /pro | Authorization: Bearer <token> → 200 /pro', async ({ browser }) => {
+    // ⛳️ Skip uniquement ce test si pas de token
+    test.skip(!process.env.E2E_BEARER_TOKEN, 'E2E_BEARER_TOKEN manquant');
+
     const ctx = await browser.newContext({
       baseURL: BASE_URL,
       extraHTTPHeaders: { authorization: `Bearer ${process.env.E2E_BEARER_TOKEN}` },
     });
-    const page = await ctx.newPage();
 
+    const page = await ctx.newPage();
     const r = await page.goto(FROM, { waitUntil: 'domcontentloaded' });
     expect(r?.ok()).toBeTruthy();
 
