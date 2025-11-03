@@ -25,7 +25,7 @@ permissions:
 env:
   TZ: Europe/Paris
   E2E_BASE_URL: ${{ inputs.base_url || vars.E2E_BASE_URL || 'http://127.0.0.1:3000' }}
-  E2E_WEBSERVER: ${{ vars.E2E_WEBSERVER || '1' }}           # 1 => lance Next local ; 0 => cible E2E_BASE_URL
+  E2E_WEBSERVER: ${{ vars.E2E_WEBSERVER || '1' }}
   E2E_SMOKE_PATH: ${{ vars.E2E_SMOKE_PATH || '/api/health' }}
   E2E_PAYWALL_ALLOW_404_AS_BLOCK: ${{ vars.E2E_PAYWALL_ALLOW_404_AS_BLOCK || '0' }}
   E2E_SESSION_COOKIE: ${{ secrets.E2E_SESSION_COOKIE }}
@@ -34,10 +34,12 @@ jobs:
   e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with: { fetch-depth: 1 }
+        with:
+          fetch-depth: 1
 
       - name: Setup PNPM (standalone)
         uses: pnpm/action-setup@v4
@@ -53,26 +55,31 @@ jobs:
           cache: pnpm
           cache-dependency-path: '**/pnpm-lock.yaml'
 
-      - name: Install deps (dev) + ensure @playwright/test then browsers
+      - name: Install deps (dev) + ensure @playwright/test then browsers + ensure Next
         env:
-          NODE_ENV: "" # on veut les devDeps en CI
+          NODE_ENV: ""  # force install des devDeps
         run: |
-          set -euxo pipefail
+          set -euo pipefail
           pnpm install --no-frozen-lockfile --prod=false
 
-          # Garantir la présence de @playwright/test (idempotent)
+          # --- Ensure @playwright/test present
           node -e "require.resolve('@playwright/test/package.json')" || pnpm add -D @playwright/test@latest
 
-          # Version locale (ou latest en fallback), puis install des navigateurs
-          VER=$(node -p "(()=>{try{return require('@playwright/test/package.json').version}catch(e){return 'latest'}})()")
-          echo "Using Playwright version: $VER"
-          npx @playwright/test@"$VER" install --with-deps
+          # Install playwright browsers matching local @playwright/test version
+          PW_VER=$(node -p "require('@playwright/test/package.json').version")
+          echo "Using Playwright version: $PW_VER"
+          npx --yes @playwright/test@"$PW_VER" install --with-deps
+
+          # --- Ensure Next present so 'next build' works even if cache hiccups
+          NEXT_VER=$(node -p "try{(require('./package.json').dependencies?.next)||(require('./package.json').devDependencies?.next)}catch{''} || ''")
+          [ -z "$NEXT_VER" ] && NEXT_VER="latest"
+          node -e "require.resolve('next/package.json')" || pnpm add -D next@"$NEXT_VER"
 
       - name: Resolve base URL
         id: cfg
         shell: bash
         run: |
-          if [[ "${E2E_WEBSERVER}" == "1" ]]; then
+          if [ "${E2E_WEBSERVER}" = "1" ]; then
             echo "base=http://127.0.0.1:3000" >> "$GITHUB_OUTPUT"
           else
             echo "base=${E2E_BASE_URL}" >> "$GITHUB_OUTPUT"
@@ -83,29 +90,27 @@ jobs:
         env:
           BASE: ${{ steps.cfg.outputs.base }}
         run: |
-          set -euxo pipefail
+          set -euo pipefail
           pnpm build
           pnpm start &
           npx --yes wait-on -t 120000 "tcp:127.0.0.1:3000"
-
           http_code=$(curl -sk -o /dev/null -w "%{http_code}" "$BASE${E2E_SMOKE_PATH}" || true)
-          if [[ "$http_code" == "200" ]]; then exit 0; fi
-          if [[ "$http_code" == "404" && "${E2E_PAYWALL_ALLOW_404_AS_BLOCK}" == "1" ]]; then exit 0; fi
+          if [ "$http_code" = "200" ]; then exit 0; fi
+          if [ "$http_code" = "404" ] && [ "${E2E_PAYWALL_ALLOW_404_AS_BLOCK}" = "1" ]; then exit 0; fi
           echo "::error::Unexpected HTTP code on $BASE${E2E_SMOKE_PATH}: $http_code"; exit 1
 
       - name: Prepare .env.e2e
         env:
           BASE: ${{ steps.cfg.outputs.base }}
         run: |
-          set -euxo pipefail
+          set -euo pipefail
           {
             echo "E2E_BASE_URL=$BASE"
             echo "E2E_PAYWALL_ALLOW_404_AS_BLOCK=${E2E_PAYWALL_ALLOW_404_AS_BLOCK}"
-            if [[ "${{ inputs.use_session_cookie }}" == "true" && -n "${E2E_SESSION_COOKIE}" ]]; then
+            if [ "${{ inputs.use_session_cookie }}" = "true" ] && [ -n "${E2E_SESSION_COOKIE}" ]; then
               echo "E2E_SESSION_COOKIE=${E2E_SESSION_COOKIE}"
             fi
           } > .env.e2e
-          # Log safe
           sed -n '1,200p' .env.e2e | sed -E 's/(E2E_SESSION_COOKIE=).*/\1***redacted***/'
 
       - name: Run Playwright

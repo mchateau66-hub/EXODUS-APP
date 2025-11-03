@@ -12,6 +12,7 @@ jobs:
   typecheck:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -33,20 +34,24 @@ jobs:
 
       - name: Install deps (with devDependencies) + ensure eslint/@playwright/test/next/eslint-config-next
         env:
-          NODE_ENV: "" # inclure devDeps
+          NODE_ENV: ""  # include devDeps
         run: |
-          set -euxo pipefail
+          set -euo pipefail
           pnpm install --no-frozen-lockfile --prod=false
 
-          # Récupère la version de next déclarée (dep ou devDep), sinon 'latest'
-          NEXT_VER=$(node -p "(()=>{try{const p=require('./package.json');return (p.dependencies&&p.dependencies.next)||(p.devDependencies&&p.devDependencies.next)||''}catch(e){return ''}})()")
-          [ -z "$NEXT_VER" ] && NEXT_VER=latest
-
-          # Garantir les binaires/paquets nécessaires (idempotent)
+          # Ensure eslint present (pin to 8.x to match plugins)
           node -e "require.resolve('eslint/package.json')" || pnpm add -D eslint@8.57.0
+
+          # Ensure @playwright/test present (used by e2e tsconfig types)
           node -e "require.resolve('@playwright/test/package.json')" || pnpm add -D @playwright/test@latest
-          node -e "require.resolve('next/package.json')" || pnpm add -D next@"$NEXT_VER"
+
+          # Ensure eslint-config-next matches local next (fixes 'extends: next/core-web-vitals')
+          NEXT_VER=$(node -p "try{(require('./package.json').dependencies?.next)||(require('./package.json').devDependencies?.next)}catch{''} || ''")
+          [ -z "$NEXT_VER" ] && NEXT_VER="latest"
           node -e "require.resolve('eslint-config-next/package.json')" || pnpm add -D eslint-config-next@"$NEXT_VER"
+
+          # Optional (defensive): make Next resolvable for eslint plugins that import it
+          node -e "require.resolve('next/package.json')" || pnpm add -D next@"$NEXT_VER"
 
       - name: ESLint (app)
         run: pnpm run lint
