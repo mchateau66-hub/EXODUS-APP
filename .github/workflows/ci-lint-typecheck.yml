@@ -1,30 +1,21 @@
-name: CI — Lint & Typecheck
+name: Typecheck & Lint
 
 on:
   pull_request: { branches: [ main, staging ] }
-  push:         { branches: [ main ] }
-  workflow_dispatch:
-
-concurrency:
-  group: ci-lint-typecheck-${{ github.ref }}
-  cancel-in-progress: true
+  workflow_dispatch: {}
 
 permissions:
   contents: read
 
-env:
-  TZ: Europe/Paris
-
 jobs:
   typecheck:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with: { fetch-depth: 1 }
 
-      # 1) Installer PNPM avant setup-node (pour le cache pnpm)
       - name: Setup PNPM (standalone)
         uses: pnpm/action-setup@v4
         with:
@@ -32,7 +23,6 @@ jobs:
           standalone: true
           run_install: false
 
-      # 2) Node + cache pnpm (maintenant pnpm est dispo dans le PATH)
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -40,22 +30,17 @@ jobs:
           cache: pnpm
           cache-dependency-path: '**/pnpm-lock.yaml'
 
-      - name: Install deps (no frozen lockfile)
-        run: pnpm install --no-frozen-lockfile
-        # Quand le lockfile est clean: passe à --frozen-lockfile
+      - name: Install deps (with devDependencies)
+        run: pnpm install --no-frozen-lockfile --prod=false
 
-      - name: Prisma generate (if schema exists)
-        if: ${{ hashFiles('**/prisma/schema.prisma') != '' }}
-        env:
-          PRISMA_SKIP_GENERATE: '0'
-          DATABASE_URL: 'file:./prisma/ci.db'
-        run: |
-          set -euxo pipefail
-          if [ -f prisma/schema.prisma ]; then pnpm prisma generate; fi
-          if [ -f exodus-app/prisma/schema.prisma ]; then (cd exodus-app && pnpm prisma generate); fi
+      - name: ESLint (app)
+        run: pnpm run lint
 
-      - name: ESLint
-        run: pnpm lint
+      - name: ESLint (e2e)
+        run: pnpm run lint:e2e
 
-      - name: Typecheck
-        run: pnpm typecheck
+      - name: Typecheck (app)
+        run: pnpm run typecheck
+
+      - name: Typecheck (e2e)
+        run: pnpm run typecheck:e2e

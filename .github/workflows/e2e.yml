@@ -24,7 +24,7 @@ permissions:
 env:
   TZ: Europe/Paris
   E2E_BASE_URL: ${{ inputs.base_url || vars.E2E_BASE_URL || 'http://127.0.0.1:3000' }}
-  E2E_WEBSERVER: ${{ vars.E2E_WEBSERVER || '1' }}   # 1 => lance Next local ; 0 => cible E2E_BASE_URL
+  E2E_WEBSERVER: ${{ vars.E2E_WEBSERVER || '1' }}
   E2E_SMOKE_PATH: ${{ vars.E2E_SMOKE_PATH || '/api/health' }}
   E2E_PAYWALL_ALLOW_404_AS_BLOCK: ${{ vars.E2E_PAYWALL_ALLOW_404_AS_BLOCK || '0' }}
   E2E_SESSION_COOKIE: ${{ secrets.E2E_SESSION_COOKIE }}
@@ -38,7 +38,6 @@ jobs:
         uses: actions/checkout@v4
         with: { fetch-depth: 1 }
 
-      # 1) PNPM d'abord (pour que setup-node puisse "cache: pnpm")
       - name: Setup PNPM (standalone)
         uses: pnpm/action-setup@v4
         with:
@@ -46,7 +45,6 @@ jobs:
           standalone: true
           run_install: false
 
-      # 2) Node + cache pnpm
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -55,10 +53,14 @@ jobs:
           cache-dependency-path: '**/pnpm-lock.yaml'
 
       - name: Install deps & browsers
+        id: deps
+        shell: bash
         run: |
           set -euxo pipefail
           pnpm install --no-frozen-lockfile --prod=false
-          pnpm exec playwright install --with-deps
+          # aligne les navigateurs Playwright sans exiger la dep locale "playwright"
+          VER="$(node -p "require('@playwright/test/package.json').version")"
+          npx -y playwright@"$VER" install --with-deps
 
       - name: Resolve base URL
         id: cfg
