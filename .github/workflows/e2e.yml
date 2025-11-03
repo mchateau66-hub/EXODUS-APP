@@ -1,7 +1,8 @@
-name: CI — E2E
+name: CI – E2E
 
 on:
-  pull_request: { branches: [ main, staging ] }
+  pull_request:
+    branches: [ main, staging ]
   workflow_dispatch:
     inputs:
       base_url:
@@ -24,7 +25,7 @@ permissions:
 env:
   TZ: Europe/Paris
   E2E_BASE_URL: ${{ inputs.base_url || vars.E2E_BASE_URL || 'http://127.0.0.1:3000' }}
-  E2E_WEBSERVER: ${{ vars.E2E_WEBSERVER || '1' }}
+  E2E_WEBSERVER: ${{ vars.E2E_WEBSERVER || '1' }}           # 1 => lance Next local ; 0 => cible E2E_BASE_URL
   E2E_SMOKE_PATH: ${{ vars.E2E_SMOKE_PATH || '/api/health' }}
   E2E_PAYWALL_ALLOW_404_AS_BLOCK: ${{ vars.E2E_PAYWALL_ALLOW_404_AS_BLOCK || '0' }}
   E2E_SESSION_COOKIE: ${{ secrets.E2E_SESSION_COOKIE }}
@@ -54,24 +55,24 @@ jobs:
 
       - name: Install deps (dev) + ensure @playwright/test then browsers
         env:
-          NODE_ENV: ""
+          NODE_ENV: "" # on veut les devDeps en CI
         run: |
           set -euxo pipefail
           pnpm install --no-frozen-lockfile --prod=false
 
-          # Garantit la présence d'@playwright/test
+          # Garantir la présence de @playwright/test (idempotent)
           node -e "require.resolve('@playwright/test/package.json')" || pnpm add -D @playwright/test@latest
 
-          # Version locale (ou latest en fallback), puis install navigateurs
-          VER=$(node -p "require('@playwright/test/package.json').version || 'latest'")
+          # Version locale (ou latest en fallback), puis install des navigateurs
+          VER=$(node -p "(()=>{try{return require('@playwright/test/package.json').version}catch(e){return 'latest'}})()")
           echo "Using Playwright version: $VER"
-          npx -y @playwright/test@"$VER" install --with-deps
+          npx @playwright/test@"$VER" install --with-deps
 
       - name: Resolve base URL
         id: cfg
         shell: bash
         run: |
-          if [ "${E2E_WEBSERVER}" = "1" ]; then
+          if [[ "${E2E_WEBSERVER}" == "1" ]]; then
             echo "base=http://127.0.0.1:3000" >> "$GITHUB_OUTPUT"
           else
             echo "base=${E2E_BASE_URL}" >> "$GITHUB_OUTPUT"
@@ -86,9 +87,10 @@ jobs:
           pnpm build
           pnpm start &
           npx --yes wait-on -t 120000 "tcp:127.0.0.1:3000"
+
           http_code=$(curl -sk -o /dev/null -w "%{http_code}" "$BASE${E2E_SMOKE_PATH}" || true)
-          if [ "$http_code" = "200" ]; then exit 0; fi
-          if [ "$http_code" = "404" ] && [ "${E2E_PAYWALL_ALLOW_404_AS_BLOCK}" = "1" ]; then exit 0; fi
+          if [[ "$http_code" == "200" ]]; then exit 0; fi
+          if [[ "$http_code" == "404" && "${E2E_PAYWALL_ALLOW_404_AS_BLOCK}" == "1" ]]; then exit 0; fi
           echo "::error::Unexpected HTTP code on $BASE${E2E_SMOKE_PATH}: $http_code"; exit 1
 
       - name: Prepare .env.e2e
@@ -99,10 +101,11 @@ jobs:
           {
             echo "E2E_BASE_URL=$BASE"
             echo "E2E_PAYWALL_ALLOW_404_AS_BLOCK=${E2E_PAYWALL_ALLOW_404_AS_BLOCK}"
-            if [ "${{ inputs.use_session_cookie }}" = "true" ] && [ -n "${E2E_SESSION_COOKIE}" ]; then
+            if [[ "${{ inputs.use_session_cookie }}" == "true" && -n "${E2E_SESSION_COOKIE}" ]]; then
               echo "E2E_SESSION_COOKIE=${E2E_SESSION_COOKIE}"
             fi
           } > .env.e2e
+          # Log safe
           sed -n '1,200p' .env.e2e | sed -E 's/(E2E_SESSION_COOKIE=).*/\1***redacted***/'
 
       - name: Run Playwright
@@ -119,6 +122,8 @@ jobs:
           name: playwright-report
           path: playwright-report
           retention-days: 7
+          if-no-files-found: warn
+          compression-level: 6
 
       - name: Upload test-results (traces/screenshots/videos)
         if: always()
@@ -127,3 +132,5 @@ jobs:
           name: test-results
           path: test-results
           retention-days: 7
+          if-no-files-found: warn
+          compression-level: 6

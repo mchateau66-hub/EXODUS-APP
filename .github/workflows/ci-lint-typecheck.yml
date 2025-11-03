@@ -1,7 +1,8 @@
 name: Typecheck & Lint
 
 on:
-  pull_request: { branches: [ main, staging ] }
+  pull_request:
+    branches: [ main, staging ]
   workflow_dispatch: {}
 
 permissions:
@@ -30,16 +31,22 @@ jobs:
           cache: pnpm
           cache-dependency-path: '**/pnpm-lock.yaml'
 
-      - name: Install deps (with devDependencies) + ensure eslint/@playwright/test
+      - name: Install deps (with devDependencies) + ensure eslint/@playwright/test/next/eslint-config-next
         env:
-          NODE_ENV: ""     # inclure devDeps
+          NODE_ENV: "" # inclure devDeps
         run: |
           set -euxo pipefail
           pnpm install --no-frozen-lockfile --prod=false
 
-          # Vérifs fiables avec require.resolve (pnpm)
-          node -e "require.resolve('eslint/package.json')" || pnpm add -D eslint@^8.57.0
+          # Récupère la version de next déclarée (dep ou devDep), sinon 'latest'
+          NEXT_VER=$(node -p "(()=>{try{const p=require('./package.json');return (p.dependencies&&p.dependencies.next)||(p.devDependencies&&p.devDependencies.next)||''}catch(e){return ''}})()")
+          [ -z "$NEXT_VER" ] && NEXT_VER=latest
+
+          # Garantir les binaires/paquets nécessaires (idempotent)
+          node -e "require.resolve('eslint/package.json')" || pnpm add -D eslint@8.57.0
           node -e "require.resolve('@playwright/test/package.json')" || pnpm add -D @playwright/test@latest
+          node -e "require.resolve('next/package.json')" || pnpm add -D next@"$NEXT_VER"
+          node -e "require.resolve('eslint-config-next/package.json')" || pnpm add -D eslint-config-next@"$NEXT_VER"
 
       - name: ESLint (app)
         run: pnpm run lint
