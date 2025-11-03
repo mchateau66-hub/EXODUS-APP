@@ -31,7 +31,12 @@ jobs:
           cache-dependency-path: '**/pnpm-lock.yaml'
 
       - name: Install deps (with devDependencies)
-        run: pnpm install --no-frozen-lockfile --prod=false
+        env:
+          NODE_ENV: ""          # force l’installation des devDeps
+        run: |
+          set -euxo pipefail
+          pnpm install --no-frozen-lockfile --prod=false
+          pnpm exec --yes which eslint >/dev/null 2>&1 || (echo "::error::eslint not found after install" && pnpm list --depth=1 && exit 1)
 
       - name: ESLint (app)
         run: pnpm run lint

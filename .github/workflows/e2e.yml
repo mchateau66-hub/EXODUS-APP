@@ -53,14 +53,21 @@ jobs:
           cache-dependency-path: '**/pnpm-lock.yaml'
 
       - name: Install deps & browsers
-        id: deps
-        shell: bash
+        env:
+          NODE_ENV: ""   # devDeps incluses
         run: |
           set -euxo pipefail
           pnpm install --no-frozen-lockfile --prod=false
-          # aligne les navigateurs Playwright sans exiger la dep locale "playwright"
-          VER="$(node -p "require('@playwright/test/package.json').version")"
-          npx -y playwright@"$VER" install --with-deps
+
+          # Vérifie que @playwright/test est bien là
+          pnpm exec --yes node -p "require.resolve('@playwright/test/package.json')" >/dev/null 2>&1 || (echo "::error::@playwright/test not installed" && pnpm list --depth=1 && exit 1)
+
+          # Récupère la version locale d’@playwright/test (sinon fallback latest)
+          VER="$(node -p "require('@playwright/test/package.json').version" || echo latest)"
+          echo "Using Playwright version: $VER"
+
+          # Installe les navigateurs Playwright correspondants
+          npx -y @playwright/test@"$VER" install --with-deps
 
       - name: Resolve base URL
         id: cfg
