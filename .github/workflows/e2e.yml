@@ -52,21 +52,19 @@ jobs:
           cache: pnpm
           cache-dependency-path: '**/pnpm-lock.yaml'
 
-      - name: Install deps & browsers
+      - name: Install deps (dev) + ensure @playwright/test then browsers
         env:
-          NODE_ENV: ""   # devDeps incluses
+          NODE_ENV: ""
         run: |
           set -euxo pipefail
           pnpm install --no-frozen-lockfile --prod=false
 
-          # Vérifie que @playwright/test est bien là
-          pnpm exec --yes node -p "require.resolve('@playwright/test/package.json')" >/dev/null 2>&1 || (echo "::error::@playwright/test not installed" && pnpm list --depth=1 && exit 1)
+          # Garantit la présence d'@playwright/test
+          node -e "require.resolve('@playwright/test/package.json')" || pnpm add -D @playwright/test@latest
 
-          # Récupère la version locale d’@playwright/test (sinon fallback latest)
-          VER="$(node -p "require('@playwright/test/package.json').version" || echo latest)"
+          # Version locale (ou latest en fallback), puis install navigateurs
+          VER=$(node -p "require('@playwright/test/package.json').version || 'latest'")
           echo "Using Playwright version: $VER"
-
-          # Installe les navigateurs Playwright correspondants
           npx -y @playwright/test@"$VER" install --with-deps
 
       - name: Resolve base URL
@@ -121,8 +119,6 @@ jobs:
           name: playwright-report
           path: playwright-report
           retention-days: 7
-          if-no-files-found: warn
-          compression-level: 6
 
       - name: Upload test-results (traces/screenshots/videos)
         if: always()
@@ -131,5 +127,3 @@ jobs:
           name: test-results
           path: test-results
           retention-days: 7
-          if-no-files-found: warn
-          compression-level: 6

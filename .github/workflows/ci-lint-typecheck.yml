@@ -30,13 +30,16 @@ jobs:
           cache: pnpm
           cache-dependency-path: '**/pnpm-lock.yaml'
 
-      - name: Install deps (with devDependencies)
+      - name: Install deps (with devDependencies) + ensure eslint/@playwright/test
         env:
-          NODE_ENV: ""          # force l’installation des devDeps
+          NODE_ENV: ""     # inclure devDeps
         run: |
           set -euxo pipefail
           pnpm install --no-frozen-lockfile --prod=false
-          pnpm exec --yes which eslint >/dev/null 2>&1 || (echo "::error::eslint not found after install" && pnpm list --depth=1 && exit 1)
+
+          # Vérifs fiables avec require.resolve (pnpm)
+          node -e "require.resolve('eslint/package.json')" || pnpm add -D eslint@^8.57.0
+          node -e "require.resolve('@playwright/test/package.json')" || pnpm add -D @playwright/test@latest
 
       - name: ESLint (app)
         run: pnpm run lint
