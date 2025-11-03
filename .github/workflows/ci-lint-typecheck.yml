@@ -39,18 +39,20 @@ jobs:
           set -euo pipefail
           pnpm install --no-frozen-lockfile --prod=false
 
-          # Ensure eslint present (pin to 8.x to match plugins)
+          # ESLint (fixes "eslint: not found" on cold cache)
           node -e "require.resolve('eslint/package.json')" || pnpm add -D eslint@8.57.0
 
-          # Ensure @playwright/test present (used by e2e tsconfig types)
+          # Playwright types (référencés par tsconfig e2e)
           node -e "require.resolve('@playwright/test/package.json')" || pnpm add -D @playwright/test@latest
 
-          # Ensure eslint-config-next matches local next (fixes 'extends: next/core-web-vitals')
-          NEXT_VER=$(node -p "try{(require('./package.json').dependencies?.next)||(require('./package.json').devDependencies?.next)}catch{''} || ''")
+          # Détecte la version locale de Next (dep ou devDep); sinon latest
+          NEXT_VER=$(node -p "var p=require('./package.json'); (p.dependencies&&p.dependencies.next)||(p.devDependencies&&p.devDependencies.next)||''")
           [ -z "$NEXT_VER" ] && NEXT_VER="latest"
+
+          # eslint-config-next (pour 'extends: next/core-web-vitals')
           node -e "require.resolve('eslint-config-next/package.json')" || pnpm add -D eslint-config-next@"$NEXT_VER"
 
-          # Optional (defensive): make Next resolvable for eslint plugins that import it
+          # Optionnel mais sûr: rends Next résoluble par les plugins ESLint
           node -e "require.resolve('next/package.json')" || pnpm add -D next@"$NEXT_VER"
 
       - name: ESLint (app)

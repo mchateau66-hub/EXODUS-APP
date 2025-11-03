@@ -24,11 +24,11 @@ permissions:
 
 env:
   TZ: Europe/Paris
-  E2E_BASE_URL: ${{ inputs.base_url || vars.E2E_BASE_URL || 'http://127.0.0.1:3000' }}
-  E2E_WEBSERVER: ${{ vars.E2E_WEBSERVER || '1' }}
-  E2E_SMOKE_PATH: ${{ vars.E2E_SMOKE_PATH || '/api/health' }}
-  E2E_PAYWALL_ALLOW_404_AS_BLOCK: ${{ vars.E2E_PAYWALL_ALLOW_404_AS_BLOCK || '0' }}
-  E2E_SESSION_COOKIE: ${{ secrets.E2E_SESSION_COOKIE }}
+  E2E_BASE_URL: "${{ inputs.base_url || vars.E2E_BASE_URL || 'http://127.0.0.1:3000' }}"
+  E2E_WEBSERVER: "${{ vars.E2E_WEBSERVER || '1' }}"
+  E2E_SMOKE_PATH: "${{ vars.E2E_SMOKE_PATH || '/api/health' }}"
+  E2E_PAYWALL_ALLOW_404_AS_BLOCK: "${{ vars.E2E_PAYWALL_ALLOW_404_AS_BLOCK || '0' }}"
+  E2E_SESSION_COOKIE: "${{ secrets.E2E_SESSION_COOKIE }}"
 
 jobs:
   e2e:
@@ -38,8 +38,7 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
+        with: { fetch-depth: 1 }
 
       - name: Setup PNPM (standalone)
         uses: pnpm/action-setup@v4
@@ -55,23 +54,21 @@ jobs:
           cache: pnpm
           cache-dependency-path: '**/pnpm-lock.yaml'
 
-      - name: Install deps (dev) + ensure @playwright/test then browsers + ensure Next
+      - name: Install deps (dev) + ensure @playwright/test/browsers + Next
         env:
-          NODE_ENV: ""  # force install des devDeps
+          NODE_ENV: ""   # force devDeps
         run: |
           set -euo pipefail
           pnpm install --no-frozen-lockfile --prod=false
 
-          # --- Ensure @playwright/test present
+          # @playwright/test + browsers (version alignée)
           node -e "require.resolve('@playwright/test/package.json')" || pnpm add -D @playwright/test@latest
-
-          # Install playwright browsers matching local @playwright/test version
           PW_VER=$(node -p "require('@playwright/test/package.json').version")
-          echo "Using Playwright version: $PW_VER"
+          echo "Using Playwright $PW_VER"
           npx --yes @playwright/test@"$PW_VER" install --with-deps
 
-          # --- Ensure Next present so 'next build' works even if cache hiccups
-          NEXT_VER=$(node -p "try{(require('./package.json').dependencies?.next)||(require('./package.json').devDependencies?.next)}catch{''} || ''")
+          # Next (pour 'next build' si besoin)
+          NEXT_VER=$(node -p "var p=require('./package.json'); (p.dependencies&&p.dependencies.next)||(p.devDependencies&&p.devDependencies.next)||''")
           [ -z "$NEXT_VER" ] && NEXT_VER="latest"
           node -e "require.resolve('next/package.json')" || pnpm add -D next@"$NEXT_VER"
 
