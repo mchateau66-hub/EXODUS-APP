@@ -1,12 +1,13 @@
 // src/app/paywall/page.tsx
-import React from 'react';
 
-export default function PaywallPage({
+export default async function PaywallPage({
   searchParams,
 }: {
-  searchParams?: { from?: string; paywall?: string };
+  // Next 15: searchParams est asynchrone côté Server Component
+  searchParams: Promise<{ from?: string; paywall?: string }>;
 }) {
-  const from = searchParams?.from ?? '/pro';
+  const { from = '/pro', paywall = '1' } = await searchParams;
+
   return (
     <main className="mx-auto max-w-xl p-6">
       <section
@@ -20,7 +21,7 @@ export default function PaywallPage({
 
         <div className="text-sm text-gray-500">
           <div>Provenance : <code>{from}</code></div>
-          <div>Paywall : <code>{searchParams?.paywall ?? '0'}</code></div>
+          <div>Paywall : <code>{paywall}</code></div>
         </div>
       </section>
     </main>

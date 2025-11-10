@@ -13,7 +13,7 @@
     "esModuleInterop": true,
     "resolveJsonModule": true,
     "skipLibCheck": true,
-    "jsx": "preserve",
+    "jsx": "react-jsx",
     "plugins": [
       {
         "name": "next"
@@ -27,13 +27,19 @@
     "**/*.ts",
     "**/*.tsx",
     "next-env.d.ts",
-    ".next/types/**/*.ts"
+    ".next/types/**/*.ts",
+    ".next/dev/types/**/*.ts"
   ],
   "exclude": [
+    "e2e",
+    "playwright.config.ts",
     "node_modules",
     ".next",
     "dist",
     "coverage",
-    "playwright-report"
+    "playwright-report",
+    "test-results",
+    "e2e",
+    "playwright.config.ts"
   ]
 }

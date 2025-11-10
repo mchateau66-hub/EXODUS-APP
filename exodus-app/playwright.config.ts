@@ -1,4 +1,7 @@
-import { defineConfig } from '@playwright/test'
+/// <reference types="@playwright/test" />
+
+import { defineConfig } from '@playwright/test';
+
 export default defineConfig({
   reporter: [
     ['html', { outputFolder: 'playwright-report', open: 'never' }],
@@ -11,4 +14,4 @@ export default defineConfig({
     video: 'retain-on-failure',
   },
   // webServer: { command: 'pnpm dev', port: 3000, reuseExistingServer: true, timeout: 120_000 },
-})
+});
