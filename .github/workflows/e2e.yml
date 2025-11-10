@@ -31,107 +31,101 @@ env:
   E2E_SESSION_COOKIE: ${{ secrets.E2E_SESSION_COOKIE }}
 
 jobs:
+  smoke:
+    if: github.event_name == 'pull_request'
+    name: E2E Smoke (chromium)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup PNPM
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright (chromium)
+        run: pnpm run e2e:browsers
+
+      - name: Prepare .env.e2e (optional cookie)
+        run: |
+          set -euo pipefail
+          {
+            echo "E2E_BASE_URL=${{ env.E2E_BASE_URL }}"
+            echo "E2E_PAYWALL_ALLOW_404_AS_BLOCK=${{ env.E2E_PAYWALL_ALLOW_404_AS_BLOCK }}"
+            if [ "${{ inputs.use_session_cookie }}" = "true" ] && [ -n "${{ env.E2E_SESSION_COOKIE }}" ]; then
+              echo "E2E_SESSION_COOKIE=${{ env.E2E_SESSION_COOKIE }}"
+            fi
+          } > .env.e2e
+          # Masquage cookie dans les logs
+          sed -n '1,200p' .env.e2e | sed -E 's/(E2E_SESSION_COOKIE=).*/\1***redacted***'/ || true
+
+      - name: Run smoke
+        env:
+          # Playwright démarre Next via webServer (config)
+          E2E_WEBSERVER: "1"
+        run: pnpm run e2e:smoke
+
+      - name: Upload smoke report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-smoke
+          path: playwright-report
+          retention-days: 7
+
   e2e:
+    # Évite d’exécuter la full suite sur les PR
+    if: github.event_name != 'pull_request'
+    name: E2E Full
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with: { fetch-depth: 1 }
+        with:
+          fetch-depth: 1
 
-      - name: Setup PNPM (standalone)
+      - name: Setup PNPM
         uses: pnpm/action-setup@v4
         with:
-          version: 9.15.9
-          standalone: true
-          run_install: false
+          version: 9
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
-        # cache: pnpm
+          cache: pnpm
 
-      - name: Install deps (dev) + ensure @playwright/test, Next, TS toolchain, browsers
-        env:
-          NODE_ENV: ""
-        run: |
-          set -euo pipefail
+      - name: Install deps
+        run: pnpm install --frozen-lockfile
 
-          # Dépendances (inclut devDeps)
-          pnpm install --no-frozen-lockfile --prod=false
-
-          # S'assurer de @playwright/test (idempotent)
-          node -e "require.resolve('@playwright/test/package.json')" >/dev/null 2>&1 || pnpm add -D @playwright/test@latest
-
-          # Installer Next seulement si absent (utile quand E2E_WEBSERVER=1)
-          node -e "require.resolve('next/package.json')" >/dev/null 2>&1 || pnpm add -D next@latest
-
-          # Toolchain TS (certaines apps build en local)
-          if [ -f "tsconfig.json" ]; then
-            pnpm add -D typescript @types/react @types/react-dom @types/node@20
-          fi
-
-          # Navigateurs Playwright alignés avec la version locale
-          VER=$(node -p "require('@playwright/test/package.json').version")
-          echo "Using Playwright version: $VER"
-          npx --yes @playwright/test@"$VER" install --with-deps
+      - name: Install Playwright (chromium)
+        run: pnpm run e2e:browsers
 
       - name: Print resolved versions
         run: |
-          node -e "const r=m=>{try{return require(m+'/package.json').version}catch{return 'n/a'}};console.log({ next:r('next'), eslint:r('eslint'), eslintConfigNext:r('eslint-config-next'), ts:r('typescript'), pw:r('@playwright/test') })"
+          node -e "const r=s=>{try{return require(s+'/package.json').version}catch{return'n/a'}};console.log({ next:r('next'), eslint:r('eslint'), playwright:r('@playwright/test') })"
 
-      - name: Resolve base URL
-        id: cfg
-        shell: bash
-        run: |
-          if [ "${E2E_WEBSERVER}" = "1" ]; then
-            echo "base=http://127.0.0.1:3000" >> "$GITHUB_OUTPUT"
-          else
-            echo "base=${E2E_BASE_URL}" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Start Next.js (if E2E_WEBSERVER=1)
-        if: ${{ env.E2E_WEBSERVER == '1' }}
+      - name: Run full suite
         env:
-          BASE: ${{ steps.cfg.outputs.base }}
-        run: |
-          set -euo pipefail
-          pnpm build
-          pnpm start &
-          npx --yes wait-on -t 120000 "tcp:127.0.0.1:3000"
-
-          # Health check: GET puis fallback HEAD si nécessaire (405)
-          http_code=$(curl -sk -o /dev/null -w "%{http_code}" "$BASE${E2E_SMOKE_PATH}" || true)
-          if [ "$http_code" = "200" ]; then exit 0; fi
-          if [ "$http_code" = "404" ] && [ "${E2E_PAYWALL_ALLOW_404_AS_BLOCK}" = "1" ]; then exit 0; fi
-          if [ "$http_code" = "405" ]; then
-            http_code=$(curl -skI -o /dev/null -w "%{http_code}" "$BASE${E2E_SMOKE_PATH}" || true)
-            if [ "$http_code" = "200" ]; then exit 0; fi
-          fi
-          echo "::error::Unexpected HTTP code on $BASE${E2E_SMOKE_PATH}: $http_code"; exit 1
-
-      - name: Prepare .env.e2e
-        env:
-          BASE: ${{ steps.cfg.outputs.base }}
-        run: |
-          set -euo pipefail
-          {
-            echo "E2E_BASE_URL=$BASE"
-            echo "E2E_PAYWALL_ALLOW_404_AS_BLOCK=${E2E_PAYWALL_ALLOW_404_AS_BLOCK}"
-            if [ "${{ inputs.use_session_cookie }}" = "true" ] && [ -n "${E2E_SESSION_COOKIE}" ]; then
-              echo "E2E_SESSION_COOKIE=${E2E_SESSION_COOKIE}"
-            fi
-          } > .env.e2e
-          sed -n '1,200p' .env.e2e | sed -E 's/(E2E_SESSION_COOKIE=).*/\1***redacted***/'
-
-      - name: Run Playwright
-        env:
-          E2E_BASE_URL: ${{ steps.cfg.outputs.base }}
-          E2E_PAYWALL_ALLOW_404_AS_BLOCK: ${{ env.E2E_PAYWALL_ALLOW_404_AS_BLOCK }}
-          E2E_SESSION_COOKIE: ${{ env.E2E_SESSION_COOKIE }}
-        run: pnpm exec playwright test --reporter=github,html
+          # Playwright démarre Next via webServer (config)
+          E2E_WEBSERVER: "1"
+        run: pnpm run e2e
 
       - name: Upload Playwright report
         if: always()
@@ -140,10 +134,7 @@ jobs:
           name: playwright-report
           path: playwright-report
           retention-days: 7
-          if-no-files-found: warn
-          compression-level: 6
 
-      # ⬇️ Ajustement : upload des traces uniquement s'il y a des fichiers
       - name: Upload test-results (traces/screenshots/videos)
         if: always() && hashFiles('test-results/**') != ''
         uses: actions/upload-artifact@v4
@@ -152,4 +143,3 @@ jobs:
           path: test-results
           retention-days: 7
           if-no-files-found: ignore
-          compression-level: 6
