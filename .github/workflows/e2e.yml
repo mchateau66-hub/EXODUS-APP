@@ -1,4 +1,4 @@
-name: CI – E2E
+name: CI - E2E
 
 on:
   pull_request:

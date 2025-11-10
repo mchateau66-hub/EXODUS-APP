@@ -1,9 +1,9 @@
-name: Typecheck & Lint
+name: CI - Lint & Typecheck
 
 on:
   pull_request:
-    branches: [ main, staging ]
-  workflow_dispatch: {}
+  workflow_dispatch:
+
 
 permissions:
   contents: read
