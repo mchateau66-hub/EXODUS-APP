@@ -24,11 +24,11 @@ permissions:
 
 env:
   TZ: Europe/Paris
-  E2E_BASE_URL: "${{ inputs.base_url || vars.E2E_BASE_URL || 'http://127.0.0.1:3000' }}"
-  E2E_WEBSERVER: "${{ vars.E2E_WEBSERVER || '1' }}"
-  E2E_SMOKE_PATH: "${{ vars.E2E_SMOKE_PATH || '/api/health' }}"
-  E2E_PAYWALL_ALLOW_404_AS_BLOCK: "${{ vars.E2E_PAYWALL_ALLOW_404_AS_BLOCK || '0' }}"
-  E2E_SESSION_COOKIE: "${{ secrets.E2E_SESSION_COOKIE }}"
+  E2E_BASE_URL: ${{ inputs.base_url || vars.E2E_BASE_URL || 'http://127.0.0.1:3000' }}
+  E2E_WEBSERVER: ${{ vars.E2E_WEBSERVER || '1' }}
+  E2E_SMOKE_PATH: ${{ vars.E2E_SMOKE_PATH || '/api/health' }}
+  E2E_PAYWALL_ALLOW_404_AS_BLOCK: ${{ vars.E2E_PAYWALL_ALLOW_404_AS_BLOCK || '0' }}
+  E2E_SESSION_COOKIE: ${{ secrets.E2E_SESSION_COOKIE }}
 
 jobs:
   e2e:
@@ -54,23 +54,44 @@ jobs:
           cache: pnpm
           cache-dependency-path: '**/pnpm-lock.yaml'
 
-      - name: Install deps (dev) + ensure @playwright/test/browsers + Next
+      - name: Install deps (dev) + ensure @playwright/test, Next, TS toolchain, browsers
         env:
-          NODE_ENV: ""   # force devDeps
+          NODE_ENV: ""  # inclure devDeps
         run: |
           set -euo pipefail
+
+          # Deps
           pnpm install --no-frozen-lockfile --prod=false
 
-          # @playwright/test + browsers (version alignée)
-          node -e "require.resolve('@playwright/test/package.json')" || pnpm add -D @playwright/test@latest
-          PW_VER=$(node -p "require('@playwright/test/package.json').version")
-          echo "Using Playwright $PW_VER"
-          npx --yes @playwright/test@"$PW_VER" install --with-deps
+          # @playwright/test
+          node -e "require.resolve('@playwright/test/package.json')" >/dev/null 2>&1 || pnpm add -D @playwright/test@latest
 
-          # Next (pour 'next build' si besoin)
-          NEXT_VER=$(node -p "var p=require('./package.json'); (p.dependencies&&p.dependencies.next)||(p.devDependencies&&p.devDependencies.next)||''")
+          # Next: n'installe que si absent, en utilisant la version déclarée dans package.json
+          NEXT_VER=$(node -e "try{const p=require('./package.json');console.log((p.dependencies&&p.dependencies.next)||(p.devDependencies&&p.devDependencies.next)||'')}catch(e){console.log('')}") || true
           [ -z "$NEXT_VER" ] && NEXT_VER="latest"
-          node -e "require.resolve('next/package.json')" || pnpm add -D next@"$NEXT_VER"
+          node -e "require.resolve('next/package.json')" >/dev/null 2>&1 || pnpm add -D next@"$NEXT_VER"
+
+          # Toolchain TS (requis par next build)
+          if [ -f "tsconfig.json" ]; then
+            pnpm add -D typescript @types/react @types/react-dom @types/node@20
+          fi
+
+          # Navigateurs Playwright (cohérents avec la version locale)
+          VER=$(node -p "require('@playwright/test/package.json').version")
+          echo "Using Playwright version: $VER"
+          npx --yes @playwright/test@"$VER" install --with-deps
+
+          pnpm dedupe || true
+
+      - name: Print resolved versions
+        run: |
+          node -e "const r=m=>{try{return require(m+'/package.json').version}catch{return 'n/a'}}; console.log({
+            next:r('next'),
+            eslint:r('eslint'),
+            eslintConfigNext:r('eslint-config-next'),
+            ts:r('typescript'),
+            pw:r('@playwright/test')
+          })"
 
       - name: Resolve base URL
         id: cfg
@@ -91,9 +112,15 @@ jobs:
           pnpm build
           pnpm start &
           npx --yes wait-on -t 120000 "tcp:127.0.0.1:3000"
+
+          # Health check (GET, puis fallback HEAD si nécessaire)
           http_code=$(curl -sk -o /dev/null -w "%{http_code}" "$BASE${E2E_SMOKE_PATH}" || true)
           if [ "$http_code" = "200" ]; then exit 0; fi
           if [ "$http_code" = "404" ] && [ "${E2E_PAYWALL_ALLOW_404_AS_BLOCK}" = "1" ]; then exit 0; fi
+          if [ "$http_code" = "405" ]; then
+            http_code=$(curl -skI -o /dev/null -w "%{http_code}" "$BASE${E2E_SMOKE_PATH}" || true)
+            if [ "$http_code" = "200" ]; then exit 0; fi
+          fi
           echo "::error::Unexpected HTTP code on $BASE${E2E_SMOKE_PATH}: $http_code"; exit 1
 
       - name: Prepare .env.e2e
