@@ -1,9 +1,11 @@
 <!-- Badges -->
+<!-- Badges -->
 [![CI – Lint & Typecheck](https://github.com/mchateau66-hub/EXODUS-APP/actions/workflows/ci-lint-typecheck.yml/badge.svg?branch=main)](https://github.com/mchateau66-hub/EXODUS-APP/actions/workflows/ci-lint-typecheck.yml)
-[![E2E Playwright](https://github.com/mchateau66-hub/EXODUS-APP/actions/workflows/e2e-playwright.yml/badge.svg?branch=main)](https://github.com/mchateau66-hub/EXODUS-APP/actions/workflows/e2e-playwright.yml)
+[![E2E Playwright](https://github.com/mchateau66-hub/EXODUS-APP/actions/workflows/e2e.yml/badge.svg?branch=main)](https://github.com/mchateau66-hub/EXODUS-APP/actions/workflows/e2e.yml)
 [![Vercel (prod)](https://img.shields.io/github/deployments/mchateau66-hub/EXODUS-APP/Production?label=vercel%20(prod)&logo=vercel&logoColor=white)](https://vercel.com/mchateau66-hub/exodus-app/deployments)
-[![Live](https://img.shields.io/badge/live-Vercel-000?logo=vercel&logoColor=white)](https://exodus-app.vercel.app)
+[![Live](https://img.shields.io/badge/live-exodus--app.vercel.app-000?logo=vercel&logoColor=white)](https://exodus-app.vercel.app)
 [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/mchateau66-hub/EXODUS-APP)
+
 
 
 # EXODUS-APP
