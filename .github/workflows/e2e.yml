@@ -10,7 +10,7 @@ on:
         required: false
         type: string
       use_session_cookie:
-        description: "Injecter E2E_SESSION_COOKIE dans .env.e2e et l'exposer aux tests"
+        description: "Injecter E2E_SESSION_COOKIE dans .env.e2e"
         required: false
         type: boolean
         default: false
@@ -28,7 +28,6 @@ env:
   E2E_WEBSERVER: ${{ vars.E2E_WEBSERVER || '1' }}
   E2E_SMOKE_PATH: ${{ vars.E2E_SMOKE_PATH || '/api/health' }}
   E2E_PAYWALL_ALLOW_404_AS_BLOCK: ${{ vars.E2E_PAYWALL_ALLOW_404_AS_BLOCK || '0' }}
-  # Secret toujours disponible ici, mais NE SERA PAS exposé aux tests si use_session_cookie=false
   E2E_SESSION_COOKIE: ${{ secrets.E2E_SESSION_COOKIE }}
 
 jobs:
@@ -52,38 +51,36 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          # cache: pnpm
+        # cache: pnpm
 
       - name: Install deps (dev) + ensure @playwright/test, Next, TS toolchain, browsers
         env:
-          NODE_ENV: ""   # inclure devDeps
+          NODE_ENV: ""
         run: |
           set -euo pipefail
 
-          # Dépendances du repo
+          # Dépendances (inclut devDeps)
           pnpm install --no-frozen-lockfile --prod=false
 
-          # S'assurer de @playwright/test
-          node -e "require.resolve('@playwright/test/package.json')" || pnpm add -D @playwright/test@latest
+          # S'assurer de @playwright/test (idempotent)
+          node -e "require.resolve('@playwright/test/package.json')" >/dev/null 2>&1 || pnpm add -D @playwright/test@latest
 
-          # S'assurer de next si besoin pour le mode webserver
-          node -e "require.resolve('next/package.json')" || pnpm add -D next@latest
+          # Installer Next seulement si absent (utile quand E2E_WEBSERVER=1)
+          node -e "require.resolve('next/package.json')" >/dev/null 2>&1 || pnpm add -D next@latest
 
-          # Typescript toolchain pour build Next si nécessaire
+          # Toolchain TS (certaines apps build en local)
           if [ -f "tsconfig.json" ]; then
             pnpm add -D typescript @types/react @types/react-dom @types/node@20
           fi
 
-          # Installer les navigateurs Playwright (version alignée)
+          # Navigateurs Playwright alignés avec la version locale
           VER=$(node -p "require('@playwright/test/package.json').version")
           echo "Using Playwright version: $VER"
           npx --yes @playwright/test@"$VER" install --with-deps
 
       - name: Print resolved versions
         run: |
-          node -e "const g=p=>{try{return require(p).version}catch{return 'n/a'}}; \
-          console.log({ next:g('next/package.json'), eslint:g('eslint/package.json'), \
-          ts:g('typescript/package.json'), pw:g('@playwright/test/package.json') })"
+          node -e "const r=m=>{try{return require(m+'/package.json').version}catch{return 'n/a'}};console.log({ next:r('next'), eslint:r('eslint'), eslintConfigNext:r('eslint-config-next'), ts:r('typescript'), pw:r('@playwright/test') })"
 
       - name: Resolve base URL
         id: cfg
@@ -105,13 +102,13 @@ jobs:
           pnpm start &
           npx --yes wait-on -t 120000 "tcp:127.0.0.1:3000"
 
-          # Health check: GET, sinon HEAD; tolère 404 si flag activé; 405 -> test en HEAD
+          # Health check: GET puis fallback HEAD si nécessaire (405)
           http_code=$(curl -sk -o /dev/null -w "%{http_code}" "$BASE${E2E_SMOKE_PATH}" || true)
           if [ "$http_code" = "200" ]; then exit 0; fi
           if [ "$http_code" = "404" ] && [ "${E2E_PAYWALL_ALLOW_404_AS_BLOCK}" = "1" ]; then exit 0; fi
           if [ "$http_code" = "405" ]; then
             http_code=$(curl -skI -o /dev/null -w "%{http_code}" "$BASE${E2E_SMOKE_PATH}" || true)
-            [ "$http_code" = "200" ] && exit 0
+            if [ "$http_code" = "200" ]; then exit 0; fi
           fi
           echo "::error::Unexpected HTTP code on $BASE${E2E_SMOKE_PATH}: $http_code"; exit 1
 
@@ -123,22 +120,17 @@ jobs:
           {
             echo "E2E_BASE_URL=$BASE"
             echo "E2E_PAYWALL_ALLOW_404_AS_BLOCK=${E2E_PAYWALL_ALLOW_404_AS_BLOCK}"
-            # N'écrit le cookie dans .env.e2e que si demandé ET présent
             if [ "${{ inputs.use_session_cookie }}" = "true" ] && [ -n "${E2E_SESSION_COOKIE}" ]; then
               echo "E2E_SESSION_COOKIE=${E2E_SESSION_COOKIE}"
             fi
           } > .env.e2e
-
-          echo "::group::.env.e2e (redacted)"
           sed -n '1,200p' .env.e2e | sed -E 's/(E2E_SESSION_COOKIE=).*/\1***redacted***/'
-          echo "::endgroup::"
 
       - name: Run Playwright
         env:
           E2E_BASE_URL: ${{ steps.cfg.outputs.base }}
           E2E_PAYWALL_ALLOW_404_AS_BLOCK: ${{ env.E2E_PAYWALL_ALLOW_404_AS_BLOCK }}
-          # ⚠️ Option 2: n'exposer le cookie aux tests que si use_session_cookie=true
-          E2E_SESSION_COOKIE: ${{ inputs.use_session_cookie && env.E2E_SESSION_COOKIE || '' }}
+          E2E_SESSION_COOKIE: ${{ env.E2E_SESSION_COOKIE }}
         run: pnpm exec playwright test --reporter=github,html
 
       - name: Upload Playwright report
@@ -151,12 +143,13 @@ jobs:
           if-no-files-found: warn
           compression-level: 6
 
+      # ⬇️ Ajustement : upload des traces uniquement s'il y a des fichiers
       - name: Upload test-results (traces/screenshots/videos)
-        if: always()
+        if: always() && hashFiles('test-results/**') != ''
         uses: actions/upload-artifact@v4
         with:
           name: test-results
           path: test-results
           retention-days: 7
-          if-no-files-found: warn
+          if-no-files-found: ignore
           compression-level: 6
