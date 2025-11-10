@@ -31,6 +31,9 @@ env:
   E2E_SESSION_COOKIE: ${{ secrets.E2E_SESSION_COOKIE }}
 
 jobs:
+  # ---------------------------------------------
+  # Job PR rapide : smoke sur Chromium uniquement
+  # ---------------------------------------------
   smoke:
     if: github.event_name == 'pull_request'
     name: E2E Smoke (chromium)
@@ -65,13 +68,14 @@ jobs:
           set -euo pipefail
           {
             echo "E2E_BASE_URL=${{ env.E2E_BASE_URL }}"
+            echo "E2E_SMOKE_PATH=${{ env.E2E_SMOKE_PATH }}"
             echo "E2E_PAYWALL_ALLOW_404_AS_BLOCK=${{ env.E2E_PAYWALL_ALLOW_404_AS_BLOCK }}"
             if [ "${{ inputs.use_session_cookie }}" = "true" ] && [ -n "${{ env.E2E_SESSION_COOKIE }}" ]; then
               echo "E2E_SESSION_COOKIE=${{ env.E2E_SESSION_COOKIE }}"
             fi
           } > .env.e2e
           # Masquage cookie dans les logs
-          sed -n '1,200p' .env.e2e | sed -E 's/(E2E_SESSION_COOKIE=).*/\1***redacted***'/ || true
+          sed -n '1,200p' .env.e2e | sed -E 's/(E2E_SESSION_COOKIE=).*/\1***redacted***/' || true
 
       - name: Run smoke
         env:
@@ -87,12 +91,18 @@ jobs:
           path: playwright-report
           retention-days: 7
 
+  # ---------------------------------------------------
+  # Job Full (hors PR) : suite complète shardée en 2/2
+  # ---------------------------------------------------
   e2e:
-    # Évite d’exécuter la full suite sur les PR
     if: github.event_name != 'pull_request'
-    name: E2E Full
+    name: E2E Full (sharded)
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ["1/2", "2/2"]
 
     steps:
       - name: Checkout
@@ -121,25 +131,25 @@ jobs:
         run: |
           node -e "const r=s=>{try{return require(s+'/package.json').version}catch{return'n/a'}};console.log({ next:r('next'), eslint:r('eslint'), playwright:r('@playwright/test') })"
 
-      - name: Run full suite
+      - name: Run full suite (shard ${{ matrix.shard }})
         env:
           # Playwright démarre Next via webServer (config)
           E2E_WEBSERVER: "1"
-        run: pnpm run e2e
+        run: pnpm run e2e -- --reporter=github,html --shard ${{ matrix.shard }}
 
       - name: Upload Playwright report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-report
+          name: playwright-report-${{ matrix.shard }}
           path: playwright-report
           retention-days: 7
 
       - name: Upload test-results (traces/screenshots/videos)
-        if: always() && hashFiles('test-results/**') != ''
+        if: ${{ always() && hashFiles('test-results/**') != '' }}
         uses: actions/upload-artifact@v4
         with:
-          name: test-results
+          name: test-results-${{ matrix.shard }}
           path: test-results
           retention-days: 7
           if-no-files-found: ignore
