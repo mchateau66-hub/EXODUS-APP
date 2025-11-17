@@ -21,6 +21,8 @@ concurrency:
 
 permissions:
   contents: read
+  actions: read          # <-- nécessaire pour lister les artifacts
+  pull-requests: write   # <-- nécessaire pour commenter la PR
 
 env:
   TZ: Europe/Paris
@@ -31,9 +33,9 @@ env:
   E2E_SESSION_COOKIE: ${{ secrets.E2E_SESSION_COOKIE }}
 
 jobs:
-  # ---------------------------------------------
-  # Job PR rapide : smoke sur Chromium uniquement
-  # ---------------------------------------------
+  # -------------------------------
+  # PR rapide : smoke (Chromium)
+  # -------------------------------
   smoke:
     if: github.event_name == 'pull_request'
     name: E2E Smoke (chromium)
@@ -43,13 +45,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
+        with: { fetch-depth: 1 }
 
       - name: Setup PNPM
         uses: pnpm/action-setup@v4
-        with:
-          version: 9
+        with: { version: 9 }
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -74,13 +74,10 @@ jobs:
               echo "E2E_SESSION_COOKIE=${{ env.E2E_SESSION_COOKIE }}"
             fi
           } > .env.e2e
-          # Masquage cookie dans les logs
           sed -n '1,200p' .env.e2e | sed -E 's/(E2E_SESSION_COOKIE=).*/\1***redacted***/' || true
 
       - name: Run smoke
-        env:
-          # Playwright démarre Next via webServer (config)
-          E2E_WEBSERVER: "1"
+        env: { E2E_WEBSERVER: "1" }    # Playwright démarre Next via webServer (config)
         run: pnpm run e2e:smoke
 
       - name: Upload smoke report
@@ -91,8 +88,42 @@ jobs:
           path: playwright-report
           retention-days: 7
 
+      - name: Comment report link on PR
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const {owner, repo} = context.repo;
+            const runId = context.runId;
+            // Liste les artifacts du run
+            const arts = await github.rest.actions.listWorkflowRunArtifacts({
+              owner, repo, run_id: runId, per_page: 100
+            });
+            const art = arts.data.artifacts.find(a => a.name === 'playwright-report-smoke');
+            const runUrl = `https://github.com/${owner}/${repo}/actions/runs/${runId}`;
+            let body = `🧪 **Playwright Smoke**\n- Run: ${runUrl}\n`;
+            if (art) {
+              const artifactUrl = `${runUrl}/artifacts/${art.id}`;
+              body += `- Report HTML: **[Download artifact](${artifactUrl})**`;
+            } else {
+              body += `- Report artifact not found (name: \`playwright-report-smoke\`).`;
+            }
+            await github.rest.issues.createComment({
+              owner, repo, issue_number: context.issue.number, body
+            });
+
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo "### 🧪 Playwright Smoke"
+            echo ""
+            echo "- Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo "- Artifact: \`playwright-report-smoke\` (HTML report)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
   # ---------------------------------------------------
-  # Job Full (hors PR) : suite complète shardée en 2/2
+  # Full (hors PR) : suite complète shardée 2/2
   # ---------------------------------------------------
   e2e:
     if: github.event_name != 'pull_request'
@@ -107,13 +138,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
+        with: { fetch-depth: 1 }
 
       - name: Setup PNPM
         uses: pnpm/action-setup@v4
-        with:
-          version: 9
+        with: { version: 9 }
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -132,9 +161,7 @@ jobs:
           node -e "const r=s=>{try{return require(s+'/package.json').version}catch{return'n/a'}};console.log({ next:r('next'), eslint:r('eslint'), playwright:r('@playwright/test') })"
 
       - name: Run full suite (shard ${{ matrix.shard }})
-        env:
-          # Playwright démarre Next via webServer (config)
-          E2E_WEBSERVER: "1"
+        env: { E2E_WEBSERVER: "1" }
         run: pnpm run e2e -- --reporter=github,html --shard ${{ matrix.shard }}
 
       - name: Upload Playwright report
@@ -153,3 +180,13 @@ jobs:
           path: test-results
           retention-days: 7
           if-no-files-found: ignore
+
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo "### 🧪 Playwright Full – shard ${{ matrix.shard }}"
+            echo ""
+            echo "- Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo "- Artifacts: \`playwright-report-${{ matrix.shard }}\`, \`test-results-${{ matrix.shard }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
