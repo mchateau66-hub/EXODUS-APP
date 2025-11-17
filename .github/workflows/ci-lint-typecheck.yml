@@ -1,30 +1,23 @@
-name: CI — Lint & Typecheck
+name: CI - Lint & Typecheck
 
 on:
-  pull_request: { branches: [ main, staging ] }
-  push:         { branches: [ main ] }
+  pull_request:
   workflow_dispatch:
 
-concurrency:
-  group: ci-lint-typecheck-${{ github.ref }}
-  cancel-in-progress: true
 
 permissions:
   contents: read
 
-env:
-  TZ: Europe/Paris
-
 jobs:
   typecheck:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with: { fetch-depth: 1 }
 
-      # 1) Installer PNPM avant setup-node (pour le cache pnpm)
       - name: Setup PNPM (standalone)
         uses: pnpm/action-setup@v4
         with:
@@ -32,7 +25,6 @@ jobs:
           standalone: true
           run_install: false
 
-      # 2) Node + cache pnpm (maintenant pnpm est dispo dans le PATH)
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -40,22 +32,67 @@ jobs:
           cache: pnpm
           cache-dependency-path: '**/pnpm-lock.yaml'
 
-      - name: Install deps (no frozen lockfile)
-        run: pnpm install --no-frozen-lockfile
-        # Quand le lockfile est clean: passe à --frozen-lockfile
-
-      - name: Prisma generate (if schema exists)
-        if: ${{ hashFiles('**/prisma/schema.prisma') != '' }}
+      - name: Install deps (with devDependencies) + align ESLint/Next + TS toolchain
         env:
-          PRISMA_SKIP_GENERATE: '0'
-          DATABASE_URL: 'file:./prisma/ci.db'
+          NODE_ENV: ""  # inclure devDeps
         run: |
-          set -euxo pipefail
-          if [ -f prisma/schema.prisma ]; then pnpm prisma generate; fi
-          if [ -f exodus-app/prisma/schema.prisma ]; then (cd exodus-app && pnpm prisma generate); fi
+          set -euo pipefail
 
-      - name: ESLint
-        run: pnpm lint
+          # 1) Install deps
+          pnpm install --no-frozen-lockfile --prod=false
 
-      - name: Typecheck
-        run: pnpm typecheck
+          # 2) Résoudre la version déclarée de Next (si absente -> latest)
+          NEXT_VER=$(node -e "try{const p=require('./package.json');console.log((p.dependencies&&p.dependencies.next)||(p.devDependencies&&p.devDependencies.next)||'')}catch(e){console.log('')}") || true
+          [ -z "$NEXT_VER" ] && NEXT_VER="latest"
+          NEXT_MAJOR=$(node -e "let v='$NEXT_VER'.replace(/[^0-9.]/g,'');console.log(v?v.split('.')[0]:'0')")
+
+          # 3) Garantir next résolu pour les plugins ESLint
+          node -e "require.resolve('next/package.json')" >/dev/null 2>&1 || pnpm add -D next@"$NEXT_VER"
+
+          # 4) eslint-config-next apparié à Next
+          node -e "require.resolve('eslint-config-next/package.json')" >/dev/null 2>&1 || pnpm add -D eslint-config-next@"$NEXT_VER"
+
+          # 5) ESLint major compatible (Next >=16 => ESLint 9, sinon ESLint 8)
+          if [ "$NEXT_MAJOR" -ge 16 ]; then ESLINT_VER="^9"; else ESLINT_VER="8.57.0"; fi
+          node -e "require.resolve('eslint/package.json')" >/dev/null 2>&1 || pnpm add -D eslint@"$ESLINT_VER"
+
+          # 6) @typescript-eslint versionnée selon ESLint major
+          if [ "$NEXT_MAJOR" -ge 16 ]; then
+            pnpm add -D @typescript-eslint/parser@^8 @typescript-eslint/eslint-plugin@^8
+          else
+            pnpm add -D @typescript-eslint/parser@^7 @typescript-eslint/eslint-plugin@^7
+          fi
+
+          # 7) Types nécessaires (tsconfig présent => build/lint TS)
+          if [ -f "tsconfig.json" ]; then
+            pnpm add -D typescript @types/react @types/react-dom @types/node@20
+          fi
+
+          # 8) (optionnel) types Playwright référencés par e2e/tsconfig
+          node -e "require.resolve('@playwright/test/package.json')" >/dev/null 2>&1 || pnpm add -D @playwright/test@latest
+
+          pnpm dedupe || true
+
+      - name: Print resolved versions
+        run: |
+          node -e "const r=m=>{try{return require(m+'/package.json').version}catch{return 'n/a'}}; console.log({
+            next:r('next'),
+            eslint:r('eslint'),
+            eslintConfigNext:r('eslint-config-next'),
+            ts:r('typescript'),
+            tsParser:r('@typescript-eslint/parser'),
+            tsPlugin:r('@typescript-eslint/eslint-plugin'),
+            pw:r('@playwright/test')
+          })"
+
+      - name: ESLint (app)
+        run: pnpm run lint
+
+      - name: ESLint (e2e)
+        run: pnpm run lint:e2e
+
+      - name: Typecheck (app)
+        run: pnpm run typecheck
+
+      - name: Typecheck (e2e)
+        run: pnpm run typecheck:e2e
