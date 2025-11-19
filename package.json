@@ -7,22 +7,23 @@
 
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
+  "build": "next build",
+  "start": "next start",
 
-    "typecheck": "tsc --noEmit",
-    "lint": "eslint . --max-warnings=10",
+  "typecheck": "tsc --noEmit",
+  "lint": "eslint --max-warnings=10",
 
-    "test:e2e": "playwright test",
-    "e2e": "playwright test",
-    "e2e:ui": "playwright test --ui",
-    "e2e:html": "playwright test --reporter=html",
-    "e2e:report": "playwright show-report",
-    "e2e:ci": "playwright test -c ./playwright.config.ts --reporter=html && playwright show-report --port 0",
+  "test:e2e": "playwright test",
 
-    "ci:lint-typecheck": "pnpm lint && pnpm typecheck",
+  "e2e": "playwright test",
+  "e2e:ui": "playwright test --ui",
+  "e2e:html": "playwright test --reporter=html",
+  "e2e:report": "playwright show-report",
+  "e2e:ci": "playwright test -C ./playwright.config.ts --reporter=html && playwright show-report --port 0",
+  "e2e:smoke": "playwright test --project=chromium --grep @smoke",
+  "e2e:browsers": "playwright install --with-deps",
 
-    "postinstall": "node -e \"const { existsSync } = require('fs'); const { execSync } = require('child_process'); const paths=['./prisma/schema.prisma','./exodus-app/prisma/schema.prisma']; if (paths.some(p=>existsSync(p))) execSync('pnpm exec prisma generate',{stdio:'inherit'})\""
+  "ci:lint-typecheck": "pnpm lint && pnpm typecheck"
   },
 
   "dependencies": {
