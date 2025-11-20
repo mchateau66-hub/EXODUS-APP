@@ -1,25 +1,19 @@
-// src/app/api/logout/route.ts
-export const runtime = 'nodejs'
+import { NextResponse } from 'next/server';
 
-function expireSessionCookie() {
-  // Efface le cookie côté navigateur
-  const parts = [
-    'session=',
-    'Path=/',
-    'HttpOnly',
-    'Secure',
-    'SameSite=Lax',
-    'Max-Age=0',
-    'Expires=Thu, 01 Jan 1970 00:00:00 GMT',
-  ]
-  return parts.join('; ')
-}
+const SESSION_COOKIE_NAME = 'session';
 
 export async function POST() {
-  return new Response(null, {
-    status: 204,
-    headers: {
-      'Set-Cookie': expireSessionCookie(),
-    },
-  })
+  // 204 No Content
+  const res = new NextResponse(null, { status: 204 });
+
+  // On supprime le cookie de session
+  res.cookies.set(SESSION_COOKIE_NAME, '', {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: process.env.NODE_ENV === 'production',
+    path: '/',
+    maxAge: 0,
+  });
+
+  return res;
 }
