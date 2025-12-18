@@ -1,0 +1,19 @@
+/* src/app/globals.css */
+
+@import "tailwindcss";
+
+/* Tu peux mettre ton CSS global classique ici */
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
+body {
+  background-color: #f1f5f9; /* gris clair type slate-100 */
+  color: #020617;            /* texte foncé */
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text",
+    "SF Pro Display", sans-serif;
+}

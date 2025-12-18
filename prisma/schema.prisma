@@ -1,0 +1,406 @@
+// prisma/schema.prisma
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+/**
+ * ========= ENUMS =========
+ */
+
+enum Role {
+  coach
+  athlete
+  admin
+}
+
+enum UserStatus {
+  active
+  disabled
+  deleted
+}
+
+enum SubStatus {
+  incomplete
+  trialing
+  active
+  past_due
+  canceled
+  unpaid
+}
+
+enum Source {
+  plan
+  purchase
+  promo
+  admin
+}
+
+enum CoachAthleteStatus {
+  LEAD // a commencé à parler / nouveau
+  ACTIVE // suivi en cours
+  TO_FOLLOW // à relancer
+  ENDED // collaboration terminée
+}
+
+enum TrainingSessionStatus {
+  planned
+  done
+  skipped
+}
+
+/**
+ * ✅ Coach documents verification
+ */
+enum CoachDocKind {
+  diploma
+  certification
+  other
+}
+
+enum CoachDocStatus {
+  pending
+  verified
+  needs_review
+  rejected
+}
+
+/**
+ * ========= MODELS =========
+ */
+
+model User {
+  id                 String     @id @default(uuid())
+  email              String     @unique
+  name               String?
+  role               Role
+  stripe_customer_id String?    @unique
+  status             UserStatus @default(active)
+  created_at         DateTime   @default(now())
+  updated_at         DateTime   @updatedAt
+  deleted_at         DateTime?
+
+  // Auth (mot de passe)
+  passwordHash String?
+
+  // Profil public & préférences (onboarding étape 3)
+  bio       String?
+  avatarUrl String?
+  age       Int?
+  country   String?
+  language  String?
+  theme     String?  @default("light")
+  keywords  String[] @default([])
+
+  // Onboarding / scoring
+  onboardingStep          Int   @default(0)
+  onboardingStep1Answers  Json?
+  onboardingStep2Answers  Json?
+  coachQualificationScore Int   @default(0)
+
+  // Monétisation
+  subscriptions Subscription[]
+  entitlements  UserEntitlement[]
+  usageCounters UsageCounter[]
+
+  // Auth / devices / observabilité
+  sessions            Session[]
+  devices             Device[]
+  auditLogs           AuditLog[]
+  passwordResetTokens PasswordResetToken[]
+
+  // Profil athlète
+  athleteProfile AthleteProfile?
+
+  // Messages envoyés par cet utilisateur (chat avec coachs)
+  messages Message[]
+
+  // Plannings d'entraînement
+  trainingPlans TrainingPlan[]
+  coachAthletes CoachAthlete[]
+
+  // Profil coach lié (optionnel)
+  coach Coach? @relation("UserCoach")
+
+  // ✅ Documents coach (diplômes/certifs)
+  coachDocuments         CoachDocument[]
+  reviewedCoachDocuments CoachDocument[] @relation("CoachDocReviewer")
+
+  @@index([role])
+}
+
+model PasswordResetToken {
+  id         String    @id @default(uuid())
+  user_id    String
+  token_hash String    @unique
+  expires_at DateTime
+  used_at    DateTime?
+  created_at DateTime  @default(now())
+
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id])
+  @@index([expires_at])
+}
+
+model Coach {
+  id            String  @id @default(uuid())
+  slug          String  @unique
+  name          String
+  subtitle      String?
+  avatarInitial String?
+
+  user_id String? @unique
+  user    User?   @relation("UserCoach", fields: [user_id], references: [id])
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  messages      Message[]
+  coachAthletes CoachAthlete[]
+
+  @@index([slug])
+}
+
+model AthleteProfile {
+  id      String @id @default(uuid())
+  user_id String @unique
+
+  goalType         String
+  customGoal       String?
+  timeframe        String
+  experienceLevel  String
+  context          String
+  objectiveSummary String
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+}
+
+model Plan {
+  key                     String   @id
+  name                    String
+  active                  Boolean  @default(true)
+  stripe_price_id_monthly String?
+  stripe_price_id_yearly  String?
+  created_at              DateTime @default(now())
+
+  features      PlanFeature[]
+  subscriptions Subscription[]
+}
+
+model Feature {
+  key          String            @id
+  description  String
+  plans        PlanFeature[]
+  entitlements UserEntitlement[]
+  counters     UsageCounter[]
+}
+
+model CoachAthlete {
+  coach_id   String
+  athlete_id String
+
+  status         CoachAthleteStatus @default(LEAD)
+  labels         String[]           @default([])
+  nextFollowUpAt DateTime?
+  lastMessageAt  DateTime?
+  pinned         Boolean            @default(false)
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  coach   Coach @relation(fields: [coach_id], references: [id])
+  athlete User  @relation(fields: [athlete_id], references: [id])
+
+  @@id([coach_id, athlete_id])
+  @@index([coach_id, status, nextFollowUpAt])
+}
+
+model PlanFeature {
+  plan_key    String
+  feature_key String
+
+  plan    Plan    @relation(fields: [plan_key], references: [key], onDelete: Cascade)
+  feature Feature @relation(fields: [feature_key], references: [key], onDelete: Cascade)
+
+  @@id([plan_key, feature_key])
+}
+
+model Subscription {
+  id                     String    @id @default(uuid())
+  user_id                String
+  plan_key               String?
+  stripe_customer_id     String?
+  stripe_subscription_id String    @unique
+  status                 SubStatus
+  current_period_start   DateTime?
+  current_period_end     DateTime?
+  cancel_at_period_end   Boolean   @default(false)
+  canceled_at            DateTime?
+  trial_end_at           DateTime?
+  expires_at             DateTime?
+  created_at             DateTime  @default(now())
+  updated_at             DateTime  @updatedAt
+
+  user         User              @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  plan         Plan?             @relation(fields: [plan_key], references: [key])
+  entitlements UserEntitlement[]
+
+  @@index([user_id])
+  @@index([status])
+}
+
+model UserEntitlement {
+  id              String    @id @default(uuid())
+  user_id         String
+  feature_key     String
+  source          Source
+  subscription_id String?
+  starts_at       DateTime  @default(now())
+  expires_at      DateTime?
+  meta            Json      @default("{}")
+  created_at      DateTime  @default(now())
+
+  user         User          @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  feature      Feature       @relation(fields: [feature_key], references: [key], onDelete: Cascade)
+  subscription Subscription? @relation(fields: [subscription_id], references: [id])
+
+  @@index([user_id, feature_key])
+}
+
+model Session {
+  id           String    @id @default(uuid())
+  user_id      String
+  created_at   DateTime  @default(now())
+  last_seen_at DateTime?
+  ip_hash      String?
+  ua_hash      String?
+
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id])
+}
+
+model Device {
+  id          String    @id @default(uuid())
+  user_id     String
+  first_seen  DateTime  @default(now())
+  last_seen   DateTime?
+  fingerprint String?
+
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id])
+}
+
+model UsageCounter {
+  user_id      String
+  feature_key  String
+  period_start DateTime
+  count        Int      @default(0)
+
+  user    User    @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  feature Feature @relation(fields: [feature_key], references: [key], onDelete: Cascade)
+
+  @@id([user_id, feature_key, period_start])
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  user_id    String?
+  action     String
+  meta       Json     @default("{}")
+  created_at DateTime @default(now())
+
+  user User? @relation(fields: [user_id], references: [id])
+
+  @@index([user_id])
+}
+
+model TrainingPlan {
+  id String @id @default(uuid())
+
+  user_id String
+  user    User   @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  title      String
+  start_date DateTime
+  end_date   DateTime
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  sessions TrainingSession[]
+
+  @@index([user_id])
+}
+
+model TrainingSession {
+  id String @id @default(uuid())
+
+  plan_id String
+  plan    TrainingPlan @relation(fields: [plan_id], references: [id], onDelete: Cascade)
+
+  date         DateTime
+  label        String
+  focus        String?
+  duration_min Int?
+  status       TrainingSessionStatus @default(planned)
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  @@index([plan_id, date])
+}
+
+model Message {
+  id      String @id @default(uuid())
+  user_id String
+  user    User   @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  coach_id String?
+  coach    Coach?  @relation(fields: [coach_id], references: [id])
+
+  content    String
+  created_at DateTime @default(now())
+
+  @@index([user_id, created_at])
+  @@index([coach_id, created_at])
+}
+
+/**
+ * ✅ CoachDocument: diplômes / certifications + statut de vérification
+ */
+model CoachDocument {
+  id          String @id @default(uuid())
+
+  user_id     String
+  kind        CoachDocKind
+  title       String?
+  url         String
+  pathname    String
+  mime_type   String
+  size_bytes  Int
+  status      CoachDocStatus @default(pending)
+
+  review_note String?
+  reviewed_at DateTime?
+  reviewer_id String?
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  user     User  @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  reviewer User? @relation("CoachDocReviewer", fields: [reviewer_id], references: [id])
+
+  @@index([user_id])
+  @@index([status])
+}

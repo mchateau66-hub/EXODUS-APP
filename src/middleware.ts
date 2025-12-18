@@ -1,42 +1,57 @@
-import { NextResponse, type NextRequest } from 'next/server';
+import { NextResponse, type NextRequest } from 'next/server'
 
-const SESSION_COOKIE_NAME = 'session';
-const PAYWALL_HEADER = 'x-paywall';
+const PROTECTED_PREFIX = '/pro'
 
-// Middleware sur toutes les pages (hors API/assets),
-// puis on filtre nous-mêmes sur /pro.
+const SESSION_COOKIE_CANDIDATES = (
+  process.env.SESSION_COOKIE_NAMES ?? 'sid,session'
+)
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean)
+
+const LOGIN_PATH = '/login'
+
 export const config = {
-  matcher: ['/((?!api|_next/static|_next/image|favicon.ico).*)'],
-};
+  matcher: ['/pro/:path*'],
+}
+
+function hasSession(req: NextRequest): boolean {
+  for (const name of SESSION_COOKIE_CANDIDATES) {
+    const v = req.cookies.get(name)?.value
+    if (v && v.trim() !== '') return true
+  }
+
+  const auth = req.headers.get('authorization')
+  if (auth?.startsWith('Bearer ') && auth.slice(7).trim() !== '') return true
+
+  return false
+}
 
 export function middleware(req: NextRequest) {
-  const { pathname, search } = req.nextUrl;
+  const path = req.nextUrl.pathname
 
-  // On ne protège que /pro
-  if (!pathname.startsWith('/pro')) {
-    return NextResponse.next();
+  // Ne jamais toucher /login, /api, /_next, /favicon...
+  if (
+    path.startsWith(LOGIN_PATH) ||
+    path.startsWith('/api') ||
+    path.startsWith('/_next') ||
+    path.startsWith('/favicon')
+  ) {
+    return NextResponse.next()
   }
 
-  const hasSession = req.cookies.has(SESSION_COOKIE_NAME);
-  const authHeader = (req.headers.get('authorization') ?? '').toLowerCase();
-
-  // Utilisateur connecté (cookie) OU Authorization: Bearer <token>
-  if (hasSession || authHeader.startsWith('bearer ')) {
-    return NextResponse.next();
+  // Par sécurité, on ne protège que /pro
+  if (!path.startsWith(PROTECTED_PREFIX)) {
+    return NextResponse.next()
   }
 
-  // Anonyme sur /pro → redirection vers le paywall
-  const url = new URL('/paywall', req.url);
-  const from = pathname + search;
+  // Si session -> OK
+  if (hasSession(req)) return NextResponse.next()
 
-  // Ordre des params pour matcher ce que les tests attendent
-  url.searchParams.set('paywall', '1');
-  url.searchParams.set('from', from);
+  // Sinon -> /login?next=...
+  const url = req.nextUrl.clone()
+  url.pathname = LOGIN_PATH
+  url.searchParams.set('next', path)
 
-  const res = NextResponse.redirect(url, { status: 307 });
-
-  // Header utilisé par les helpers Playwright
-  res.headers.set(PAYWALL_HEADER, '1');
-
-  return res;
+  return NextResponse.redirect(url, { status: 307 })
 }

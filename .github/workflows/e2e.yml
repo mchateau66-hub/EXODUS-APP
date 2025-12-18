@@ -26,11 +26,17 @@ permissions:
 
 env:
   TZ: Europe/Paris
-  E2E_BASE_URL: ${{ inputs.base_url || vars.E2E_BASE_URL || 'http://127.0.0.1:3000' }}
+
+  # ✅ SAFE: github.event.inputs.* ne casse pas sur pull_request
+  E2E_BASE_URL: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.base_url) || vars.E2E_BASE_URL || 'http://127.0.0.1:3000' }}
+
   E2E_WEBSERVER: ${{ vars.E2E_WEBSERVER || '1' }}
   E2E_SMOKE_PATH: ${{ vars.E2E_SMOKE_PATH || '/api/health' }}
   E2E_PAYWALL_ALLOW_404_AS_BLOCK: ${{ vars.E2E_PAYWALL_ALLOW_404_AS_BLOCK || '0' }}
+
+  # Secrets
   E2E_SESSION_COOKIE: ${{ secrets.E2E_SESSION_COOKIE }}
+  E2E_RESEND_API_KEY: ${{ secrets.E2E_RESEND_API_KEY }}
 
 jobs:
   # --- Job SMOKE : pour les PR ---
@@ -65,20 +71,39 @@ jobs:
       - name: Install Playwright (chromium)
         run: pnpm run e2e:browsers
 
-      - name: Prepare .env.e2e (optional cookie)
+      - name: Mask secrets (best-effort)
+        shell: bash
         run: |
           set -euo pipefail
+          if [ -n "${E2E_SESSION_COOKIE:-}" ]; then echo "::add-mask::${E2E_SESSION_COOKIE}"; fi
+          if [ -n "${E2E_RESEND_API_KEY:-}" ]; then echo "::add-mask::${E2E_RESEND_API_KEY}"; fi
+
+      - name: Prepare .env.e2e (optional cookie + resend)
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Sur pull_request, on force false (les secrets peuvent être absents sur forks de toute façon)
+          USE_COOKIE="false"
+
           {
             echo "E2E_BASE_URL=${E2E_BASE_URL}"
             echo "E2E_SMOKE_PATH=${E2E_SMOKE_PATH}"
             echo "E2E_PAYWALL_ALLOW_404_AS_BLOCK=${E2E_PAYWALL_ALLOW_404_AS_BLOCK}"
-            if [ "${{ inputs.use_session_cookie }}" = "true" ] && [ -n "${E2E_SESSION_COOKIE}" ]; then
+
+            if [ "${USE_COOKIE}" = "true" ] && [ -n "${E2E_SESSION_COOKIE:-}" ]; then
               echo "E2E_SESSION_COOKIE=${E2E_SESSION_COOKIE}"
+            fi
+
+            if [ -n "${E2E_RESEND_API_KEY:-}" ]; then
+              echo "E2E_RESEND_API_KEY=${E2E_RESEND_API_KEY}"
             fi
           } > .env.e2e
 
           echo "===== .env.e2e (redacted) ====="
-          sed -n '1,200p' .env.e2e | sed -E 's/(E2E_SESSION_COOKIE=).+/\1***redacted***/' || true
+          sed -n '1,200p' .env.e2e \
+            | sed -E 's/(E2E_SESSION_COOKIE=).+/\1***redacted***/' \
+            | sed -E 's/(E2E_RESEND_API_KEY=).+/\1***redacted***/' || true
 
       - name: Run smoke
         env:
@@ -174,6 +199,40 @@ jobs:
 
       - name: Install Playwright (chromium)
         run: pnpm run e2e:browsers
+
+      - name: Mask secrets (best-effort)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "${E2E_SESSION_COOKIE:-}" ]; then echo "::add-mask::${E2E_SESSION_COOKIE}"; fi
+          if [ -n "${E2E_RESEND_API_KEY:-}" ]; then echo "::add-mask::${E2E_RESEND_API_KEY}"; fi
+
+      - name: Prepare .env.e2e (optional cookie + resend)
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # ✅ SAFE: github.event.inputs.* (bool => "true"/"false" en string)
+          USE_COOKIE="${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.use_session_cookie) || 'false' }}"
+
+          {
+            echo "E2E_BASE_URL=${E2E_BASE_URL}"
+            echo "E2E_SMOKE_PATH=${E2E_SMOKE_PATH}"
+            echo "E2E_PAYWALL_ALLOW_404_AS_BLOCK=${E2E_PAYWALL_ALLOW_404_AS_BLOCK}"
+
+            if [ "${USE_COOKIE}" = "true" ] && [ -n "${E2E_SESSION_COOKIE:-}" ]; then
+              echo "E2E_SESSION_COOKIE=${E2E_SESSION_COOKIE}"
+            fi
+
+            if [ -n "${E2E_RESEND_API_KEY:-}" ]; then
+              echo "E2E_RESEND_API_KEY=${E2E_RESEND_API_KEY}"
+            fi
+          } > .env.e2e
+
+          echo "===== .env.e2e (redacted) ====="
+          sed -n '1,200p' .env.e2e \
+            | sed -E 's/(E2E_SESSION_COOKIE=).+/\1***redacted***/' \
+            | sed -E 's/(E2E_RESEND_API_KEY=).+/\1***redacted***/' || true
 
       - name: Print resolved versions
         run: |

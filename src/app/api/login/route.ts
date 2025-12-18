@@ -1,25 +1,49 @@
-import { NextResponse, type NextRequest } from 'next/server';
+// src/app/api/login/route.ts
+import { NextRequest } from 'next/server'
+import { prisma } from '@/lib/db'
+import { createSessionResponseForUser } from '@/lib/auth'
+import { verifyPassword } from '@/lib/password'
+import { err } from '@/lib/api-response'
 
-const SESSION_COOKIE_NAME = 'session';
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
+
+type LoginBody = {
+  email?: string
+  password?: string
+}
 
 export async function POST(req: NextRequest) {
-  // On lit et ignore le JSON pour compatibilité avec les tests
   try {
-    await req.json();
-  } catch {
-    // Pas grave s'il n'y a pas de body JSON
+    const body = (await req.json().catch(() => ({}))) as LoginBody
+
+    const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : ''
+    const password = typeof body.password === 'string' ? body.password : ''
+
+    if (!email) return err('email_required', 400)
+    if (!password) return err('password_required', 400)
+
+    const user = await prisma.user.findUnique({
+      where: { email },
+      select: {
+        id: true,
+        status: true,
+        passwordHash: true,
+      },
+    })
+
+    // Sécurité : même réponse si email inconnu OU pas de hash
+    if (!user || !user.passwordHash) return err('invalid_credentials', 401)
+
+    if (user.status !== 'active') return err('account_disabled', 403)
+
+    const okPwd = verifyPassword(password, user.passwordHash)
+    if (!okPwd) return err('invalid_credentials', 401)
+
+    // ✅ session + cookie sid (no-store est posé dans createSessionResponseForUser)
+    return await createSessionResponseForUser(user.id, { ok: true })
+  } catch (e) {
+    console.error('Erreur in /api/login', e)
+    return err('server_error', 500)
   }
-
-  const res = NextResponse.json({ ok: true });
-
-  // Cookie de session "fake" mais suffisant pour les tests
-  res.cookies.set(SESSION_COOKIE_NAME, 'dummy-session-token', {
-    httpOnly: true,
-    sameSite: 'lax',
-    secure: process.env.NODE_ENV === 'production',
-    path: '/',
-    maxAge: 60 * 60, // 1h
-  });
-
-  return res;
 }

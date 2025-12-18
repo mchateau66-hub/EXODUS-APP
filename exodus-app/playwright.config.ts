@@ -1,5 +1,13 @@
 // playwright.config.ts
 import { defineConfig, devices } from '@playwright/test'
+import fs from "node:fs";
+import path from "node:path";
+import * as dotenv from "dotenv";
+
+const envE2E = path.resolve(process.cwd(), ".env.e2e");
+if (fs.existsSync(envE2E)) {
+  dotenv.config({ path: envE2E });
+}
 
 export default defineConfig({
   testDir: './e2e',
