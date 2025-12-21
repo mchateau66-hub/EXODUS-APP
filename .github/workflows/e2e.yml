@@ -52,18 +52,18 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Setup PNPM
-        uses: pnpm/action-setup@v4
-        with:
-          version: 9
-          run_install: false
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: pnpm
           cache-dependency-path: '**/pnpm-lock.yaml'
+
+      - name: Enable Corepack + pin pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@9.15.9 --activate
+          pnpm -v
 
       - name: Install deps
         run: pnpm install --frozen-lockfile
@@ -181,18 +181,18 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Setup PNPM
-        uses: pnpm/action-setup@v4
-        with:
-          version: 9
-          run_install: false
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: pnpm
           cache-dependency-path: '**/pnpm-lock.yaml'
+
+      - name: Enable Corepack + pin pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@9.15.9 --activate
+          pnpm -v
 
       - name: Install deps
         run: pnpm install --frozen-lockfile
