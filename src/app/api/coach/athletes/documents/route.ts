@@ -16,7 +16,7 @@ function safeKind(k: string) {
   return 'other'
 }
 function safeFileName(name: string) {
-  return name.replace(/[^\w.\-]+/g, '_').slice(0, 80)
+  return name.replace(/[^\w.-]+/g, '_').slice(0, 80)
 }
 
 export async function GET() {

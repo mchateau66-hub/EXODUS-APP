@@ -1,3 +1,4 @@
+/* eslint-env node */
 // scripts/next15_audit.mjs
 import fs from "node:fs";
 import path from "node:path";
