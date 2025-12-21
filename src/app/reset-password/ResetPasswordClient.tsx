@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { Suspense, useEffect, useMemo, useState, type FormEvent } from "react";
 
 type ApiErrCode =
   | "bad_request"
@@ -66,7 +66,19 @@ function humanMessage(code: ApiErrCode) {
   }
 }
 
+/**
+ * ✅ Next 15: wrapper Suspense
+ * useSearchParams() est appelé dans Inner => build stable
+ */
 export default function ResetPasswordClient() {
+  return (
+    <Suspense fallback={null}>
+      <ResetPasswordClientInner />
+    </Suspense>
+  );
+}
+
+function ResetPasswordClientInner() {
   const sp = useSearchParams();
   const token = useMemo(() => (sp.get("token") ?? "").trim(), [sp]);
 

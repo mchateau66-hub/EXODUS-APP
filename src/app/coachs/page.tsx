@@ -5,6 +5,15 @@ import { Suspense } from "react";
 import { requireOnboardingStep } from "@/lib/onboarding";
 import { getCoachMatchesForAthlete } from "@/lib/matching";
 import CoachFiltersClient from "./ui/CoachFiltersClient";
+import { prisma } from "@/lib/db";
+
+import CoachVerificationBadge from "@/components/coach/CoachVerificationBadge";
+import {
+  type CoachVerificationStatus,
+  coachVerificationRank,
+  isCoachVerified,
+  normalizeCoachVerificationStatus,
+} from "@/lib/coachVerification";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -22,7 +31,7 @@ function getStringParam(sp: SearchParams, key: string): string | undefined {
 
 function getListParam(sp: SearchParams, key: string): string[] {
   const v = sp[key];
-  const raw = Array.isArray(v) ? v.join(",") : (v ?? "");
+  const raw = Array.isArray(v) ? v.join(",") : v ?? "";
   return raw
     .split(",")
     .map((s) => s.trim())
@@ -62,6 +71,23 @@ function personaToFilterValue(personaType: any): string | null {
   }
 }
 
+/**
+ * Agrège plusieurs docs (statuts multiples) en un seul statut.
+ * Règle: rejected > needs_review > verified (si tout verified) > missing > unknown
+ */
+function computeCoachVerification(statuses: string[]): CoachVerificationStatus {
+  if (!statuses || statuses.length === 0) return "missing";
+
+  const normalized = statuses.map((s) => normalizeCoachVerificationStatus(s));
+
+  if (normalized.includes("rejected")) return "rejected";
+  if (normalized.includes("needs_review")) return "needs_review";
+  if (normalized.every((s) => s === "verified")) return "verified";
+  if (normalized.includes("missing")) return "missing";
+
+  return "unknown";
+}
+
 export default async function CoachsPage({
   searchParams = {},
 }: {
@@ -96,12 +122,37 @@ export default async function CoachsPage({
 
   const matchesRaw = await getCoachMatchesForAthlete((user as any).id, {
     q: q || undefined,
-    sport: sports.length <= 1 ? (sports[0] || undefined) : undefined,
+    sport: sports.length <= 1 ? sports[0] || undefined : undefined,
     personality,
-    language: languages.length <= 1 ? (languages[0] || undefined) : undefined,
+    language: languages.length <= 1 ? languages[0] || undefined : undefined,
     country: country || undefined,
     budget,
   });
+
+  // --- Précharge statuts de vérification (CoachDocument) par coach.user.id ---
+  const coachUserIds = Array.from(
+    new Set(
+      matchesRaw
+        .map((m) => (m.coach?.user as any)?.id)
+        .filter(Boolean)
+        .map(String),
+    ),
+  );
+
+  const docsByUserId = new Map<string, string[]>();
+
+  if (coachUserIds.length > 0) {
+    const rows = await prisma.coachDocument.findMany({
+      where: { user_id: { in: coachUserIds } },
+      select: { user_id: true, status: true },
+    });
+
+    for (const r of rows) {
+      const uid = String(r.user_id);
+      if (!docsByUserId.has(uid)) docsByUserId.set(uid, []);
+      docsByUserId.get(uid)!.push(String(r.status));
+    }
+  }
 
   // Post-filtrage OR (multi sports/langues/keywords)
   const sportsSet = new Set(sports.map(norm));
@@ -157,7 +208,7 @@ export default async function CoachsPage({
     return true;
   });
 
-  // Enrich + re-rank (si keywords actifs)
+  // Enrich + re-rank
   const matchesEnriched = matchesFiltered.map(({ coach, score, isPremium }) => {
     const coachUser = coach.user as any;
     const step2 = coachUser?.onboardingStep2Answers ?? {};
@@ -176,13 +227,30 @@ export default async function CoachsPage({
       }
     }
 
-    return { coach, score, isPremium, coachKeywords, kwOverlap };
+    const coachUserId = String((coach.user as any)?.id ?? "");
+    const statuses = docsByUserId.get(coachUserId) ?? [];
+    const verifyStatus = computeCoachVerification(statuses);
+
+    return { coach, score, isPremium, coachKeywords, kwOverlap, verifyStatus };
   });
 
-  const matchesFinal =
-    kwSet.size > 0
-      ? matchesEnriched.sort((a, b) => b.kwOverlap - a.kwOverlap || b.score - a.score)
-      : matchesEnriched;
+  const matchesFinal = matchesEnriched.sort((a, b) => {
+    // 1) statut vérification: verified > needs_review > missing
+    const vr = coachVerificationRank(a.verifyStatus) - coachVerificationRank(b.verifyStatus);
+    if (vr !== 0) return vr;
+
+    // 2) premium (optionnel)
+    if (a.isPremium !== b.isPremium) return a.isPremium ? -1 : 1;
+
+    // 3) keywords overlap (si filtre keywords actif)
+    if (kwSet.size > 0) {
+      const kw = (b.kwOverlap ?? 0) - (a.kwOverlap ?? 0);
+      if (kw !== 0) return kw;
+    }
+
+    // 4) score matching
+    return b.score - a.score;
+  });
 
   return (
     <main className="relative min-h-[100dvh] overflow-hidden bg-slate-950 text-white">
@@ -199,7 +267,7 @@ export default async function CoachsPage({
               Choisis le coach avec qui échanger
             </h1>
             <p className="mt-2 text-sm text-white/70">
-              Tri automatique par matching. Tu peux partager l’URL avec tes filtres.
+              Tri automatique + badge vérification. Tu peux partager l’URL avec tes filtres.
             </p>
           </div>
 
@@ -220,11 +288,11 @@ export default async function CoachsPage({
         </div>
 
         <div className="mt-8 grid gap-6 lg:grid-cols-[340px_1fr]">
-        <aside className="lg:sticky lg:top-6 h-fit">
-  <Suspense fallback={null}>
-    <CoachFiltersClient />
-  </Suspense>
-</aside> 
+          <aside className="lg:sticky lg:top-6 h-fit">
+            <Suspense fallback={null}>
+              <CoachFiltersClient />
+            </Suspense>
+          </aside>
 
           <section className="space-y-4">
             {matchesFinal.length === 0 ? (
@@ -236,7 +304,7 @@ export default async function CoachsPage({
               </div>
             ) : (
               <div className="grid gap-4 sm:grid-cols-2">
-                {matchesFinal.map(({ coach, score, isPremium, coachKeywords, kwOverlap }) => {
+                {matchesFinal.map(({ coach, score, isPremium, coachKeywords, kwOverlap, verifyStatus }) => {
                   const coachUser = coach.user as any;
                   const step1 = coachUser?.onboardingStep1Answers ?? {};
                   const step2 = coachUser?.onboardingStep2Answers ?? {};
@@ -261,12 +329,14 @@ export default async function CoachsPage({
                     personaType === "coach_bienveillant"
                       ? "Bienveillant"
                       : personaType === "coach_pedagogue"
-                      ? "Pédagogue"
-                      : personaType === "coach_motivateur"
-                      ? "Motivateur"
-                      : personaType === "coach_expert"
-                      ? "Expert"
-                      : null;
+                        ? "Pédagogue"
+                        : personaType === "coach_motivateur"
+                          ? "Motivateur"
+                          : personaType === "coach_expert"
+                            ? "Expert"
+                            : null;
+
+                  const canMessage = isCoachVerified(verifyStatus);
 
                   return (
                     <article
@@ -280,14 +350,19 @@ export default async function CoachsPage({
                           </div>
 
                           <div className="min-w-0">
-                            <h2 className="truncate text-sm font-semibold text-white">
-                              {coach.name}
-                            </h2>
+                            <div className="flex items-center gap-2">
+                              <h2 className="truncate text-sm font-semibold text-white">
+                                {coach.name}
+                              </h2>
+
+                              <CoachVerificationBadge status={verifyStatus} />
+                            </div>
+
                             {coach.subtitle && (
                               <p className="mt-0.5 text-xs text-white/65">{coach.subtitle}</p>
                             )}
 
-                            {/* ✅ Sports en chips */}
+                            {/* ✅ Sports */}
                             {sportsPreview.length > 0 && (
                               <div className="mt-3 flex flex-wrap gap-2">
                                 {sportsPreview.map((s) => (
@@ -306,7 +381,7 @@ export default async function CoachsPage({
                               </div>
                             )}
 
-                            {/* ✅ Keywords en chips */}
+                            {/* ✅ Keywords */}
                             {keywordsPreview.length > 0 && (
                               <div className="mt-2 flex flex-wrap gap-2">
                                 {keywordsPreview.map((k) => (
@@ -383,13 +458,31 @@ export default async function CoachsPage({
                           Voir le profil <span aria-hidden>→</span>
                         </Link>
 
-                        <Link
-                          href={`/messages?coachId=${coach.slug}`}
-                          className="inline-flex items-center gap-1 rounded-2xl bg-white px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-white/90"
-                        >
-                          Messagerie <span aria-hidden>→</span>
-                        </Link>
+                        {canMessage ? (
+                          <Link
+                            href={`/messages?coachId=${coach.slug}`}
+                            className="inline-flex items-center gap-1 rounded-2xl bg-white px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-white/90"
+                          >
+                            Messagerie <span aria-hidden>→</span>
+                          </Link>
+                        ) : (
+                          <button
+                            type="button"
+                            disabled
+                            title="Messagerie disponible uniquement quand le coach est vérifié"
+                            className="inline-flex cursor-not-allowed items-center gap-1 rounded-2xl bg-white/70 px-4 py-2 text-sm font-semibold text-slate-950 opacity-60"
+                          >
+                            Messagerie <span aria-hidden>→</span>
+                          </button>
+                        )}
                       </div>
+
+                      {!canMessage && (
+                        <p className="mt-3 text-xs text-white/55">
+                          Messagerie activée uniquement pour les coachs{" "}
+                          <span className="text-white/75 font-semibold">vérifiés</span>.
+                        </p>
+                      )}
                     </article>
                   );
                 })}
@@ -401,7 +494,7 @@ export default async function CoachsPage({
                 href="/messages"
                 className="text-xs font-medium text-white/60 underline underline-offset-2 hover:text-white/80"
               >
-                Revenir à la messagerie avec le coach actuel
+                Revenir à la messagerie
               </Link>
             </div>
           </section>

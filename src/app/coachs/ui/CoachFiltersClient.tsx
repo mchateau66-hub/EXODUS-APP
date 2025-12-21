@@ -138,6 +138,10 @@ const FALLBACK_SPORTS = [
 
 type SportItem = { label: string; count?: number };
 
+/**
+ * ✅ Wrapper Suspense (Next 15)
+ * Le hook useSearchParams() est dans Inner => OK build
+ */
 export default function CoachFiltersClient() {
   return (
     <Suspense fallback={null}>
@@ -162,7 +166,9 @@ function CoachFiltersClientInner() {
   const [sportOpen, setSportOpen] = useState(false);
   const [sportActiveIndex, setSportActiveIndex] = useState(0);
   const [sportSuggestions, setSportSuggestions] = useState<string[]>([]);
-  const [popularSports, setPopularSports] = useState<string[]>(FALLBACK_SPORTS.slice(0, 10));
+  const [popularSports, setPopularSports] = useState<string[]>(
+    FALLBACK_SPORTS.slice(0, 10),
+  );
   const sportBoxRef = useRef<HTMLDivElement | null>(null);
   const sportInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -200,7 +206,7 @@ function CoachFiltersClientInner() {
         keywordList.length ||
         langList.length ||
         personality ||
-        budget
+        budget,
     );
   }, [q, country, sportList, keywordList, langList, personality, budget]);
 
@@ -233,11 +239,17 @@ function CoachFiltersClientInner() {
       else params.delete("country");
 
       if (nextSports.length) {
-        params.set("sport", uniq(nextSports).slice(0, MAX_SELECTED_SPORTS).join(","));
+        params.set(
+          "sport",
+          uniq(nextSports).slice(0, MAX_SELECTED_SPORTS).join(","),
+        );
       } else params.delete("sport");
 
       if (nextKeywords.length) {
-        params.set("keywords", uniq(nextKeywords).slice(0, MAX_SELECTED_KEYWORDS).join(","));
+        params.set(
+          "keywords",
+          uniq(nextKeywords).slice(0, MAX_SELECTED_KEYWORDS).join(","),
+        );
       } else params.delete("keywords");
 
       if (nextLangs.length) params.set("language", uniq(nextLangs).join(","));
@@ -252,18 +264,7 @@ function CoachFiltersClientInner() {
       const qs = params.toString();
       router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
     },
-    [
-      sp,
-      router,
-      pathname,
-      q,
-      country,
-      sportList,
-      keywordList,
-      langList,
-      personality,
-      budget,
-    ]
+    [sp, router, pathname, q, country, sportList, keywordList, langList, personality, budget],
   );
 
   const toggleMulti = useCallback((list: string[], value: string) => {
@@ -311,10 +312,9 @@ function CoachFiltersClientInner() {
       }
 
       try {
-        const res = await fetch(
-          `/api/sports?q=${encodeURIComponent(q)}&limit=10`,
-          { cache: "no-store" }
-        );
+        const res = await fetch(`/api/sports?q=${encodeURIComponent(q)}&limit=10`, {
+          cache: "no-store",
+        });
         if (!res.ok) throw new Error("sports q not ok");
         const data = (await res.json()) as { sports?: SportItem[] };
         const list = (data.sports ?? []).map((x) => x.label).filter(Boolean);
@@ -328,7 +328,7 @@ function CoachFiltersClientInner() {
         const selected = new Set(sportList.map(norm));
         const qn = norm(q);
         const fallback = FALLBACK_SPORTS.filter(
-          (s) => norm(s).includes(qn) && !selected.has(norm(s))
+          (s) => norm(s).includes(qn) && !selected.has(norm(s)),
         ).slice(0, 10);
         if (!cancelled) setSportSuggestions(fallback);
       }
@@ -356,7 +356,7 @@ function CoachFiltersClientInner() {
       setSportOpen(false);
       sportInputRef.current?.focus();
     },
-    [sportList, applyToUrl]
+    [sportList, applyToUrl],
   );
 
   const removeSport = useCallback(
@@ -365,7 +365,7 @@ function CoachFiltersClientInner() {
       setSportList(next);
       applyToUrl({ sportList: next });
     },
-    [sportList, applyToUrl]
+    [sportList, applyToUrl],
   );
 
   /**
@@ -399,7 +399,7 @@ function CoachFiltersClientInner() {
       setKwOpen(false);
       kwInputRef.current?.focus();
     },
-    [keywordList, applyToUrl]
+    [keywordList, applyToUrl],
   );
 
   const removeKeyword = useCallback(
@@ -408,7 +408,7 @@ function CoachFiltersClientInner() {
       setKeywordList(next);
       applyToUrl({ keywordList: next });
     },
-    [keywordList, applyToUrl]
+    [keywordList, applyToUrl],
   );
 
   // close suggestions on outside click

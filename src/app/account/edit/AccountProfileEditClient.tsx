@@ -24,9 +24,10 @@ function normalizeProfile(payload: any): Profile {
     avatarUrl: String(p?.avatarUrl ?? ''),
     bio: String(p?.bio ?? ''),
     keywords: Array.isArray(p?.keywords) ? p.keywords.map(String) : [],
-    theme: (p?.theme === 'dark' || p?.theme === 'light' || p?.theme === 'system')
-      ? p.theme
-      : 'system',
+    theme:
+      p?.theme === 'dark' || p?.theme === 'light' || p?.theme === 'system'
+        ? p.theme
+        : 'system',
   }
 }
 
@@ -65,8 +66,8 @@ export default function AccountProfileEditClient() {
         if (!alive) return
         setError(e?.message ?? 'Erreur chargement profil')
       } finally {
-        if (!alive) return
-        setLoading(false)
+        // ✅ pas de "return" dans finally (ESLint no-unsafe-finally)
+        if (alive) setLoading(false)
       }
     })()
     return () => {
@@ -84,7 +85,7 @@ export default function AccountProfileEditClient() {
         ...form,
         keywords: keywordsText
           .split(',')
-          .map(s => s.trim())
+          .map((s) => s.trim())
           .filter(Boolean),
       }
 
@@ -102,7 +103,6 @@ export default function AccountProfileEditClient() {
 
       setOk('Profil mis à jour ✅')
       router.refresh()
-      // On revient sur la page compte (au lieu de /hub)
       router.push('/account')
     } catch (e: any) {
       setError(e?.message ?? 'Erreur sauvegarde')
@@ -146,7 +146,7 @@ export default function AccountProfileEditClient() {
             <input
               className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm"
               value={form.name}
-              onChange={(e) => setForm(s => ({ ...s, name: e.target.value }))}
+              onChange={(e) => setForm((s) => ({ ...s, name: e.target.value }))}
             />
           </label>
 
@@ -158,7 +158,7 @@ export default function AccountProfileEditClient() {
               className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm"
               value={form.age ?? ''}
               onChange={(e) =>
-                setForm(s => ({ ...s, age: e.target.value === '' ? null : Number(e.target.value) }))
+                setForm((s) => ({ ...s, age: e.target.value === '' ? null : Number(e.target.value) }))
               }
             />
           </label>
@@ -168,7 +168,7 @@ export default function AccountProfileEditClient() {
             <input
               className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm"
               value={form.country}
-              onChange={(e) => setForm(s => ({ ...s, country: e.target.value }))}
+              onChange={(e) => setForm((s) => ({ ...s, country: e.target.value }))}
             />
           </label>
 
@@ -177,7 +177,7 @@ export default function AccountProfileEditClient() {
             <input
               className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm"
               value={form.language}
-              onChange={(e) => setForm(s => ({ ...s, language: e.target.value }))}
+              onChange={(e) => setForm((s) => ({ ...s, language: e.target.value }))}
               placeholder="fr"
             />
           </label>
@@ -188,7 +188,7 @@ export default function AccountProfileEditClient() {
           <input
             className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm"
             value={form.avatarUrl}
-            onChange={(e) => setForm(s => ({ ...s, avatarUrl: e.target.value }))}
+            onChange={(e) => setForm((s) => ({ ...s, avatarUrl: e.target.value }))}
             placeholder="https://…"
           />
         </label>
@@ -198,7 +198,7 @@ export default function AccountProfileEditClient() {
           <textarea
             className="min-h-[140px] w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm"
             value={form.bio}
-            onChange={(e) => setForm(s => ({ ...s, bio: e.target.value }))}
+            onChange={(e) => setForm((s) => ({ ...s, bio: e.target.value }))}
           />
         </label>
 
@@ -208,9 +208,9 @@ export default function AccountProfileEditClient() {
             className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm"
             value={keywordsText}
             onChange={(e) =>
-              setForm(s => ({
+              setForm((s) => ({
                 ...s,
-                keywords: e.target.value.split(',').map(x => x.trim()).filter(Boolean),
+                keywords: e.target.value.split(',').map((x) => x.trim()).filter(Boolean),
               }))
             }
             placeholder="motivation, nutrition, performance…"
@@ -222,7 +222,7 @@ export default function AccountProfileEditClient() {
           <select
             className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm"
             value={form.theme}
-            onChange={(e) => setForm(s => ({ ...s, theme: e.target.value as any }))}
+            onChange={(e) => setForm((s) => ({ ...s, theme: e.target.value as any }))}
           >
             <option value="system">System</option>
             <option value="light">Light</option>

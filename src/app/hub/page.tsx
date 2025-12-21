@@ -1,8 +1,11 @@
+// src/app/hub/page.tsx
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
+import type { ReactNode } from 'react'
 import { getUserFromSession } from '@/lib/auth'
 import { prisma } from '@/lib/db'
 
+export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
 
@@ -11,9 +14,9 @@ function Card({
   desc,
   children,
 }: {
-  title: string
+  title: ReactNode
   desc?: string
-  children: React.ReactNode
+  children: ReactNode
 }) {
   return (
     <section className="rounded-2xl border bg-white p-5 shadow-sm">
@@ -26,12 +29,25 @@ function Card({
   )
 }
 
-function ActionLink({ href, label }: { href: string; label: string }) {
+function ActionLink({
+  href,
+  label,
+  variant = 'default',
+}: {
+  href: string
+  label: string
+  variant?: 'default' | 'primary'
+}) {
+  const base =
+    'inline-flex items-center justify-center rounded-2xl px-3 py-2 text-sm transition'
+
+  const cls =
+    variant === 'primary'
+      ? 'bg-slate-900 text-white hover:bg-slate-800'
+      : 'border hover:bg-slate-50'
+
   return (
-    <Link
-      href={href}
-      className="inline-flex items-center justify-center rounded-2xl border px-3 py-2 text-sm hover:bg-slate-50"
-    >
+    <Link href={href} className={`${base} ${cls}`}>
       {label}
     </Link>
   )
@@ -49,28 +65,126 @@ function DisabledAction({ label }: { label: string }) {
   )
 }
 
-export default async function HubPage() {
-  const ctx = await getUserFromSession()
-  if (!ctx) redirect('/login?next=/hub')
+type CoachVerifyStatus = 'missing' | 'pending' | 'needs_review' | 'verified'
 
-  // DB source of truth
-  const user = await prisma.user.findUnique({ where: { id: ctx.user.id } })
+function computeCoachVerification(statuses: string[]): {
+  status: CoachVerifyStatus
+  label: string
+  className: string
+  hint: string
+} {
+  if (!statuses || statuses.length === 0) {
+    return {
+      status: 'missing',
+      label: 'Aucun doc',
+      className: 'bg-slate-100 text-slate-700 border-slate-200',
+      hint: 'Ajoute tes diplômes/certifs pour lancer la vérification.',
+    }
+  }
+
+  const hasNeedsReview = statuses.includes('needs_review')
+  const hasRejected = statuses.includes('rejected')
+  const hasPending = statuses.includes('pending')
+  const allVerified = statuses.every((s) => s === 'verified')
+
+  if (hasNeedsReview || hasRejected) {
+    return {
+      status: 'needs_review',
+      label: 'À revoir',
+      className: 'bg-amber-100 text-amber-900 border-amber-200',
+      hint: 'Un document nécessite une action ou une vérification manuelle.',
+    }
+  }
+
+  if (hasPending) {
+    return {
+      status: 'pending',
+      label: 'En attente',
+      className: 'bg-sky-100 text-sky-900 border-sky-200',
+      hint: 'Tes documents sont en cours de vérification.',
+    }
+  }
+
+  if (allVerified) {
+    return {
+      status: 'verified',
+      label: 'Vérifié',
+      className: 'bg-emerald-100 text-emerald-900 border-emerald-200',
+      hint: 'Tes documents sont validés ✅',
+    }
+  }
+
+  // fallback
+  return {
+    status: 'pending',
+    label: 'En attente',
+    className: 'bg-sky-100 text-sky-900 border-sky-200',
+    hint: 'Statut en cours.',
+  }
+}
+
+export default async function HubPage() {
+  const session = await getUserFromSession()
+  if (!session) redirect('/login?next=/hub')
+
+  const userId = (session as any)?.user?.id
+  if (!userId) redirect('/login?next=/hub')
+
+  // ✅ DB source of truth (sélection minimale)
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: {
+      id: true,
+      email: true,
+      name: true,
+      role: true,
+      onboardingStep: true,
+    },
+  })
   if (!user) redirect('/login?next=/hub')
 
-  const u = user as any
-  const onboardingStep = Number(u.onboardingStep ?? u.onboarding_step ?? 0)
-  const role = String(u.role ?? '').toLowerCase() as 'coach' | 'athlete' | string
-  const displayName = String(
-    u.name ?? u.fullName ?? u.email?.split('@')?.[0] ?? 'Mon compte'
-  )
-
-  // Gating onboarding (décision actée)
+  // ✅ Gating onboarding (règle actée)
+  const onboardingStep = user.onboardingStep ?? 0
   if (onboardingStep < 1) redirect('/onboarding')
   if (onboardingStep < 2) redirect('/onboarding/step-2')
   if (onboardingStep < 3) redirect('/onboarding/step-3')
 
+  const role = String(user.role).toLowerCase()
+  const isAthlete = role === 'athlete'
   const isCoach = role === 'coach'
-  const roleLabel = isCoach ? 'Coach' : 'Athlète'
+
+  let coachVerify: ReturnType<typeof computeCoachVerification> | null = null
+  let coachDocsCounts = { total: 0, pending: 0, verified: 0, needs_review: 0, rejected: 0 }
+  
+  if (isCoach) {
+    const docs = await prisma.coachDocument.findMany({
+      where: { user_id: user.id },
+      select: { status: true },
+    })
+  
+    const statuses = docs.map((d) => String(d.status))
+    coachVerify = computeCoachVerification(statuses)
+  
+    coachDocsCounts.total = statuses.length
+    for (const s of statuses) {
+      if (s === 'pending') coachDocsCounts.pending += 1
+      else if (s === 'verified') coachDocsCounts.verified += 1
+      else if (s === 'needs_review') coachDocsCounts.needs_review += 1
+      else if (s === 'rejected') coachDocsCounts.rejected += 1
+    }
+  }  
+
+  const roleLabel = isCoach ? 'Coach' : isAthlete ? 'Athlète' : 'Admin'
+
+
+
+  const displayName =
+    user.name?.trim() || user.email?.split('@')?.[0] || 'Mon compte'
+
+  // ✅ Tes routes réelles
+  const verificationHref = isCoach
+    ? '/account/verification/coach'
+    : '/account/verification/athlete'
 
   return (
     <main className="mx-auto w-full max-w-5xl space-y-6 p-4 md:p-8">
@@ -86,7 +200,7 @@ export default async function HubPage() {
             <ActionLink href="/messages" label="Messages" />
             <ActionLink href="/account" label="Mon profil" />
             {isCoach ? (
-              <ActionLink href="/coach" label="Accéder à /coach" />
+              <ActionLink href="/coach" label="Dashboard coach" />
             ) : (
               <ActionLink href="/coachs" label="Trouver un coach" />
             )}
@@ -111,17 +225,52 @@ export default async function HubPage() {
             </Card>
 
             <Card
-  title="Profil & vérification"
-  desc="Prochaine étape : upload photo + diplômes/certifs + statut (pending/verified/needs_review)."
+  title={
+    <div className="flex items-center gap-2">
+      <span>Profil & vérification</span>
+
+      {coachVerify ? (
+        <span
+          className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium ${coachVerify.className}`}
+        >
+          {coachVerify.label}
+        </span>
+      ) : null}
+    </div>
+  }
+  desc={
+    coachVerify?.hint ??
+    'Upload photo + diplômes/certifs + statut (pending/verified/needs_review).'
+  }
 >
+  <div className="mb-3 text-xs text-slate-600">
+    {coachDocsCounts.total === 0
+      ? '0 document'
+      : `${coachDocsCounts.total} doc • ${coachDocsCounts.verified} vérifié(s) • ${coachDocsCounts.pending} en attente • ${
+          coachDocsCounts.needs_review + coachDocsCounts.rejected
+        } à revoir`}
+  </div>
+
   <div className="flex flex-wrap gap-2">
     <ActionLink href="/account" label="Voir mon profil" />
     <ActionLink href="/account/edit" label="Modifier mon profil" />
-    <ActionLink href="/account/verification" label="Uploader diplômes/certifs" />
-<ActionLink href="/account/verification" label="Voir mon statut" />
+    <ActionLink
+  href={verificationHref}
+  label={
+    coachVerify?.status === 'missing'
+      ? 'Ajouter mes documents'
+      : coachVerify?.status === 'needs_review'
+      ? 'Corriger mes documents'
+      : 'Vérification (docs)'
+  }
+  variant={
+    coachVerify?.status === 'missing' || coachVerify?.status === 'needs_review'
+      ? 'primary'
+      : 'default'
+  }
+/> 
   </div>
-</Card>
- 
+</Card>  
           </>
         ) : (
           <>
@@ -141,7 +290,9 @@ export default async function HubPage() {
             >
               <div className="flex flex-wrap gap-2">
                 <ActionLink href="/account" label="Voir mon profil" />
+                <ActionLink href="/account/edit" label="Modifier mon profil" />
                 <ActionLink href="/paywall" label="Voir les offres" />
+                <ActionLink href={verificationHref} label="Vérification" />
               </div>
             </Card>
           </>
@@ -151,9 +302,7 @@ export default async function HubPage() {
       {/* Footer hint */}
       <section className="rounded-2xl border bg-white p-4 text-sm text-slate-600">
         <p>
-          ✅ On garde <strong>/hub</strong> comme destination unique post-login et
-          post-onboarding. Étape suivante : rendre “Modifier mon profil” réel +
-          clarifier la navigation finale.
+          ✅ <strong>/hub</strong> reste la destination unique post-login et post-onboarding.
         </p>
       </section>
     </main>

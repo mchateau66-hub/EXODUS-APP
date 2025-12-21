@@ -1,81 +1,109 @@
-import { put } from '@vercel/blob'
-import { getUserFromSession } from '@/lib/auth'
+import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
+import { getUserFromSession } from '@/lib/auth'
 
 export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
 
-const MAX_BYTES = 15 * 1024 * 1024
-const ALLOWED = new Set(['application/pdf', 'image/jpeg', 'image/png', 'image/webp'])
+function jsonNoStore(body: any, init?: ResponseInit) {
+  const res = NextResponse.json(body, init)
+  res.headers.set('cache-control', 'no-store')
+  return res
+}
 
-function sanitizeTitle(s: string) {
-  return s.replace(/\s+/g, ' ').trim().slice(0, 120)
+function isHttpUrl(u: string) {
+  try {
+    const url = new URL(u)
+    return url.protocol === 'http:' || url.protocol === 'https:'
+  } catch {
+    return false
+  }
 }
-function safeKind(k: string) {
-  const v = (k || '').toLowerCase()
-  if (v === 'diploma' || v === 'certification' || v === 'other') return v
-  return 'other'
-}
-function safeFileName(name: string) {
-  return name.replace(/[^\w.\-]+/g, '_').slice(0, 80)
-}
+
+const ALLOWED_KINDS = new Set(['diploma', 'certification', 'other'])
 
 export async function GET() {
   const ctx = await getUserFromSession()
-  if (!ctx) return Response.json({ ok: false, error: 'Unauthorized' }, { status: 401 })
+  if (!ctx) return jsonNoStore({ ok: false, error: 'UNAUTHENTICATED' }, { status: 401 })
 
-  const me = await prisma.user.findUnique({ where: { id: ctx.user.id } })
-  if (!me) return Response.json({ ok: false, error: 'Unauthorized' }, { status: 401 })
-  if (String(me.role).toLowerCase() !== 'coach')
-    return Response.json({ ok: false, error: 'Forbidden' }, { status: 403 })
+  const me = await prisma.user.findUnique({
+    where: { id: ctx.user.id },
+    select: { id: true, role: true, onboardingStep: true },
+  })
+  if (!me) return jsonNoStore({ ok: false, error: 'UNAUTHENTICATED' }, { status: 401 })
+  if (String(me.role).toLowerCase() !== 'coach') {
+    return jsonNoStore({ ok: false, error: 'FORBIDDEN' }, { status: 403 })
+  }
+  if ((me.onboardingStep ?? 0) < 3) {
+    return jsonNoStore({ ok: false, error: 'ONBOARDING_INCOMPLETE' }, { status: 409 })
+  }
 
   const docs = await prisma.coachDocument.findMany({
     where: { user_id: me.id },
     orderBy: { created_at: 'desc' },
+    select: {
+      id: true,
+      kind: true,
+      title: true,
+      url: true,
+      pathname: true,
+      mime_type: true,
+      size_bytes: true,
+      status: true,
+      review_note: true,
+      reviewed_at: true,
+      created_at: true,
+    },
   })
 
-  return Response.json({ ok: true, docs }, { headers: { 'cache-control': 'no-store' } })
+  return jsonNoStore({ ok: true, documents: docs })
 }
 
 export async function POST(req: Request) {
   const ctx = await getUserFromSession()
-  if (!ctx) return Response.json({ ok: false, error: 'Unauthorized' }, { status: 401 })
+  if (!ctx) return jsonNoStore({ ok: false, error: 'UNAUTHENTICATED' }, { status: 401 })
 
-  const me = await prisma.user.findUnique({ where: { id: ctx.user.id } })
-  if (!me) return Response.json({ ok: false, error: 'Unauthorized' }, { status: 401 })
-  if (String(me.role).toLowerCase() !== 'coach')
-    return Response.json({ ok: false, error: 'Forbidden' }, { status: 403 })
-
-  const form = await req.formData().catch(() => null)
-  const file = form?.get('file')
-  const kind = safeKind(String(form?.get('kind') || 'other'))
-  const title = sanitizeTitle(String(form?.get('title') || ''))
-
-  if (!(file instanceof File))
-    return Response.json({ ok: false, error: 'Bad Request' }, { status: 400 })
-  if (!ALLOWED.has(file.type))
-    return Response.json({ ok: false, error: 'Unsupported Media Type' }, { status: 415 })
-  if (file.size > MAX_BYTES)
-    return Response.json({ ok: false, error: 'Payload Too Large' }, { status: 413 })
-
-  const pathname = `coach-docs/${me.id}/${crypto.randomUUID()}-${safeFileName(file.name)}`
-  const blob = await put(pathname, file, {
-    access: 'public',
-    addRandomSuffix: true,
-    contentType: file.type,
+  const me = await prisma.user.findUnique({
+    where: { id: ctx.user.id },
+    select: { id: true, role: true, onboardingStep: true },
   })
+  if (!me) return jsonNoStore({ ok: false, error: 'UNAUTHENTICATED' }, { status: 401 })
+  if (String(me.role).toLowerCase() !== 'coach') {
+    return jsonNoStore({ ok: false, error: 'FORBIDDEN' }, { status: 403 })
+  }
+  if ((me.onboardingStep ?? 0) < 3) {
+    return jsonNoStore({ ok: false, error: 'ONBOARDING_INCOMPLETE' }, { status: 409 })
+  }
 
-  const doc = await prisma.coachDocument.create({
+  const body = await req.json().catch(() => ({}))
+  const kind = String(body?.kind ?? '')
+  const title = body?.title ? String(body.title).slice(0, 120) : null
+  const url = String(body?.url ?? '').trim()
+
+  if (!ALLOWED_KINDS.has(kind)) {
+    return jsonNoStore({ ok: false, error: 'INVALID_KIND' }, { status: 400 })
+  }
+  if (!url || !isHttpUrl(url)) {
+    return jsonNoStore({ ok: false, error: 'INVALID_URL' }, { status: 400 })
+  }
+
+  let pathname = '/'
+  try {
+    pathname = new URL(url).pathname || '/'
+  } catch {}
+
+  const created = await prisma.coachDocument.create({
     data: {
       user_id: me.id,
-      kind,
-      title: title || null,
-      url: blob.url,
-      pathname: blob.pathname,
-      mime_type: file.type,
-      size_bytes: file.size,
-      status: 'pending',
+      kind: kind as any,
+      title,
+      url,
+      pathname,
+      mime_type: String(body?.mime_type ?? 'application/octet-stream').slice(0, 120),
+      size_bytes: Number.isFinite(Number(body?.size_bytes)) ? Number(body.size_bytes) : 0,
     },
+    select: { id: true, kind: true, title: true, url: true, status: true, created_at: true },
   })
 
-  return Response.json({ ok: true, doc }, { headers: { 'cache-control': 'no-store' } })
+  return jsonNoStore({ ok: true, document: created }, { status: 201 })
 }

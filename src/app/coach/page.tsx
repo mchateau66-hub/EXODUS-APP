@@ -32,10 +32,10 @@ type Conversation = {
 }
 
 type PageProps = {
-  searchParams?: {
+  searchParams?: Promise<{
     status?: string
     q?: string
-  }
+  }>
 }
 
 function startOfLocalDay(d: Date) {
@@ -71,6 +71,7 @@ function getFollowUpPriority(nextFollowUpAt: Date | null, now: Date) {
 }
 
 export default async function CoachDashboardPage({ searchParams }: PageProps) {
+  const sp = (await searchParams) ?? {};
   // 🔒 1) Vérifie session + onboarding
   const { user } = await requireOnboardingStep(3)
 
@@ -123,7 +124,7 @@ export default async function CoachDashboardPage({ searchParams }: PageProps) {
   }
 
   // 4) Filtres
-  const statusFilterRaw = (searchParams?.status ?? '').toUpperCase()
+  const statusFilterRaw = (sp.status ?? '').toUpperCase() 
   const allowedStatuses: CoachAthleteStatus[] = ['LEAD', 'ACTIVE', 'TO_FOLLOW', 'ENDED']
 
   const statusFilter: CoachAthleteStatus | null = allowedStatuses.includes(
@@ -132,7 +133,7 @@ export default async function CoachDashboardPage({ searchParams }: PageProps) {
     ? (statusFilterRaw as CoachAthleteStatus)
     : null
 
-  const q = (searchParams?.q ?? '').toLowerCase().trim()
+    const q = (sp.q ?? '').toLowerCase().trim()
 
   // 5) Chargement messages + pipeline
   let messages: {
@@ -372,7 +373,7 @@ export default async function CoachDashboardPage({ searchParams }: PageProps) {
                     id="search-q"
                     name="q"
                     type="text"
-                    defaultValue={searchParams?.q ?? ''}
+                    defaultValue={sp.q ?? ''}
                     placeholder="Athlète, objectif, tag..."
                     className="min-w-[220px] flex-1 rounded-2xl border border-white/15 bg-black/20 px-3 py-2 text-sm text-white outline-none placeholder:text-white/35 focus:border-white/30"
                   />

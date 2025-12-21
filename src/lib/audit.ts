@@ -10,6 +10,15 @@ function sha256(input: string) {
   return crypto.createHash("sha256").update(SALT + input).digest("hex");
 }
 
+function stripPII(meta: Meta) {
+  const clone: Meta = { ...meta };
+  delete (clone as any).email;
+  delete (clone as any).ip;
+  delete (clone as any).ua;
+  delete (clone as any).userAgent;
+  return clone;
+}
+
 export async function writeAuditLog(params: {
   action: string;
   userId?: string | null;
@@ -18,7 +27,8 @@ export async function writeAuditLog(params: {
   ua?: string | null;
   meta?: Meta;
 }) {
-  const meta: Meta = { ...(params.meta || {}) };
+  const base = stripPII(params.meta || {});
+  const meta: Meta = { ...base };
 
   // pas de PII en clair
   if (params.email) meta.email_hash = sha256(params.email.toLowerCase());
@@ -28,22 +38,21 @@ export async function writeAuditLog(params: {
   try {
     const p = prisma as any;
 
-    // compatible si ton modèle Prisma s'appelle audit_logs (snake) OU auditLog (Pascal)
-    if (p.audit_logs) {
+    if (p.audit_logs?.create) {
       await p.audit_logs.create({
         data: { user_id: params.userId ?? null, action: params.action, meta },
       });
       return;
     }
-    if (p.auditLog) {
+    if (p.auditLog?.create) {
       await p.auditLog.create({
         data: { user_id: params.userId ?? null, action: params.action, meta },
       });
       return;
     }
 
-    // si aucun modèle n’existe, on ignore (best-effort)
+    // best-effort: si aucun modèle Prisma, on ignore
   } catch {
-    // ne jamais casser le flow auth/reset à cause de l’audit
+    // ne jamais casser un flow à cause de l’audit
   }
 }

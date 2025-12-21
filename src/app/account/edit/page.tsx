@@ -1,3 +1,4 @@
+// src/app/account/edit/page.tsx
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { getUserFromSession } from '@/lib/auth'
@@ -12,17 +13,17 @@ export default async function AccountEditPage() {
   const session = await getUserFromSession()
   if (!session) redirect('/login?next=/hub')
 
-  const sessionUser = (session as any).user
-  const userId = sessionUser?.id
+  const userId = session.user?.id
   if (!userId) redirect('/login?next=/hub')
 
-  const user = await prisma.user.findUnique({ where: { id: userId } })
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { onboardingStep: true },
+  })
   if (!user) redirect('/login?next=/hub')
 
-  const u = user as any
-  const onboardingStep = Number(u.onboardingStep ?? u.onboarding_step ?? 0)
+  const onboardingStep = user.onboardingStep ?? 0
 
-  // Gating onboarding (règle actée)
   if (onboardingStep < 1) redirect('/onboarding')
   if (onboardingStep < 2) redirect('/onboarding/step-2')
   if (onboardingStep < 3) redirect('/onboarding/step-3')
@@ -33,9 +34,7 @@ export default async function AccountEditPage() {
         <div className="mx-auto flex max-w-5xl items-center justify-between gap-4 px-4 py-3">
           <div>
             <p className="text-xs text-slate-500">Mon compte</p>
-            <h1 className="text-sm font-semibold text-slate-900">
-              Modifier mon profil
-            </h1>
+            <h1 className="text-sm font-semibold text-slate-900">Modifier mon profil</h1>
           </div>
           <nav className="flex items-center gap-2">
             <Link

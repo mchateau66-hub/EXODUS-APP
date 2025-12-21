@@ -41,6 +41,9 @@ type PatchOk = { ok: true; item: unknown }
 type PatchErr = { ok: false; error: string; message?: string }
 type PatchResponse = PatchOk | PatchErr
 
+// ✅ Fallback stable (évite le "?? []" qui recrée un array à chaque render)
+const EMPTY_LABELS: string[] = []
+
 function toLocalDateInputValue(date: Date): string {
   const y = date.getFullYear()
   const m = String(date.getMonth() + 1).padStart(2, '0')
@@ -87,12 +90,26 @@ export default function CoachAthleteQuickActionsClient(props: Props) {
 
   const { athleteId, coachSlug, onOptimisticUpdate, refreshOnSuccess = false } = props
 
-  // ✅ Valeurs initiales (compat old props + new initial={...})
-  const initStatus = (props.initialStatus ?? props.initial?.status ?? 'LEAD') as CoachAthleteStatus
-  const initPinned = !!(props.initialPinned ?? props.initial?.pinned ?? false)
-  const initLabels = (props.initialLabels ?? props.initial?.labels ?? []) as string[]
-  const initNextFollowUpAt =
-    (props.initialNextFollowUpAt ?? props.initial?.nextFollowUpAt ?? null) as string | null
+  // ✅ Valeurs initiales (compat old props + new initial={...}) — memo = deps stables
+  const initStatus = useMemo(
+    () => (props.initialStatus ?? props.initial?.status ?? 'LEAD') as CoachAthleteStatus,
+    [props.initialStatus, props.initial?.status],
+  )
+
+  const initPinned = useMemo(
+    () => Boolean(props.initialPinned ?? props.initial?.pinned ?? false),
+    [props.initialPinned, props.initial?.pinned],
+  )
+
+  const initLabels = useMemo(
+    () => (props.initialLabels ?? props.initial?.labels ?? EMPTY_LABELS) as string[],
+    [props.initialLabels, props.initial?.labels],
+  )
+
+  const initNextFollowUpAt = useMemo(
+    () => (props.initialNextFollowUpAt ?? props.initial?.nextFollowUpAt ?? null) as string | null,
+    [props.initialNextFollowUpAt, props.initial?.nextFollowUpAt],
+  )
 
   // ✅ “Committed” = dernière valeur connue (après succès patch)
   const [status, setStatus] = useState<CoachAthleteStatus>(initStatus)
@@ -102,18 +119,15 @@ export default function CoachAthleteQuickActionsClient(props: Props) {
 
   // ✅ UI editor (draft)
   const [open, setOpen] = useState(false)
-  const [labelsText, setLabelsText] = useState(initLabels.join(', '))
+  const [labelsText, setLabelsText] = useState(() => initLabels.join(', '))
   const initialDateValue = useMemo(() => safeIsoToDateInput(initNextFollowUpAt), [initNextFollowUpAt])
-  const [dateValue, setDateValue] = useState<string>(initialDateValue)
+  const [dateValue, setDateValue] = useState<string>(() => initialDateValue)
 
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   // ✅ clé stable pour resync quand labels changent après refresh
-  const labelsKey = useMemo(
-    () => (initLabels ?? []).map((s) => s.toLowerCase()).join('|'),
-    [initLabels],
-  )
+  const labelsKey = useMemo(() => initLabels.map((s) => s.toLowerCase()).join('|'), [initLabels])
 
   // ✅ Resync si l’athlète OU les valeurs initiales changent (ex: router.refresh)
   useEffect(() => {
@@ -127,7 +141,7 @@ export default function CoachAthleteQuickActionsClient(props: Props) {
     setLabelsText(initLabels.join(', '))
     setDateValue(safeIsoToDateInput(initNextFollowUpAt))
     setError(null)
-  }, [athleteId, initStatus, initPinned, initNextFollowUpAt, labelsKey])
+  }, [athleteId, initStatus, initPinned, initNextFollowUpAt, labelsKey, initLabels])
 
   // 🔒 empêcher le click sur la card <Link>
   function stop(e: SyntheticEvent) {
@@ -234,7 +248,12 @@ export default function CoachAthleteQuickActionsClient(props: Props) {
   }
 
   return (
-    <div className="flex flex-col items-end gap-2" onClick={stop} onMouseDown={stop} onPointerDown={stop}>
+    <div
+      className="flex flex-col items-end gap-2"
+      onClick={stop}
+      onMouseDown={stop}
+      onPointerDown={stop}
+    >
       <div className="flex items-center gap-2">
         <button
           type="button"
@@ -391,19 +410,11 @@ export default function CoachAthleteQuickActionsClient(props: Props) {
             </button>
           </div>
 
-          {error && (
-            <div className="mt-2 text-right text-[10px] text-red-600">
-              {error}
-            </div>
-          )}
+          {error && <div className="mt-2 text-right text-[10px] text-red-600">{error}</div>}
         </div>
       )}
 
-      {!open && error && (
-        <div className="max-w-[260px] text-right text-[10px] text-red-600">
-          {error}
-        </div>
-      )}
+      {!open && error && <div className="max-w-[260px] text-right text-[10px] text-red-600">{error}</div>}
     </div>
   )
 }

@@ -8,13 +8,6 @@ import { useEntitlements } from '@/lib/entitlements'
 type Role = 'athlete' | 'coach' | 'admin'
 type Props = { role: Role }
 
-export default function AccountSubscriptionSection(props: Props) {
-  return (
-    <Suspense fallback={null}>
-      <AccountSubscriptionSectionInner {...props} />
-    </Suspense>
-  )
-}
 type CheckoutResponse = {
   ok: boolean
   url?: string
@@ -23,7 +16,19 @@ type CheckoutResponse = {
   message?: string
 }
 
-// ... imports ...
+const EMPTY_FEATURES: string[] = [];
+
+/**
+ * ✅ Wrapper Suspense (Next 15)
+ * Le hook useSearchParams() est dans Inner => OK build
+ */
+export default function AccountSubscriptionSection(props: Props) {
+  return (
+    <Suspense fallback={null}>
+      <AccountSubscriptionSectionInner {...props} />
+    </Suspense>
+  )
+}
 
 function AccountSubscriptionSectionInner({ role }: Props) {
   const router = useRouter()
@@ -45,32 +50,27 @@ function AccountSubscriptionSectionInner({ role }: Props) {
     planKey === 'master'
       ? 'Abonnement Master'
       : planKey === 'premium'
-      ? 'Abonnement Premium'
-      : planKey === 'athlete_premium'
-      ? 'Athlète Premium'
-      : planKey === 'coach_premium'
-      ? 'Coach Premium'
-      : planKey === 'free'
-      ? 'Free'
-      : planKey
+        ? 'Abonnement Premium'
+        : planKey === 'athlete_premium'
+          ? 'Athlète Premium'
+          : planKey === 'coach_premium'
+            ? 'Coach Premium'
+            : planKey === 'free'
+              ? 'Free'
+              : planKey
 
-  const features = claim?.features ?? []
-
+  const features = claim?.features ?? EMPTY_FEATURES
   const isPremium = features.includes('messages.unlimited')
 
   const premiumTargetPlanKey: 'athlete_premium' | 'coach_premium' | null =
     role === 'athlete'
       ? 'athlete_premium'
       : role === 'coach'
-      ? 'coach_premium'
-      : null
+        ? 'coach_premium'
+        : null
 
-  const checkoutSuccess =
-    checkoutStatus === 'success' && checkoutPlan != null
-  const checkoutCanceled =
-    checkoutStatus === 'canceled' && checkoutPlan != null
-
-  // ... le reste du composant inchangé ...
+  const checkoutSuccess = checkoutStatus === 'success' && checkoutPlan != null
+  const checkoutCanceled = checkoutStatus === 'canceled' && checkoutPlan != null
 
   const handleStartCheckout = useCallback(async () => {
     if (!premiumTargetPlanKey) return
@@ -80,8 +80,7 @@ function AccountSubscriptionSectionInner({ role }: Props) {
     setCheckoutLoading(true)
 
     try {
-      const origin =
-        typeof window !== 'undefined' ? window.location.origin : ''
+      const origin = typeof window !== 'undefined' ? window.location.origin : ''
 
       const successUrl = `${origin}/account?checkout=success&plan=${premiumTargetPlanKey}`
       const cancelUrl = `${origin}/account?checkout=canceled&plan=${premiumTargetPlanKey}`
@@ -132,9 +131,9 @@ function AccountSubscriptionSectionInner({ role }: Props) {
     )
     params.delete('checkout')
     params.delete('plan')
-    router.replace(`/account?${params.toString()}`, {
-      scroll: false,
-    })
+
+    const qs = params.toString()
+    router.replace(qs ? `/account?${qs}` : '/account', { scroll: false })
   }, [router, searchParams])
 
   const featuresLabel = useMemo(() => {
@@ -157,12 +156,8 @@ function AccountSubscriptionSectionInner({ role }: Props) {
           </h2>
           <p className="mt-1 text-xs text-slate-500">
             Plan actuel :{' '}
-            <span className="font-medium text-slate-900">
-              {planName}
-            </span>{' '}
-            <span className="text-[10px] text-slate-400">
-              ({planKey})
-            </span>
+            <span className="font-medium text-slate-900">{planName}</span>{' '}
+            <span className="text-[10px] text-slate-400">({planKey})</span>
           </p>
 
           {loading && (
@@ -171,9 +166,7 @@ function AccountSubscriptionSectionInner({ role }: Props) {
             </p>
           )}
           {error && !loading && (
-            <p className="mt-1 text-[11px] text-red-700">
-              {error}
-            </p>
+            <p className="mt-1 text-[11px] text-red-700">{error}</p>
           )}
 
           {claim && (
@@ -200,9 +193,7 @@ function AccountSubscriptionSectionInner({ role }: Props) {
                 isPremium ? 'bg-emerald-500' : 'bg-slate-400'
               }`}
             />
-            <span>
-              {isPremium ? 'Abonnement actif' : 'Plan Free en cours'}
-            </span>
+            <span>{isPremium ? 'Abonnement actif' : 'Plan Free en cours'}</span>
           </div>
 
           {!isPremium && premiumTargetPlanKey && (
@@ -217,8 +208,8 @@ function AccountSubscriptionSectionInner({ role }: Props) {
               {checkoutLoading
                 ? 'Redirection vers le paiement…'
                 : role === 'coach'
-                ? 'Passer sur le plan Coach Premium'
-                : 'Passer sur le plan Athlète Premium'}
+                  ? 'Passer sur le plan Coach Premium'
+                  : 'Passer sur le plan Athlète Premium'}
             </button>
           )}
 
@@ -247,9 +238,7 @@ function AccountSubscriptionSectionInner({ role }: Props) {
             </p>
           )}
           {checkoutCanceled && (
-            <p className="mb-1 font-semibold text-amber-700">
-              Paiement annulé
-            </p>
+            <p className="mb-1 font-semibold text-amber-700">Paiement annulé</p>
           )}
           <p className="mb-2">
             {checkoutSuccess
