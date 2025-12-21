@@ -16,17 +16,15 @@ on:
         default: false
 
 concurrency:
-  group: e2e-${{ github.ref }}
+  group: e2e-playwright-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
   contents: read
 
 env:
-  # Defaults (peuvent être override par workflow_dispatch)
   E2E_BASE_URL: ${{ vars.E2E_BASE_URL }}
   E2E_SMOKE_PATH: ${{ vars.E2E_SMOKE_PATH }}
-  # Secrets optionnels utilisés par tes tests (skip si manquants côté tests)
   SAT_JWT_SECRET: ${{ secrets.SAT_JWT_SECRET }}
 
 jobs:
@@ -38,17 +36,33 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 9.11.0
-          run_install: false
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: pnpm
+
+      - name: Setup pnpm (from packageManager)
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - name: Show pnpm version
+        run: pnpm -v
+
+      - name: Get pnpm store path
+        id: pnpm-store
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
 
       - name: Install deps
         run: pnpm install --frozen-lockfile
@@ -78,16 +92,11 @@ jobs:
           COOKIE_SECRET: ${{ secrets.E2E_SESSION_COOKIE }}
         run: |
           set -euo pipefail
-
-          # Base URL pour les tests
           echo "E2E_BASE_URL=${{ steps.cfg.outputs.base }}" >> "$GITHUB_ENV"
-
-          # Smoke path fallback
           if [ -z "${E2E_SMOKE_PATH:-}" ]; then
             echo "E2E_SMOKE_PATH=/api/health" >> "$GITHUB_ENV"
           fi
 
-          # Cookie: seulement si workflow_dispatch + input true + secret présent
           USED="false"
           COOKIE_VALUE=""
 
