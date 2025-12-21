@@ -25,6 +25,29 @@ export default [
   // Base JS
   js.configs.recommended,
 
+  // ✅ Scripts Node (audit, outils, etc.)
+  // Fix: "process is not defined" / "console is not defined" dans scripts/next15_audit.mjs
+  {
+    files: ['scripts/**/*.{js,mjs,cjs}'],
+    languageOptions: {
+      ecmaVersion: 'latest',
+      sourceType: 'module',
+      globals: {
+        process: 'readonly',
+        console: 'readonly',
+        Buffer: 'readonly',
+
+        // timers (souvent utilisés dans scripts)
+        setTimeout: 'readonly',
+        clearTimeout: 'readonly',
+        setInterval: 'readonly',
+        clearInterval: 'readonly',
+        setImmediate: 'readonly',
+        clearImmediate: 'readonly',
+      },
+    },
+  },
+
   // TS recommandé (SANS type-check)
   ...tseslint.configs.recommended.map((cfg) => ({
     ...cfg,
