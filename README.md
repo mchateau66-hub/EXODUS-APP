@@ -42,7 +42,7 @@ paywall.spec.ts # tests paywall (anon, cookie, Bearer)
 
 ---
 
-## ✅ Fonctionnalités en place
+## ✅ Fonctionnalité en place
 
 - **API health** : `GET /api/health` → `200 OK`
 - **API login** : `POST /api/login`  
