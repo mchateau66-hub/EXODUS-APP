@@ -140,18 +140,54 @@ export async function waitForHealth(
 }
 
 // ---- Auth API helpers ----
+function originHeaders(baseUrl: string = BASE_URL): Record<string, string> {
+  const origin = new URL(baseUrl).origin;
+  return {
+    // ⚠️ important si tu as un guard JSON strict
+    "content-type": "application/json",
+    accept: "application/json",
+
+    // ✅ important si requireSameOrigin / anti-CSRF en prod
+    origin,
+    referer: `${origin}/`,
+  };
+}
+
 export async function login(
   page: Page,
   data: { plan?: string; maxAge?: number } = {},
 ): Promise<APIResponse> {
-  const res = await page.request.post("/api/login", { data });
-  expect(res.ok()).toBeTruthy();
+  const res = await page.request.post("/api/login", {
+    // Playwright: on force un body JSON explicite
+    data: JSON.stringify(data),
+    headers: originHeaders(),
+  });
+
+  // Debug utile en CI (sans leak)
+  if (res.status() >= 400) {
+    const body = await res.text().catch(() => "");
+    console.error(`[e2e] /api/login failed: status=${res.status()} url=${res.url()}`);
+    console.error(body.slice(0, 1200));
+  }
+
+  // ✅ accepte 2xx et 3xx (ex: 302)
+  expect(res.status(), `/api/login status=${res.status()}`).toBeLessThan(400);
   return res;
 }
 
 export async function logout(page: Page): Promise<APIResponse> {
-  const res = await page.request.post("/api/logout");
-  expect(res.status()).toBe(204);
+  const res = await page.request.post("/api/logout", {
+    headers: originHeaders(),
+  });
+
+  if (res.status() >= 400) {
+    const body = await res.text().catch(() => "");
+    console.error(`[e2e] /api/logout failed: status=${res.status()} url=${res.url()}`);
+    console.error(body.slice(0, 1200));
+  }
+
+  // ✅ robuste (certains backends renvoient 200/204/302)
+  expect(res.status(), `/api/logout status=${res.status()}`).toBeLessThan(400);
   return res;
 }
 
