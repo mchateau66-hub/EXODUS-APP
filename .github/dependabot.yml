@@ -23,3 +23,9 @@ updates:
         dependency-type: "development"
         patterns:
           - "*"
+
+    ignore:
+      - dependency-name: "prisma"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@prisma/client"
+        update-types: ["version-update:semver-major"]
