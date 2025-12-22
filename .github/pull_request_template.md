@@ -27,15 +27,15 @@
 ## ✅ Security Checklist (OBLIGATOIRE — coche les cases)
 > Le CI échoue si tu ne coches pas ces items.
 
-- [ ] **Monetisation** — paywall/plan gating/pricing vérifiés
-- [ ] **Entitlements** — rôles/permissions/accès vérifiés (deny-by-default si applicable)
-- [ ] **Stripe** — webhooks/keys/signature/idempotency vérifiés (si concerné)
-- [ ] **CSP** (Content Security Policy) — en-têtes CSP vérifiés / pas de régression
-- [ ] **RateLimit** (rate limit / ratelimit) — protections anti-abus vérifiées
-- [ ] **Health** / readiness — endpoint(s) health/ready opérationnels
-- [ ] **PII-Guard** — aucun email/tel/PII en clair dans payloads/logs/traces
-- [ ] **E2E** — tests E2E ajoutés/ajustés et passants (smoke au minimum)
-- [ ] **Security audit** — revue rapide des surfaces (auth, input, SSRF, secrets) effectuée
+- [ ] Monetisation — paywall/plan gating/pricing vérifiés
+- [ ] Entitlements — rôles/permissions/accès vérifiés (deny-by-default si applicable)
+- [ ] Stripe — webhooks/keys/signature/idempotency vérifiés (si concerné)
+- [ ] CSP — Content Security Policy : en-têtes CSP vérifiés / pas de régression
+- [ ] RateLimit — rate limit / ratelimit : protections anti-abus vérifiées
+- [ ] Health — health/ready/readiness : endpoint(s) health/ready opérationnels
+- [ ] PII-Guard — aucun email/tel/PII en clair dans payloads/logs/traces
+- [ ] E2E — tests E2E ajoutés/ajustés et passants (smoke au minimum)
+- [ ] Security audit — revue rapide des surfaces (auth, input, SSRF, secrets) effectuée
 
 ---
 
