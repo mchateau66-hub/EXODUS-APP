@@ -4,8 +4,7 @@ name: PR Guardian — Security Checklist
 on:
   pull_request:
     branches: [main, staging]
-    types: [opened, edited, synchronize, reopened, ready_for_review]
-  workflow_dispatch:
+    types: [opened, edited, synchronize, reopened]
 
 permissions:
   contents: read
@@ -22,69 +21,7 @@ jobs:
     timeout-minutes: 5
 
     steps:
-      - name: Decide if checklist is required
-        id: meta
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const owner = context.repo.owner;
-            const repo = context.repo.repo;
-            const pull_number = context.payload.pull_request.number;
-
-            const pr = context.payload.pull_request;
-            const author = pr.user?.login || "";
-            const draft = !!pr.draft;
-
-            const botAuthors = new Set(["dependabot[bot]", "renovate[bot]"]);
-            if (botAuthors.has(author)) {
-              core.setOutput("skip", "true");
-              core.setOutput("reason", `bot PR (${author})`);
-              return;
-            }
-
-            if (draft) {
-              core.setOutput("skip", "true");
-              core.setOutput("reason", "draft PR");
-              return;
-            }
-
-            const files = await github.paginate(github.rest.pulls.listFiles, {
-              owner,
-              repo,
-              pull_number,
-              per_page: 100,
-            });
-
-            const isDocsFile = (p) => {
-              const path = (p || "").toLowerCase();
-              if (path.startsWith("docs/")) return true;
-              if (path.startsWith(".github/") && (path.endsWith(".md") || path.endsWith(".mdx"))) return true;
-              if (path === "readme.md" || path.startsWith("readme.")) return true;
-              if (path.endsWith(".md") || path.endsWith(".mdx")) return true;
-              if (path.startsWith("license")) return true;
-              if (path === ".gitignore" || path === ".gitattributes") return true;
-              return false;
-            };
-
-            const docsOnly = files.length > 0 && files.every(f => isDocsFile(f.filename));
-            if (docsOnly) {
-              core.setOutput("skip", "true");
-              core.setOutput("reason", "docs-only changes");
-              return;
-            }
-
-            core.setOutput("skip", "false");
-            core.setOutput("reason", "checklist required");
-
-      - name: Add summary (skip)
-        if: steps.meta.outputs.skip == 'true'
-        run: |
-          echo "### PR Guardian" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Checklist skipped ✅ — reason: **${{ steps.meta.outputs.reason }}**" >> "$GITHUB_STEP_SUMMARY"
-
       - name: Validate Security Checklist
-        if: steps.meta.outputs.skip != 'true'
         id: check
         env:
           PR_BODY: ${{ github.event.pull_request.body }}
@@ -98,8 +35,10 @@ jobs:
 
           def normalize(s: str) -> str:
             s = s.replace("\r", "")
+            # unify bullets/dashes
             s = s.replace("•", "- ")
             s = s.replace("–", "-").replace("—", "-")
+            # strip accents
             s = "".join(c for c in unicodedata.normalize("NFKD", s) if not unicodedata.combining(c))
             return s
 
@@ -107,25 +46,37 @@ jobs:
           pathlib.Path("pr_body_norm.md").write_text(norm, encoding="utf-8")
 
           required = [
-            ("Monetisation", r"monetisation|monetization"),
-            ("Entitlements", r"entitlements?"),
+            ("Monetisation", r"monetisation"),
+            ("Entitlements", r"entitlements"),
             ("Stripe", r"stripe"),
             ("CSP", r"\bcsp\b|content\s*security\s*policy"),
             ("RateLimit", r"rate\s*-?\s*limit|ratelimit"),
             ("Health", r"\bhealth\b|\bready\b|\breadiness\b"),
             ("PIIGuard", r"pii\s*-?\s*guard"),
             ("E2E", r"\be2e\b"),
-            ("SecurityAudit", r"security\s*audit|audit\s*securite|audit\s*securite"),
+            ("SecurityAudit", r"security\s*audit|audit\s*securite"),
           ]
 
           def ticked_line_regex(keyword_pattern: str) -> re.Pattern:
+            """
+            Matches any of:
+              - [x] ... <keyword>
+              * [X] ... <keyword>
+              - ✅ ... <keyword>
+              * ✅ ... <keyword>
+            with optional spaces and extra text.
+            """
             return re.compile(
-              r"^\s*[-*]\s*\[\s*[xX]\s*\]\s*.*(" + keyword_pattern + r")",
-              flags=re.IGNORECASE | re.MULTILINE,
+              r"""(?imx)
+              ^\s*[-*]\s*
+              (?:\[\s*[xX]\s*\]|✅)\s*
+              .*?(?:%s)
+              """ % (keyword_pattern,),
             )
 
           missing = []
 
+          # if body is empty or only whitespace, fail with all items missing
           if not norm.strip():
             missing = [k for (k, _) in required]
             report = [
@@ -137,10 +88,10 @@ jobs:
               "Missing items (tick the boxes in PR template):",
               *[f"- [ ] {m}" for m in missing],
               "",
-              "Please edit the PR description and check the corresponding boxes (`[x]`).",
+              "Please edit the PR description and check the corresponding boxes (`[x]`) (or use `✅`).",
               "",
             ]
-            pathlib.Path("report.md").write_text("\n".join(report), encoding="utf-8")
+            pathlib.Path("report.md").write_text("\n".join(report) + "\n", encoding="utf-8")
             print("PR body is empty", file=sys.stderr)
             sys.exit(1)
 
@@ -149,7 +100,7 @@ jobs:
               missing.append(key)
 
           report = ["<!-- pr-guardian -->", "### PR Guardian Report", ""]
-          report.append(f"Checked {len(required)} required security checkboxes.")
+          report.append(f"Checked {len(required)} required security items.")
           report.append("")
           if not missing:
             report.append("All required items are ticked ✅")
@@ -159,7 +110,7 @@ jobs:
           report.append("Missing items (tick the boxes in PR template):")
           report.extend([f"- [ ] {m}" for m in missing])
           report.append("")
-          report.append("Please edit the PR description and check the corresponding boxes (`[x]`).")
+          report.append("Please edit the PR description and check the corresponding boxes (`[x]`) (or use `✅`).")
           report.append("")
           pathlib.Path("report.md").write_text("\n".join(report) + "\n", encoding="utf-8")
 
@@ -217,7 +168,7 @@ jobs:
               });
             }
 
-      - name: Comment on PR (success/skip) — clear previous warning
+      - name: Comment on PR (success) — clear previous warning
         if: success()
         uses: actions/github-script@v7
         with:
@@ -237,13 +188,7 @@ jobs:
             const existing = comments.find(c => typeof c.body === 'string' && c.body.includes(marker));
             if (!existing) return;
 
-            const skipped = "${{ steps.meta.outputs.skip }}" === "true";
-            const reason = "${{ steps.meta.outputs.reason }}";
-
-            const body = skipped
-              ? `${marker}\n### PR Guardian Report\n\nChecklist skipped ✅ — reason: **${reason}**\n`
-              : `${marker}\n### PR Guardian Report\n\nAll required items are ticked ✅\n`;
-
+            const body = `${marker}\n### PR Guardian Report\n\nAll required items are ticked ✅\n`;
             await github.rest.issues.updateComment({
               owner,
               repo,
