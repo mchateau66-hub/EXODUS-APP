@@ -1,4 +1,5 @@
 // e2e/helpers.ts
+import { randomUUID } from "node:crypto"; // ✅ AJOUTE ÇA EN HAUT (avec tes imports)
 import {
   expect,
   request,
@@ -155,26 +156,38 @@ function originHeaders(baseUrl: string = BASE_URL): Record<string, string> {
 
 export async function login(
   page: Page,
-  data: { plan?: string; maxAge?: number } = {},
+  data: { email?: string; plan?: string; maxAge?: number } = {},
 ): Promise<APIResponse> {
-  const res = await page.request.post("/api/login", {
-    // Playwright: on force un body JSON explicite
-    data: JSON.stringify(data),
-    headers: originHeaders(),
-  });
+  // ✅ /api/login exige un email -> on en fournit un
+  // ✅ email unique par login -> évite que le test "quota free" flingue les autres tests
+  const email =
+    (data.email ??
+      process.env.E2E_TEST_EMAIL ??
+      `e2e+${randomUUID()}@exodus.local`).trim();
 
-  // Debug utile en CI (sans leak)
+  const payload = {
+    email,
+    plan: data.plan ?? "free",
+    maxAge: data.maxAge,
+  };
+
+  const res = await page.request.post("/api/login", { data: payload });
+
+  // debug utile en CI si ça recasse
   if (res.status() >= 400) {
-    const body = await res.text().catch(() => "");
-    console.error(`[e2e] /api/login failed: status=${res.status()} url=${res.url()}`);
-    console.error(body.slice(0, 1200));
+    let body = "";
+    try {
+      body = await res.text();
+    } catch {}
+    console.error(
+      `[e2e] /api/login failed: status=${res.status()} url=${res.url()}\n${body.slice(0, 800)}`,
+    );
   }
 
-  // ✅ accepte 2xx et 3xx (ex: 302)
+  // ✅ accepte 2xx/3xx
   expect(res.status(), `/api/login status=${res.status()}`).toBeLessThan(400);
   return res;
 }
-
 export async function logout(page: Page): Promise<APIResponse> {
   const res = await page.request.post("/api/logout", {
     headers: originHeaders(),
