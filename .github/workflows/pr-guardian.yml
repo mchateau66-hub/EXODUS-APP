@@ -1,0 +1,187 @@
+# .github/workflows/pr-guardian.yml
+name: PR Guardian — Security Checklist
+
+on:
+  pull_request:
+    branches: [main, staging]
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: pr-guardian-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  pr-guardian:
+    name: pr-guardian
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Validate Security Checklist
+        id: check
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -euo pipefail
+
+          python3 - <<'PY'
+          import os, re, sys, unicodedata, pathlib
+
+          body = os.environ.get("PR_BODY") or ""
+
+          def normalize(s: str) -> str:
+            s = s.replace("\r", "")
+            # unify bullets/dashes
+            s = s.replace("•", "- ")
+            s = s.replace("–", "-").replace("—", "-")
+            # strip accents
+            s = "".join(c for c in unicodedata.normalize("NFKD", s) if not unicodedata.combining(c))
+            return s
+
+          norm = normalize(body)
+          pathlib.Path("pr_body_norm.md").write_text(norm, encoding="utf-8")
+
+          required = [
+            ("Monetisation", r"monetisation"),
+            ("Entitlements", r"entitlements"),
+            ("Stripe", r"stripe"),
+            ("CSP", r"\bcsp\b|content\s*security\s*policy"),
+            ("RateLimit", r"rate\s*-?\s*limit|ratelimit"),
+            ("Health", r"\bhealth\b|\bready\b|\breadiness\b"),
+            ("PIIGuard", r"pii\s*-?\s*guard"),
+            ("E2E", r"\be2e\b"),
+            ("SecurityAudit", r"security\s*audit|audit\s*securite|audit\s*securite"),
+          ]
+
+          def ticked_line_regex(keyword_pattern: str) -> re.Pattern:
+            # Matches "- [x] ... <keyword>"
+            return re.compile(
+              r"^\s*[-*]\s*\[\s*[xX]\s*\]\s*.*(" + keyword_pattern + r")",
+              flags=re.IGNORECASE | re.MULTILINE,
+            )
+
+          missing = []
+
+          if not norm.strip():
+            missing = [k for (k, _) in required]
+            report = [
+              "<!-- pr-guardian -->",
+              "### PR Guardian Report",
+              "",
+              "PR body is empty.",
+              "",
+              "Missing items (tick the boxes in PR template):",
+              *[f"- [ ] {m}" for m in missing],
+              "",
+              "Please edit the PR description and check the corresponding boxes (`[x]`).",
+              "",
+            ]
+            pathlib.Path("report.md").write_text("\n".join(report), encoding="utf-8")
+            print("PR body is empty", file=sys.stderr)
+            sys.exit(1)
+
+          for key, kw in required:
+            if not ticked_line_regex(kw).search(norm):
+              missing.append(key)
+
+          report = ["<!-- pr-guardian -->", "### PR Guardian Report", ""]
+          report.append(f"Checked {len(required)} required security checkboxes.")
+          report.append("")
+          if not missing:
+            report.append("All required items are ticked ✅")
+            pathlib.Path("report.md").write_text("\n".join(report) + "\n", encoding="utf-8")
+            sys.exit(0)
+
+          report.append("Missing items (tick the boxes in PR template):")
+          report.extend([f"- [ ] {m}" for m in missing])
+          report.append("")
+          report.append("Please edit the PR description and check the corresponding boxes (`[x]`).")
+          report.append("")
+          pathlib.Path("report.md").write_text("\n".join(report) + "\n", encoding="utf-8")
+
+          print("Missing required checklist items: " + ", ".join(missing), file=sys.stderr)
+          sys.exit(1)
+          PY
+
+      - name: Add summary
+        if: always()
+        run: |
+          echo "### PR Guardian" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f report.md ]; then
+            cat report.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "(no report)" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Comment on PR (failure) — create or update
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+
+            const marker = '<!-- pr-guardian -->';
+            const report = fs.existsSync('report.md')
+              ? fs.readFileSync('report.md', 'utf8')
+              : `${marker}\n### PR Guardian Report\n\nPR Guardian failed.`;
+
+            const { owner, repo } = context.repo;
+            const issue_number = context.issue.number;
+
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner,
+              repo,
+              issue_number,
+              per_page: 100,
+            });
+
+            const existing = comments.find(c => typeof c.body === 'string' && c.body.includes(marker));
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner,
+                repo,
+                comment_id: existing.id,
+                body: report,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number,
+                body: report,
+              });
+            }
+
+      - name: Comment on PR (success) — clear previous warning
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const marker = '<!-- pr-guardian -->';
+
+            const { owner, repo } = context.repo;
+            const issue_number = context.issue.number;
+
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner,
+              repo,
+              issue_number,
+              per_page: 100,
+            });
+
+            const existing = comments.find(c => typeof c.body === 'string' && c.body.includes(marker));
+            if (!existing) return;
+
+            const body =
+              `${marker}\n### PR Guardian Report\n\nAll required items are ticked ✅\n`;
+            await github.rest.issues.updateComment({
+              owner,
+              repo,
+              comment_id: existing.id,
+              body,
+            });

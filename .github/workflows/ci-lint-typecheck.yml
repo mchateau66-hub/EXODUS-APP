@@ -2,88 +2,74 @@ name: CI - Lint & Typecheck
 
 on:
   pull_request:
+    branches: [ main, staging ]
   workflow_dispatch:
-
 
 permissions:
   contents: read
 
 jobs:
   typecheck:
+    name: lint-typecheck
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with: { fetch-depth: 1 }
-
-      - name: Setup PNPM (standalone)
-        uses: pnpm/action-setup@v4
         with:
-          version: 9.15.9
-          standalone: true
-          run_install: false
+          fetch-depth: 1
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: pnpm
-          cache-dependency-path: '**/pnpm-lock.yaml'
 
-      - name: Install deps (with devDependencies) + align ESLint/Next + TS toolchain
-        env:
-          NODE_ENV: ""  # inclure devDeps
+      - name: Setup pnpm (from packageManager)
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - name: Show pnpm version
+        run: pnpm -v
+
+      - name: Get pnpm store path
+        id: pnpm-store
+        shell: bash
         run: |
           set -euo pipefail
+          echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
 
-          # 1) Install deps
-          pnpm install --no-frozen-lockfile --prod=false
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
 
-          # 2) Résoudre la version déclarée de Next (si absente -> latest)
-          NEXT_VER=$(node -e "try{const p=require('./package.json');console.log((p.dependencies&&p.dependencies.next)||(p.devDependencies&&p.devDependencies.next)||'')}catch(e){console.log('')}") || true
-          [ -z "$NEXT_VER" ] && NEXT_VER="latest"
-          NEXT_MAJOR=$(node -e "let v='$NEXT_VER'.replace(/[^0-9.]/g,'');console.log(v?v.split('.')[0]:'0')")
-
-          # 3) Garantir next résolu pour les plugins ESLint
-          node -e "require.resolve('next/package.json')" >/dev/null 2>&1 || pnpm add -D next@"$NEXT_VER"
-
-          # 4) eslint-config-next apparié à Next
-          node -e "require.resolve('eslint-config-next/package.json')" >/dev/null 2>&1 || pnpm add -D eslint-config-next@"$NEXT_VER"
-
-          # 5) ESLint major compatible (Next >=16 => ESLint 9, sinon ESLint 8)
-          if [ "$NEXT_MAJOR" -ge 16 ]; then ESLINT_VER="^9"; else ESLINT_VER="8.57.0"; fi
-          node -e "require.resolve('eslint/package.json')" >/dev/null 2>&1 || pnpm add -D eslint@"$ESLINT_VER"
-
-          # 6) @typescript-eslint versionnée selon ESLint major
-          if [ "$NEXT_MAJOR" -ge 16 ]; then
-            pnpm add -D @typescript-eslint/parser@^8 @typescript-eslint/eslint-plugin@^8
-          else
-            pnpm add -D @typescript-eslint/parser@^7 @typescript-eslint/eslint-plugin@^7
-          fi
-
-          # 7) Types nécessaires (tsconfig présent => build/lint TS)
-          if [ -f "tsconfig.json" ]; then
-            pnpm add -D typescript @types/react @types/react-dom @types/node@20
-          fi
-
-          # 8) (optionnel) types Playwright référencés par e2e/tsconfig
-          node -e "require.resolve('@playwright/test/package.json')" >/dev/null 2>&1 || pnpm add -D @playwright/test@latest
-
-          pnpm dedupe || true
+      - name: Install deps (with devDependencies)
+        env:
+          NODE_ENV: "" # inclure devDeps
+        run: pnpm install --frozen-lockfile
 
       - name: Print resolved versions
         run: |
-          node -e "const r=m=>{try{return require(m+'/package.json').version}catch{return 'n/a'}}; console.log({
-            next:r('next'),
-            eslint:r('eslint'),
-            eslintConfigNext:r('eslint-config-next'),
-            ts:r('typescript'),
-            tsParser:r('@typescript-eslint/parser'),
-            tsPlugin:r('@typescript-eslint/eslint-plugin'),
-            pw:r('@playwright/test')
-          })"
+          node - <<'NODE'
+          function v(name) {
+            try { return require(require.resolve(name + '/package.json')).version }
+            catch { return 'not-installed' }
+          }
+          console.log({
+            next: v('next'),
+            eslint: v('eslint'),
+            'eslint-config-next': v('eslint-config-next'),
+            typescript: v('typescript'),
+            '@typescript-eslint/parser': v('@typescript-eslint/parser'),
+            '@typescript-eslint/eslint-plugin': v('@typescript-eslint/eslint-plugin'),
+            '@playwright/test': v('@playwright/test'),
+          });
+          NODE
 
       - name: ESLint (app)
         run: pnpm run lint

@@ -1,0 +1,64 @@
+# .github/workflows/enforce-branch-protection.yml
+name: Enforce Branch Protection
+
+on:
+  workflow_dispatch:
+    inputs:
+      branches:
+        description: "Comma-separated branches"
+        required: false
+        default: "main,staging"
+
+permissions:
+  contents: read
+
+jobs:
+  protect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ensure jq
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y jq
+
+      - name: Apply protection via API
+        env:
+          GH_TOKEN: ${{ secrets.GH_ADMIN_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.event.repository.name }}
+          BRANCHES: ${{ github.event.inputs.branches || 'main,staging' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::error::Missing secrets.GH_ADMIN_TOKEN"
+            exit 1
+          fi
+
+          IFS=',' read -ra BR <<< "$BRANCHES"
+          checks=(
+            "Quality Gate / quality"
+            "PR Guardian — Security Checklist / validate-template"
+            "E2E Playwright / e2e"
+            "Security Audit (Staging) / audit"
+          )
+
+          contexts=$(printf '%s\n' "${checks[@]}" | jq -R . | jq -s .)
+
+          for b in "${BR[@]}"; do
+            bn="${b// /}"
+            jq -n --argjson ctx "$contexts" '{
+              enforce_admins: true,
+              required_status_checks: { strict: true, contexts: $ctx },
+              required_pull_request_reviews: { required_approving_review_count: 1, dismiss_stale_reviews: true },
+              restrictions: null
+            }' > body.json
+
+            curl -sS -X PUT \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/'"$OWNER"'/'"$REPO"'/branches/'"$bn"'/protection" \
+              -d @body.json >/dev/null
+
+            echo "Applied protection on $bn"
+          done

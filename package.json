@@ -3,50 +3,76 @@
   "version": "0.1.0",
   "private": true,
   "packageManager": "pnpm@9.15.9",
-  "engines": { "node": ">=20.0.0" },
-
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck:e2e": "echo \"(pas de typecheck séparé pour e2e)\"",
     "lint": "eslint . --max-warnings=10",
-
+    "lint:e2e": "eslint e2e --max-warnings=10",
     "test:e2e": "playwright test",
     "e2e": "playwright test",
     "e2e:ui": "playwright test --ui",
     "e2e:html": "playwright test --reporter=html",
     "e2e:report": "playwright show-report",
-    "e2e:ci": "playwright test -c ./playwright.config.ts --reporter=html && playwright show-report --port 0",
-
-    "ci:lint-typecheck": "pnpm lint && pnpm typecheck",
-
-    "postinstall": "node -e \"const { existsSync } = require('fs'); const { execSync } = require('child_process'); const paths=['./prisma/schema.prisma','./exodus-app/prisma/schema.prisma']; if (paths.some(p=>existsSync(p))) execSync('pnpm exec prisma generate',{stdio:'inherit'})\""
+    "e2e:ci": "playwright test -C ./playwright.config.ts --reporter=html && playwright show-report --port 0",
+    "e2e:smoke": "playwright test --project=chromium --grep @smoke",
+    "e2e:browsers": "playwright install --with-deps",
+    "next15:audit": "node scripts/next15_audit.mjs",
+    "next15:audit:strict": "NEXT15_AUDIT_STRICT=1 node scripts/next15_audit.mjs",
+    "ci:lint-typecheck": "pnpm run next15:audit && pnpm run lint && pnpm run lint:e2e && pnpm run typecheck && pnpm run typecheck:e2e",
+    "db:migrate": "prisma migrate dev",
+    "db:migrate:deploy": "prisma migrate deploy",
+    "db:generate": "prisma generate",
+    "db:seed": "prisma db seed",
+    "db:studio": "prisma studio",
+    "prepare": "prisma generate"
   },
-
   "dependencies": {
-    "@prisma/client": "^6.17.1",
-    "next": "15.5.5",
+    "@prisma/client": "6.17.1",
+    "@upstash/ratelimit": "^2.0.7",
+    "@upstash/redis": "^1.35.8",
+    "@vercel/blob": "^2.0.0",
+    "jose": "6.1.2",
+    "jsonwebtoken": "9.0.2",
+    "lucide-react": "^0.562.0",
+    "next": "15.5.9",
     "react": "19.1.0",
-    "react-dom": "19.1.0"
+    "react-dom": "19.1.0",
+    "resend": "^6.6.0",
+    "stripe": "^20.0.0"
   },
-
   "devDependencies": {
-    "@types/node": "^20.0.0",
-    "@types/react": "^19.0.0",
-    "@types/react-dom": "^19.0.0",
-
-    "@typescript-eslint/eslint-plugin": "^7.18.0",
-    "@typescript-eslint/parser": "^7.18.0",
-
-    "eslint": "^8.57.0",
+    "@eslint/js": "^9.39.2",
+    "@next/eslint-plugin-next": "^16.1.0",
+    "@playwright/test": "1.56.0",
+    "@tailwindcss/postcss": "^4.1.17",
+    "@types/jsonwebtoken": "9.0.6",
+    "@types/node": "22.0.0",
+    "@types/react": "19.0.0",
+    "@types/react-dom": "19.0.0",
+    "@typescript-eslint/eslint-plugin": "8.47.0",
+    "@typescript-eslint/parser": "8.47.0",
+    "autoprefixer": "10.4.22",
+    "dotenv": "^17.2.3",
+    "eslint": "8.57.0",
     "eslint-config-next": "15.5.5",
-
-    "playwright": "^1.56.0",
-    "postcss": "^8.0.0",
-    "prisma": "^6.17.1",
-    "tailwindcss": "^4.1.14",
-    "typescript": "^5.0.0"
+    "eslint-plugin-jsx-a11y": "^6.10.2",
+    "eslint-plugin-react": "^7.37.5",
+    "eslint-plugin-react-hooks": "^7.0.1",
+    "playwright": "1.56.0",
+    "postcss": "8.4.41",
+    "prisma": "6.17.1",
+    "tailwindcss": "4.1.4",
+    "ts-node": "10.9.2",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.47.0"
+  },
+  "prisma": {
+    "seed": "ts-node prisma/seed.plans_features.ts"
   }
 }

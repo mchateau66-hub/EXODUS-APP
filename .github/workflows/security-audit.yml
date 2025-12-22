@@ -1,0 +1,116 @@
+# .github/workflows/ci-security-audit.yml
+name: CI - Security Audit
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: "Base URL to audit (overrides vars.STAGING_BASE_URL)"
+        type: string
+        required: false
+      use_session_cookie:
+        description: "Include SAT rate-limit test with session cookie"
+        type: boolean
+        default: false
+  schedule:
+    - cron: "0 6 * * 1" # tous les lundis à 06h00 UTC
+
+concurrency:
+  group: security-audit-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Repo/Org variables (Settings → Variables)
+  STAGING_BASE_URL: ${{ vars.STAGING_BASE_URL }}
+  # Optional secret for rate-limit test (Settings → Secrets)
+  STAGING_SESSION_COOKIE: ${{ secrets.STAGING_SESSION_COOKIE }}
+
+jobs:
+  security-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve base URL
+        id: url
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE="${{ github.event.inputs.base_url }}"
+          if [ -z "${BASE:-}" ]; then BASE="${STAGING_BASE_URL:-}"; fi
+          if [ -z "${BASE:-}" ]; then
+            echo "::error::Missing base URL. Set vars.STAGING_BASE_URL or run workflow_dispatch with base_url."
+            exit 1
+          fi
+          # normalize trailing slash
+          BASE="${BASE%/}"
+          echo "base=$BASE" >> "$GITHUB_OUTPUT"
+
+      - name: Ensure tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -y
+          sudo apt-get install -y jq
+
+      - name: Ensure audit script is present
+        id: script
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f "./audit-sec.sh" ]; then
+            echo "path=./audit-sec.sh" >> "$GITHUB_OUTPUT"
+          elif [ -f "./audit_sec.sh" ]; then
+            echo "path=./audit_sec.sh" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::Audit script not found at repo root (expected ./audit-sec.sh or ./audit_sec.sh)"
+            exit 1
+          fi
+          chmod +x "${{ steps.script.outputs.path }}"
+
+      - name: Run security audit script
+        id: run
+        shell: bash
+        env:
+          BASE: ${{ steps.url.outputs.base }}
+          WANT_COOKIE: ${{ github.event.inputs.use_session_cookie }}
+          COOKIE: ${{ env.STAGING_SESSION_COOKIE }}
+        run: |
+          set -euo pipefail
+          SCRIPT="${{ steps.script.outputs.path }}"
+
+          if [ "${WANT_COOKIE:-false}" = "true" ] && [ -n "${COOKIE:-}" ]; then
+            "$SCRIPT" "$BASE" --cookie "$COOKIE" | tee audit-report.txt
+          else
+            "$SCRIPT" "$BASE" | tee audit-report.txt
+          fi
+
+      - name: Upload report artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-audit-report
+          path: audit-report.txt
+          retention-days: 14
+
+      - name: Publish Job Summary
+        if: always()
+        shell: bash
+        run: |
+          echo "### Security Audit" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Base URL:** ${{ steps.url.outputs.base }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f audit-report.txt ]; then
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            # strip ANSI colors if present
+            sed -E 's/\x1b\[[0-9;]*m//g' audit-report.txt >> "$GITHUB_STEP_SUMMARY" || cat audit-report.txt >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "_No report file generated._" >> "$GITHUB_STEP_SUMMARY"
+          fi

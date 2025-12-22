@@ -1,37 +1,49 @@
 // src/app/api/login/route.ts
 import { NextRequest } from 'next/server'
+import { prisma } from '@/lib/db'
+import { createSessionResponseForUser } from '@/lib/auth'
+import { verifyPassword } from '@/lib/password'
+import { err } from '@/lib/api-response'
 
 export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
 
-const DAY = 86400
-const DEFAULT_TTL = parseInt(process.env.SESSION_TTL_S || String(7 * DAY), 10) // 7j
-const MIN_TTL = 300                             // 5 min min
-const MAX_TTL = 60 * DAY                        // 60 jours max
-
-function clamp(n: number, min: number, max: number) {
-  return Math.max(min, Math.min(max, n))
+type LoginBody = {
+  email?: string
+  password?: string
 }
 
 export async function POST(req: NextRequest) {
-  const body = await req.json().catch(() => ({})) as { session?: string; maxAge?: number }
-  const session = body.session || crypto.randomUUID()
+  try {
+    const body = (await req.json().catch(() => ({}))) as LoginBody
 
-  const requested = Number.isFinite(body.maxAge as number) ? Number(body.maxAge) : DEFAULT_TTL
-  const ttl = clamp(requested, MIN_TTL, MAX_TTL)
+    const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : ''
+    const password = typeof body.password === 'string' ? body.password : ''
 
-  const expires = new Date(Date.now() + ttl * 1000).toUTCString()
-  const cookie = [
-    `session=${encodeURIComponent(session)}`,
-    'Path=/',
-    'HttpOnly',
-    'Secure',
-    'SameSite=Lax',
-    `Max-Age=${ttl}`,
-    `Expires=${expires}`,
-  ].join('; ')
+    if (!email) return err('email_required', 400)
+    if (!password) return err('password_required', 400)
 
-  return new Response(null, {
-    status: 204,
-    headers: { 'Set-Cookie': cookie },
-  })
+    const user = await prisma.user.findUnique({
+      where: { email },
+      select: {
+        id: true,
+        status: true,
+        passwordHash: true,
+      },
+    })
+
+    // Sécurité : même réponse si email inconnu OU pas de hash
+    if (!user || !user.passwordHash) return err('invalid_credentials', 401)
+
+    if (user.status !== 'active') return err('account_disabled', 403)
+
+    const okPwd = verifyPassword(password, user.passwordHash)
+    if (!okPwd) return err('invalid_credentials', 401)
+
+    // ✅ session + cookie sid (no-store est posé dans createSessionResponseForUser)
+    return await createSessionResponseForUser(user.id, { ok: true })
+  } catch (e) {
+    console.error('Erreur in /api/login', e)
+    return err('server_error', 500)
+  }
 }

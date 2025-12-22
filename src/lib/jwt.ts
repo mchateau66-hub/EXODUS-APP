@@ -1,23 +1,50 @@
-import jwt, { JwtPayload, SignOptions, VerifyOptions } from 'jsonwebtoken';
+// src/lib/jwt.ts
+import { SignJWT, jwtVerify } from "jose";
 
-export function signJwt<T extends object = Record<string, unknown>>(
-  payload: T,
+const DEFAULT_ALG = "HS256";
+
+export type JwtPayload = Record<string, unknown>;
+
+export async function signJWT(
+  payload: JwtPayload,
   secret: string,
-  options: SignOptions = { algorithm: 'HS256', expiresIn: '7d' }
-): string {
-  return jwt.sign(payload as object, secret, options);
+  ttlSeconds: number,
+): Promise<string> {
+  if (!secret) throw new Error("missing_jwt_secret");
+  if (!Number.isFinite(ttlSeconds) || ttlSeconds <= 0) throw new Error("invalid_ttl");
+
+  const key = new TextEncoder().encode(secret);
+  const now = Math.floor(Date.now() / 1000);
+
+  return new SignJWT({ ...payload })
+    .setProtectedHeader({ alg: DEFAULT_ALG, typ: "JWT" })
+    .setIssuedAt(now)
+    .setExpirationTime(now + Math.floor(ttlSeconds))
+    .sign(key);
 }
 
-export function verifyJwt<T extends object = JwtPayload>(
+export async function verifyJWT<T extends JwtPayload = JwtPayload>(
   token: string,
   secret: string,
-  options?: VerifyOptions
-): T | null {
+): Promise<T> {
+  if (!secret) throw new Error("missing_jwt_secret");
+  const key = new TextEncoder().encode(secret);
+
+  const { payload } = await jwtVerify(token, key, {
+    algorithms: [DEFAULT_ALG],
+  });
+
+  return payload as T;
+}
+
+export async function safeVerifyJWT<T extends JwtPayload = JwtPayload>(
+  token: string,
+  secret: string,
+): Promise<{ ok: true; payload: T } | { ok: false; error: string }> {
   try {
-    const decoded = jwt.verify(token, secret, options);
-    if (typeof decoded === 'string') return null;
-    return decoded as T;
-  } catch {
-    return null;
+    const payload = await verifyJWT<T>(token, secret);
+    return { ok: true, payload };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "jwt_invalid" };
   }
 }

@@ -1,0 +1,25 @@
+version: 2
+
+updates:
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "08:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 10
+
+    groups:
+      security-patches:
+        applies-to: security-updates
+        patterns:
+          - "*"
+      prod-deps:
+        dependency-type: "production"
+        patterns:
+          - "*"
+      dev-deps:
+        dependency-type: "development"
+        patterns:
+          - "*"

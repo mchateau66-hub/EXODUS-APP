@@ -1,25 +1,45 @@
 // src/app/api/logout/route.ts
-export const runtime = 'nodejs'
+import { NextResponse, type NextRequest } from 'next/server'
 
-function expireSessionCookie() {
-  // Efface le cookie côté navigateur
-  const parts = [
-    'session=',
-    'Path=/',
-    'HttpOnly',
-    'Secure',
-    'SameSite=Lax',
-    'Max-Age=0',
-    'Expires=Thu, 01 Jan 1970 00:00:00 GMT',
-  ]
-  return parts.join('; ')
+async function getPrismaSafe() {
+  try {
+    const { PrismaClient } = await import('@prisma/client')
+    return new PrismaClient()
+  } catch (e) {
+    console.error('Impossible de charger @prisma/client (logout)', e)
+    return null
+  }
 }
 
-export async function POST() {
-  return new Response(null, {
-    status: 204,
-    headers: {
-      'Set-Cookie': expireSessionCookie(),
-    },
+export async function POST(req: NextRequest) {
+  const sid = req.cookies.get('sid')?.value
+
+  try {
+    const prisma = await getPrismaSafe()
+    if (prisma && sid) {
+      try {
+        await prisma.session.deleteMany({
+          where: {
+            // ✅ on utilise l'ID de session, pas “token”
+            id: sid,
+          },
+        })
+      } catch (e) {
+        console.error('Erreur Prisma /api/logout deleteMany', e)
+      }
+    }
+  } catch (e) {
+    console.error('Erreur générale /api/logout', e)
+  }
+
+  const res = NextResponse.json({ ok: true })
+  res.cookies.set('sid', '', {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: process.env.NODE_ENV === 'production',
+    path: '/',
+    maxAge: 0,
   })
+
+  return res
 }

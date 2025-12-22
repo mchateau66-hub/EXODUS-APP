@@ -1,7 +1,9 @@
-import { NextResponse } from 'next/server';
+import { NextResponse, NextRequest } from 'next/server'
 
-export async function POST(req: Request) {
-  const body = await req.json();
-  // ... tes vérifs / logique
-  return NextResponse.json({ ok: true });
+export async function POST(req: NextRequest) {
+  // On lit le body si besoin (pour ne pas laisser un stream ouvert),
+  // mais on ne le stocke pas tant qu'on ne s'en sert pas.
+  await req.json()
+
+  return NextResponse.json({ ok: true })
 }

@@ -1,17 +1,22 @@
-name: CI - E2E
+name: CI - E2E (Playwright)
 
 on:
   pull_request:
-    branches: [ main, staging ]
+    branches: [main, staging]
+
   workflow_dispatch:
     inputs:
+      mode:
+        description: "smoke = rapide / full = suite complète (shard)"
+        type: choice
+        options: [smoke, full]
+        default: smoke
       base_url:
-        description: "Base URL à tester (override vars.E2E_BASE_URL)"
-        required: false
+        description: "Base URL à tester (override vars.E2E_BASE_URL). Laisse vide pour localhost."
         type: string
-      use_session_cookie:
-        description: "Injecter E2E_SESSION_COOKIE dans .env.e2e"
         required: false
+      use_session_cookie:
+        description: "Injecte secrets.E2E_SESSION_COOKIE dans le navigateur (utile pour full)."
         type: boolean
         default: false
 
@@ -21,172 +26,242 @@ concurrency:
 
 permissions:
   contents: read
-  actions: read          # <-- nécessaire pour lister les artifacts
-  pull-requests: write   # <-- nécessaire pour commenter la PR
 
 env:
-  TZ: Europe/Paris
-  E2E_BASE_URL: ${{ inputs.base_url || vars.E2E_BASE_URL || 'http://127.0.0.1:3000' }}
-  E2E_WEBSERVER: ${{ vars.E2E_WEBSERVER || '1' }}
-  E2E_SMOKE_PATH: ${{ vars.E2E_SMOKE_PATH || '/api/health' }}
-  E2E_PAYWALL_ALLOW_404_AS_BLOCK: ${{ vars.E2E_PAYWALL_ALLOW_404_AS_BLOCK || '0' }}
-  E2E_SESSION_COOKIE: ${{ secrets.E2E_SESSION_COOKIE }}
+  # Optionnel : si pas défini -> on retombe sur http://127.0.0.1:3000
+  E2E_BASE_URL: ${{ vars.E2E_BASE_URL }}
+  E2E_SMOKE_PATH: ${{ vars.E2E_SMOKE_PATH }}
+  SAT_JWT_SECRET: ${{ secrets.SAT_JWT_SECRET }}
 
 jobs:
-  # -------------------------------
-  # PR rapide : smoke (Chromium)
-  # -------------------------------
-  smoke:
-    if: github.event_name == 'pull_request'
+  e2e-smoke:
     name: E2E Smoke (chromium)
+    # Sur PR => smoke toujours
+    # En manuel => smoke si mode=smoke
+    if: ${{ github.event_name == 'pull_request' || github.event.inputs.mode == 'smoke' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with: { fetch-depth: 1 }
 
-      - name: Setup PNPM
-        uses: pnpm/action-setup@v4
-        with: { version: 9 }
-
-      - name: Setup Node.js
+      - name: Setup Node.js (20)
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: pnpm
+
+      - name: Enable Corepack + pin pnpm (from packageManager)
+        run: |
+          corepack enable
+          # adapte si ton package.json a une autre version
+          corepack prepare pnpm@9.15.9 --activate
+          pnpm -v
+
+      - name: Get pnpm store path
+        id: pnpm-store
+        shell: bash
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
 
       - name: Install deps
         run: pnpm install --frozen-lockfile
 
-      - name: Install Playwright (chromium)
-        run: pnpm run e2e:browsers
+      - name: Install Playwright (chromium + deps)
+        run: pnpm exec playwright install --with-deps chromium
 
-      - name: Prepare .env.e2e (optional cookie)
+      - name: Resolve E2E target URL
+        id: cfg
+        shell: bash
         run: |
           set -euo pipefail
-          {
-            echo "E2E_BASE_URL=${{ env.E2E_BASE_URL }}"
-            echo "E2E_SMOKE_PATH=${{ env.E2E_SMOKE_PATH }}"
-            echo "E2E_PAYWALL_ALLOW_404_AS_BLOCK=${{ env.E2E_PAYWALL_ALLOW_404_AS_BLOCK }}"
-            if [ "${{ inputs.use_session_cookie }}" = "true" ] && [ -n "${{ env.E2E_SESSION_COOKIE }}" ]; then
-              echo "E2E_SESSION_COOKIE=${{ env.E2E_SESSION_COOKIE }}"
-            fi
-          } > .env.e2e
-          sed -n '1,200p' .env.e2e | sed -E 's/(E2E_SESSION_COOKIE=).*/\1***redacted***/' || true
 
-      - name: Run smoke
-        env: { E2E_WEBSERVER: "1" }    # Playwright démarre Next via webServer (config)
-        run: pnpm run e2e:smoke
+          BASE_INPUT="${{ github.event.inputs.base_url }}"
+          BASE="${BASE_INPUT:-}"
 
-      - name: Upload smoke report
+          if [ -z "${BASE:-}" ]; then
+            BASE="${E2E_BASE_URL:-}"
+          fi
+
+          # fallback localhost (utile si ton playwright.config.ts lance un webServer)
+          if [ -z "${BASE:-}" ]; then
+            BASE="http://127.0.0.1:3000"
+          fi
+
+          BASE="${BASE%/}"
+          echo "base=$BASE" >> "$GITHUB_OUTPUT"
+          echo "E2E_BASE_URL=$BASE" >> "$GITHUB_ENV"
+
+          if [ -z "${E2E_SMOKE_PATH:-}" ]; then
+            echo "E2E_SMOKE_PATH=/api/health" >> "$GITHUB_ENV"
+          fi
+
+      - name: Run Playwright smoke tests
+        env:
+          CI: "true"
+        run: |
+          set -euo pipefail
+          # Si tu as e2e/smoke.spec.ts => on le prend
+          # sinon => on grep @smoke
+          if [ -f "e2e/smoke.spec.ts" ]; then
+            pnpm exec playwright test e2e/smoke.spec.ts --project=chromium --reporter=github,html
+          else
+            pnpm exec playwright test --project=chromium --grep "@smoke" --reporter=github,html
+          fi
+
+      - name: Upload HTML report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: playwright-report-smoke
           path: playwright-report
+          if-no-files-found: ignore
           retention-days: 7
 
-      - name: Comment report link on PR
-        if: always() && github.event_name == 'pull_request'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const {owner, repo} = context.repo;
-            const runId = context.runId;
-            // Liste les artifacts du run
-            const arts = await github.rest.actions.listWorkflowRunArtifacts({
-              owner, repo, run_id: runId, per_page: 100
-            });
-            const art = arts.data.artifacts.find(a => a.name === 'playwright-report-smoke');
-            const runUrl = `https://github.com/${owner}/${repo}/actions/runs/${runId}`;
-            let body = `🧪 **Playwright Smoke**\n- Run: ${runUrl}\n`;
-            if (art) {
-              const artifactUrl = `${runUrl}/artifacts/${art.id}`;
-              body += `- Report HTML: **[Download artifact](${artifactUrl})**`;
-            } else {
-              body += `- Report artifact not found (name: \`playwright-report-smoke\`).`;
-            }
-            await github.rest.issues.createComment({
-              owner, repo, issue_number: context.issue.number, body
-            });
-
-      - name: Job summary
+      - name: Upload traces / test-results
         if: always()
-        run: |
-          {
-            echo "### 🧪 Playwright Smoke"
-            echo ""
-            echo "- Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
-            echo "- Artifact: \`playwright-report-smoke\` (HTML report)"
-          } >> "$GITHUB_STEP_SUMMARY"
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-traces-smoke
+          path: test-results
+          if-no-files-found: ignore
+          retention-days: 7
 
-  # ---------------------------------------------------
-  # Full (hors PR) : suite complète shardée 2/2
-  # ---------------------------------------------------
-  e2e:
-    if: github.event_name != 'pull_request'
+      - name: Publish Summary
+        if: always()
+        shell: bash
+        run: |
+          echo "### E2E Smoke (Playwright)" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Base URL:** ${{ steps.cfg.outputs.base }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Smoke path:** ${E2E_SMOKE_PATH:-/api/health}" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Artifacts: *playwright-report-smoke*, *playwright-traces-smoke*" >> "$GITHUB_STEP_SUMMARY"
+
+  e2e-full:
     name: E2E Full (sharded)
+    # Full seulement en manuel
+    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'full' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
+
     strategy:
       fail-fast: false
       matrix:
-        shard: ["1/2", "2/2"]
+        shardIndex: [1, 2, 3, 4]
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with: { fetch-depth: 1 }
 
-      - name: Setup PNPM
-        uses: pnpm/action-setup@v4
-        with: { version: 9 }
-
-      - name: Setup Node.js
+      - name: Setup Node.js (20)
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: pnpm
+
+      - name: Enable Corepack + pin pnpm (from packageManager)
+        run: |
+          corepack enable
+          corepack prepare pnpm@9.15.9 --activate
+          pnpm -v
+
+      - name: Get pnpm store path
+        id: pnpm-store
+        shell: bash
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
 
       - name: Install deps
         run: pnpm install --frozen-lockfile
 
-      - name: Install Playwright (chromium)
-        run: pnpm run e2e:browsers
+      - name: Install Playwright (browsers & deps)
+        run: pnpm exec playwright install --with-deps
 
-      - name: Print resolved versions
+      - name: Resolve E2E target URL
+        id: cfg
+        shell: bash
         run: |
-          node -e "const r=s=>{try{return require(s+'/package.json').version}catch{return'n/a'}};console.log({ next:r('next'), eslint:r('eslint'), playwright:r('@playwright/test') })"
+          set -euo pipefail
 
-      - name: Run full suite (shard ${{ matrix.shard }})
-        env: { E2E_WEBSERVER: "1" }
-        run: pnpm run e2e -- --reporter=github,html --shard ${{ matrix.shard }}
+          BASE_INPUT="${{ github.event.inputs.base_url }}"
+          BASE="${BASE_INPUT:-}"
 
-      - name: Upload Playwright report
+          if [ -z "${BASE:-}" ]; then
+            BASE="${E2E_BASE_URL:-}"
+          fi
+
+          if [ -z "${BASE:-}" ]; then
+            BASE="http://127.0.0.1:3000"
+          fi
+
+          BASE="${BASE%/}"
+          echo "base=$BASE" >> "$GITHUB_OUTPUT"
+          echo "E2E_BASE_URL=$BASE" >> "$GITHUB_ENV"
+
+          if [ -z "${E2E_SMOKE_PATH:-}" ]; then
+            echo "E2E_SMOKE_PATH=/api/health" >> "$GITHUB_ENV"
+          fi
+
+      - name: Configure session cookie (optional)
+        shell: bash
+        env:
+          COOKIE_SECRET: ${{ secrets.E2E_SESSION_COOKIE }}
+        run: |
+          set -euo pipefail
+
+          USED="false"
+          if [ "${{ github.event.inputs.use_session_cookie }}" = "true" ] && [ -n "${COOKIE_SECRET:-}" ]; then
+            echo "::add-mask::${COOKIE_SECRET}"
+            echo "E2E_SESSION_COOKIE=${COOKIE_SECRET}" >> "$GITHUB_ENV"
+            USED="true"
+          else
+            echo "E2E_SESSION_COOKIE=" >> "$GITHUB_ENV"
+          fi
+
+          echo "Session cookie used: ${USED}"
+
+      - name: Run Playwright full suite (shard)
+        env:
+          CI: "true"
+        run: |
+          pnpm exec playwright test --shard=${{ matrix.shardIndex }}/4 --reporter=github,html
+
+      - name: Upload HTML report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-report-${{ matrix.shard }}
+          name: playwright-report-full-shard-${{ matrix.shardIndex }}
           path: playwright-report
+          if-no-files-found: ignore
           retention-days: 7
 
-      - name: Upload test-results (traces/screenshots/videos)
-        if: ${{ always() && hashFiles('test-results/**') != '' }}
+      - name: Upload traces / test-results
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: test-results-${{ matrix.shard }}
+          name: playwright-traces-full-shard-${{ matrix.shardIndex }}
           path: test-results
-          retention-days: 7
           if-no-files-found: ignore
+          retention-days: 7
 
-      - name: Job summary
+      - name: Publish Summary
         if: always()
+        shell: bash
         run: |
-          {
-            echo "### 🧪 Playwright Full – shard ${{ matrix.shard }}"
-            echo ""
-            echo "- Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
-            echo "- Artifacts: \`playwright-report-${{ matrix.shard }}\`, \`test-results-${{ matrix.shard }}\`"
-          } >> "$GITHUB_STEP_SUMMARY"
+          echo "### E2E Full (Playwright) — shard ${{ matrix.shardIndex }}/4" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Base URL:** ${{ steps.cfg.outputs.base }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Artifacts: *playwright-report-full-shard-${{ matrix.shardIndex }}*, *playwright-traces-full-shard-${{ matrix.shardIndex }}*" >> "$GITHUB_STEP_SUMMARY"

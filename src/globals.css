@@ -1,3 +1,35 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+/* src/app/globals.css */
+
+@import "tailwindcss";
+
+/* Ton CSS global classique ensuite */
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
+body {
+  background-color: #f1f5f9; /* slate-100 */
+  color: #020617;            /* slate-950 */
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text",
+    "SF Pro Display", sans-serif;
+}
+
+/* Animation d'entrée des bulles de message */
+.message-enter {
+  animation: message-enter 0.18s ease-out both;
+}
+
+@keyframes message-enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

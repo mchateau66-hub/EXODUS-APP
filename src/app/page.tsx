@@ -1,103 +1,84 @@
-import Image from "next/image";
+// src/app/page.tsx
+import Image from 'next/image'
+import Link from 'next/link'
+import { redirect } from 'next/navigation'
+import { getUserFromSession } from '@/lib/auth'
 
-export default function Home() {
+const LOGO_SRC = '/logo.svg' // mets ton logo dans /public/logo.svg (ou change ce chemin)
+
+export default async function HomePage() {
+  const ctx = await getUserFromSession()
+
+  // Si déjà connecté → hub central (redirige ensuite selon rôle/onboarding)
+  if (ctx?.user) redirect('/hub')
+
   return (
-    <div className="font-sans grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="font-mono list-inside list-decimal text-sm/6 text-center sm:text-left">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] font-mono font-semibold px-1 py-0.5 rounded">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+    <main className="relative min-h-[100dvh] overflow-hidden bg-slate-950 text-white">
+      {/* Fond (dégradés) */}
+      <div className="absolute inset-0 bg-[radial-gradient(1200px_600px_at_50%_30%,rgba(56,189,248,0.18),transparent_60%),radial-gradient(900px_500px_at_20%_80%,rgba(168,85,247,0.14),transparent_60%)]" />
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+      {/* Logo géant en fond (décoratif) */}
+      <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+        <div className="relative h-[70vmin] w-[70vmin] opacity-[0.08] blur-[0.2px]">
+          <Image
+            src={LOGO_SRC}
+            alt=""
+            aria-hidden="true"
+            fill
+            priority
+            className="object-contain"
+            sizes="70vmin"
+          />
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
-    </div>
-  );
+      </div>
+
+      {/* Overlay contraste (pour lisibilité du texte) */}
+      <div className="absolute inset-0 bg-gradient-to-b from-black/55 via-black/35 to-black/70" />
+
+      {/* Contenu */}
+      <div className="relative mx-auto flex min-h-[100dvh] max-w-5xl items-center justify-center px-6 py-16">
+        <div className="w-full max-w-xl rounded-3xl border border-white/10 bg-white/5 p-8 shadow-[0_30px_80px_rgba(0,0,0,0.45)] backdrop-blur">
+          <div className="flex items-center gap-3">
+            <div className="relative h-10 w-10">
+              <Image
+                src={LOGO_SRC}
+                alt="Rencontre Coach"
+                fill
+                className="object-contain"
+                sizes="40px"
+                priority
+              />
+            </div>
+
+            <div>
+              <h1 className="text-2xl font-semibold tracking-tight">Rencontre Coach</h1>
+              <p className="mt-1 text-sm text-white/70">
+                Trouve ton coach, échange, progresse.
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-8 grid gap-3 sm:grid-cols-2">
+            <Link
+              href="/login?next=/hub"
+              className="inline-flex h-12 items-center justify-center rounded-2xl bg-white text-slate-950 font-semibold shadow-sm transition hover:bg-white/90"
+            >
+              Se connecter
+            </Link>
+
+            <Link
+              href="/signup?next=/hub"
+              className="inline-flex h-12 items-center justify-center rounded-2xl border border-white/20 bg-transparent font-semibold text-white transition hover:bg-white/10"
+            >
+              S’inscrire
+            </Link>
+          </div>
+
+          <p className="mt-4 text-xs text-white/55">
+            Déjà un compte ? Connexion immédiate vers le hub central.
+          </p>
+        </div>
+      </div>
+    </main>
+  )
 }
