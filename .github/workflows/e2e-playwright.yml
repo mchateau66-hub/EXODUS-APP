@@ -26,6 +26,11 @@ env:
   E2E_BASE_URL: ${{ vars.E2E_BASE_URL }}
   E2E_SMOKE_PATH: ${{ vars.E2E_SMOKE_PATH }}
   SAT_JWT_SECRET: ${{ secrets.SAT_JWT_SECRET }}
+  env:
+  E2E_STUB_AUTH: "1"
+  E2E_LOGIN_PATH: "/api/e2e/login"
+  E2E_LOGOUT_PATH: "/api/e2e/logout"
+
 
 jobs:
   e2e:
