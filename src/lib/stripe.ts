@@ -1,11 +1,33 @@
-import Stripe from 'stripe'
+// src/lib/stripe.ts
+import Stripe from "stripe";
 
-const secretKey = process.env.STRIPE_SECRET_KEY
-if (!secretKey) {
-  throw new Error('STRIPE_SECRET_KEY not set')
+let client: Stripe | null = null;
+
+function getClient(): Stripe {
+  if (client) return client;
+
+  const key = process.env.STRIPE_SECRET_KEY;
+  if (!key) {
+    // ⚠️ IMPORTANT: on ne throw PAS au top-level, seulement ici (runtime)
+    throw new Error("STRIPE_SECRET_KEY not set");
+  }
+
+  client = new Stripe(key);
+  return client;
 }
 
-export const stripe = new Stripe(secretKey, {
-  // On garde l'API version que tu veux, mais on la caste pour TypeScript
-  apiVersion: '2024-06-20' as any,
-})
+// ✅ compat: les imports existants `import { stripe } from "@/lib/stripe"` restent valides
+export const stripe = new Proxy(
+  {},
+  {
+    get(_target, prop) {
+      const c = getClient() as any;
+      return c[prop];
+    },
+  }
+) as unknown as Stripe;
+
+// (optionnel) si tu veux l’utiliser ailleurs
+export function getStripe(): Stripe {
+  return getClient();
+}
