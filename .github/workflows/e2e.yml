@@ -103,6 +103,44 @@ jobs:
             echo "E2E_SMOKE_PATH=/api/health" >> "$GITHUB_ENV"
           fi
 
+      - name: Configure session cookie (safe auto on PR)
+        id: sess
+        shell: bash
+        env:
+          COOKIE_SECRET: ${{ secrets.E2E_SESSION_COOKIE }}
+          BASE: ${{ steps.cfg.outputs.base }}
+          WANT_COOKIE: ${{ github.event.inputs.use_session_cookie }}
+        run: |
+          set -euo pipefail
+
+          is_local="false"
+          case "$BASE" in
+            http://127.0.0.1:*|http://localhost:*|http://0.0.0.0:*|https://127.0.0.1:*|https://localhost:*|https://0.0.0.0:* ) is_local="true" ;;
+          esac
+
+          USED="false"
+          OUT_COOKIE=""
+
+          # PR: auto cookie seulement si base distante
+          if [ "${{ github.event_name }}" = "pull_request" ] && [ "$is_local" = "false" ] && [ -n "${COOKIE_SECRET:-}" ]; then
+            OUT_COOKIE="$COOKIE_SECRET"
+            USED="true"
+          fi
+
+          # workflow_dispatch smoke: cookie seulement si demandé + base distante
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${WANT_COOKIE:-false}" = "true" ] && [ "$is_local" = "false" ] && [ -n "${COOKIE_SECRET:-}" ]; then
+            OUT_COOKIE="$COOKIE_SECRET"
+            USED="true"
+          fi
+
+          if [ -n "$OUT_COOKIE" ]; then
+            echo "::add-mask::$OUT_COOKIE"
+          fi
+
+          echo "E2E_SESSION_COOKIE=$OUT_COOKIE" >> "$GITHUB_ENV"
+          echo "cookie_used=$USED" >> "$GITHUB_OUTPUT"
+          echo "Session cookie used: $USED (base=$BASE, local=$is_local)"
+
       - name: Run Playwright smoke tests
         env:
           CI: "true"
@@ -141,6 +179,7 @@ jobs:
           echo "### E2E Smoke (Playwright)" >> "$GITHUB_STEP_SUMMARY"
           echo "**Base URL:** ${{ steps.cfg.outputs.base }}" >> "$GITHUB_STEP_SUMMARY"
           echo "**Smoke path:** ${E2E_SMOKE_PATH:-/api/health}" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Session cookie used:** ${{ steps.sess.outputs.cookie_used }}" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "Artifacts: *playwright-report-smoke*, *playwright-traces-smoke*" >> "$GITHUB_STEP_SUMMARY"
 
@@ -215,23 +254,35 @@ jobs:
             echo "E2E_SMOKE_PATH=/api/health" >> "$GITHUB_ENV"
           fi
 
-      - name: Configure session cookie (optional)
+      - name: Configure session cookie (optional + safe)
+        id: sess
         shell: bash
         env:
           COOKIE_SECRET: ${{ secrets.E2E_SESSION_COOKIE }}
+          BASE: ${{ steps.cfg.outputs.base }}
         run: |
           set -euo pipefail
 
+          is_local="false"
+          case "$BASE" in
+            http://127.0.0.1:*|http://localhost:*|http://0.0.0.0:*|https://127.0.0.1:*|https://localhost:*|https://0.0.0.0:* ) is_local="true" ;;
+          esac
+
           USED="false"
-          if [ "${{ github.event.inputs.use_session_cookie }}" = "true" ] && [ -n "${COOKIE_SECRET:-}" ]; then
-            echo "::add-mask::${COOKIE_SECRET}"
-            echo "E2E_SESSION_COOKIE=${COOKIE_SECRET}" >> "$GITHUB_ENV"
+          OUT_COOKIE=""
+
+          if [ "${{ github.event.inputs.use_session_cookie }}" = "true" ] && [ "$is_local" = "false" ] && [ -n "${COOKIE_SECRET:-}" ]; then
+            OUT_COOKIE="$COOKIE_SECRET"
             USED="true"
-          else
-            echo "E2E_SESSION_COOKIE=" >> "$GITHUB_ENV"
           fi
 
-          echo "Session cookie used: ${USED}"
+          if [ -n "$OUT_COOKIE" ]; then
+            echo "::add-mask::$OUT_COOKIE"
+          fi
+
+          echo "E2E_SESSION_COOKIE=$OUT_COOKIE" >> "$GITHUB_ENV"
+          echo "cookie_used=$USED" >> "$GITHUB_OUTPUT"
+          echo "Session cookie used: $USED (base=$BASE, local=$is_local)"
 
       - name: Run Playwright full suite (shard)
         env:
@@ -263,5 +314,6 @@ jobs:
         run: |
           echo "### E2E Full (Playwright) — shard ${{ matrix.shardIndex }}/4" >> "$GITHUB_STEP_SUMMARY"
           echo "**Base URL:** ${{ steps.cfg.outputs.base }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Session cookie used:** ${{ steps.sess.outputs.cookie_used }}" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "Artifacts: *playwright-report-full-shard-${{ matrix.shardIndex }}*, *playwright-traces-full-shard-${{ matrix.shardIndex }}*" >> "$GITHUB_STEP_SUMMARY"
