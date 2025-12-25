@@ -28,7 +28,6 @@ permissions:
   contents: read
 
 env:
-  # Optionnel : si pas défini -> on retombe sur http://127.0.0.1:3000
   E2E_BASE_URL: ${{ vars.E2E_BASE_URL }}
   E2E_SMOKE_PATH: ${{ vars.E2E_SMOKE_PATH }}
   SAT_JWT_SECRET: ${{ secrets.SAT_JWT_SECRET }}
@@ -36,8 +35,6 @@ env:
 jobs:
   e2e-smoke:
     name: E2E Smoke (chromium)
-    # Sur PR => smoke toujours
-    # En manuel => smoke si mode=smoke
     if: ${{ github.event_name == 'pull_request' || github.event.inputs.mode == 'smoke' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -54,7 +51,6 @@ jobs:
       - name: Enable Corepack + pin pnpm (from packageManager)
         run: |
           corepack enable
-          # adapte si ton package.json a une autre version
           corepack prepare pnpm@9.15.9 --activate
           pnpm -v
 
@@ -90,7 +86,6 @@ jobs:
             BASE="${E2E_BASE_URL:-}"
           fi
 
-          # fallback localhost (utile si ton playwright.config.ts lance un webServer)
           if [ -z "${BASE:-}" ]; then
             BASE="http://127.0.0.1:3000"
           fi
@@ -101,6 +96,13 @@ jobs:
 
           if [ -z "${E2E_SMOKE_PATH:-}" ]; then
             echo "E2E_SMOKE_PATH=/api/health" >> "$GITHUB_ENV"
+          fi
+
+          # ✅ Auto: si base distante, on empêche Playwright de lancer Next
+          if echo "$BASE" | grep -Eq '^(http://|https://)(localhost|127\.0\.0\.1|0\.0\.0\.0)(:|/|$)'; then
+            echo "E2E_WEBSERVER=1" >> "$GITHUB_ENV"
+          else
+            echo "E2E_WEBSERVER=0" >> "$GITHUB_ENV"
           fi
 
       - name: Configure session cookie (safe auto on PR)
@@ -146,8 +148,6 @@ jobs:
           CI: "true"
         run: |
           set -euo pipefail
-          # Si tu as e2e/smoke.spec.ts => on le prend
-          # sinon => on grep @smoke
           if [ -f "e2e/smoke.spec.ts" ]; then
             pnpm exec playwright test e2e/smoke.spec.ts --project=chromium --reporter=github,html
           else
@@ -179,13 +179,13 @@ jobs:
           echo "### E2E Smoke (Playwright)" >> "$GITHUB_STEP_SUMMARY"
           echo "**Base URL:** ${{ steps.cfg.outputs.base }}" >> "$GITHUB_STEP_SUMMARY"
           echo "**Smoke path:** ${E2E_SMOKE_PATH:-/api/health}" >> "$GITHUB_STEP_SUMMARY"
+          echo "**WebServer:** ${E2E_WEBSERVER:-1}" >> "$GITHUB_STEP_SUMMARY"
           echo "**Session cookie used:** ${{ steps.sess.outputs.cookie_used }}" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "Artifacts: *playwright-report-smoke*, *playwright-traces-smoke*" >> "$GITHUB_STEP_SUMMARY"
 
   e2e-full:
     name: E2E Full (sharded)
-    # Full seulement en manuel
     if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'full' }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -254,6 +254,13 @@ jobs:
             echo "E2E_SMOKE_PATH=/api/health" >> "$GITHUB_ENV"
           fi
 
+          # ✅ Auto: si base distante, on empêche Playwright de lancer Next
+          if echo "$BASE" | grep -Eq '^(http://|https://)(localhost|127\.0\.0\.1|0\.0\.0\.0)(:|/|$)'; then
+            echo "E2E_WEBSERVER=1" >> "$GITHUB_ENV"
+          else
+            echo "E2E_WEBSERVER=0" >> "$GITHUB_ENV"
+          fi
+
       - name: Configure session cookie (optional + safe)
         id: sess
         shell: bash
@@ -314,6 +321,7 @@ jobs:
         run: |
           echo "### E2E Full (Playwright) — shard ${{ matrix.shardIndex }}/4" >> "$GITHUB_STEP_SUMMARY"
           echo "**Base URL:** ${{ steps.cfg.outputs.base }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "**WebServer:** ${E2E_WEBSERVER:-1}" >> "$GITHUB_STEP_SUMMARY"
           echo "**Session cookie used:** ${{ steps.sess.outputs.cookie_used }}" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "Artifacts: *playwright-report-full-shard-${{ matrix.shardIndex }}*, *playwright-traces-full-shard-${{ matrix.shardIndex }}*" >> "$GITHUB_STEP_SUMMARY"
