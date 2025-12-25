@@ -21,7 +21,8 @@ on:
         default: false
 
 concurrency:
-  group: e2e-${{ github.ref }}
+  # ✅ évite qu'un workflow_dispatch FULL annule un PR smoke
+  group: e2e-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
 permissions:
@@ -37,7 +38,22 @@ jobs:
     name: E2E Smoke (chromium)
     if: ${{ github.event_name == 'pull_request' || github.event.inputs.mode == 'smoke' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: exodus_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
 
     steps:
       - name: Checkout
@@ -79,15 +95,20 @@ jobs:
         run: |
           set -euo pipefail
 
-          BASE_INPUT="${{ github.event.inputs.base_url }}"
-          BASE="${BASE_INPUT:-}"
-
-          if [ -z "${BASE:-}" ]; then
-            BASE="${E2E_BASE_URL:-}"
-          fi
-
-          if [ -z "${BASE:-}" ]; then
+          # ✅ PR => on teste en LOCAL (déterministe, pas besoin de secrets)
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
             BASE="http://127.0.0.1:3000"
+          else
+            BASE_INPUT="${{ github.event.inputs.base_url }}"
+            BASE="${BASE_INPUT:-}"
+
+            if [ -z "${BASE:-}" ]; then
+              BASE="${E2E_BASE_URL:-}"
+            fi
+
+            if [ -z "${BASE:-}" ]; then
+              BASE="http://127.0.0.1:3000"
+            fi
           fi
 
           BASE="${BASE%/}"
@@ -98,50 +119,32 @@ jobs:
             echo "E2E_SMOKE_PATH=/api/health" >> "$GITHUB_ENV"
           fi
 
-          # ✅ Auto: si base distante, on empêche Playwright de lancer Next
           if echo "$BASE" | grep -Eq '^(http://|https://)(localhost|127\.0\.0\.1|0\.0\.0\.0)(:|/|$)'; then
             echo "E2E_WEBSERVER=1" >> "$GITHUB_ENV"
           else
             echo "E2E_WEBSERVER=0" >> "$GITHUB_ENV"
           fi
 
-      - name: Configure session cookie (safe auto on PR)
-        id: sess
+      - name: Prepare DB (migrate + seed) when local webServer
         shell: bash
         env:
-          COOKIE_SECRET: ${{ secrets.E2E_SESSION_COOKIE }}
-          BASE: ${{ steps.cfg.outputs.base }}
-          WANT_COOKIE: ${{ github.event.inputs.use_session_cookie }}
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/exodus_test?schema=public
+          ALLOW_DEV_LOGIN: "1"
         run: |
           set -euo pipefail
 
-          is_local="false"
-          case "$BASE" in
-            http://127.0.0.1:*|http://localhost:*|http://0.0.0.0:*|https://127.0.0.1:*|https://localhost:*|https://0.0.0.0:* ) is_local="true" ;;
-          esac
-
-          USED="false"
-          OUT_COOKIE=""
-
-          # PR: auto cookie seulement si base distante
-          if [ "${{ github.event_name }}" = "pull_request" ] && [ "$is_local" = "false" ] && [ -n "${COOKIE_SECRET:-}" ]; then
-            OUT_COOKIE="$COOKIE_SECRET"
-            USED="true"
+          if [ "${E2E_WEBSERVER:-1}" != "1" ]; then
+            echo "Remote base => skip local DB setup"
+            exit 0
           fi
 
-          # workflow_dispatch smoke: cookie seulement si demandé + base distante
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${WANT_COOKIE:-false}" = "true" ] && [ "$is_local" = "false" ] && [ -n "${COOKIE_SECRET:-}" ]; then
-            OUT_COOKIE="$COOKIE_SECRET"
-            USED="true"
-          fi
+          # DB env pour Next/Prisma (Playwright webServer héritera de l'env)
+          echo "DATABASE_URL=$DATABASE_URL" >> "$GITHUB_ENV"
+          echo "ALLOW_DEV_LOGIN=1" >> "$GITHUB_ENV"
 
-          if [ -n "$OUT_COOKIE" ]; then
-            echo "::add-mask::$OUT_COOKIE"
-          fi
-
-          echo "E2E_SESSION_COOKIE=$OUT_COOKIE" >> "$GITHUB_ENV"
-          echo "cookie_used=$USED" >> "$GITHUB_OUTPUT"
-          echo "Session cookie used: $USED (base=$BASE, local=$is_local)"
+          pnpm exec prisma generate
+          pnpm exec prisma migrate deploy
+          pnpm exec prisma db seed
 
       - name: Run Playwright smoke tests
         env:
@@ -180,7 +183,6 @@ jobs:
           echo "**Base URL:** ${{ steps.cfg.outputs.base }}" >> "$GITHUB_STEP_SUMMARY"
           echo "**Smoke path:** ${E2E_SMOKE_PATH:-/api/health}" >> "$GITHUB_STEP_SUMMARY"
           echo "**WebServer:** ${E2E_WEBSERVER:-1}" >> "$GITHUB_STEP_SUMMARY"
-          echo "**Session cookie used:** ${{ steps.sess.outputs.cookie_used }}" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "Artifacts: *playwright-report-smoke*, *playwright-traces-smoke*" >> "$GITHUB_STEP_SUMMARY"
 
@@ -188,12 +190,27 @@ jobs:
     name: E2E Full (sharded)
     if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'full' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
 
     strategy:
       fail-fast: false
       matrix:
         shardIndex: [1, 2, 3, 4]
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: exodus_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
 
     steps:
       - name: Checkout
@@ -254,7 +271,6 @@ jobs:
             echo "E2E_SMOKE_PATH=/api/health" >> "$GITHUB_ENV"
           fi
 
-          # ✅ Auto: si base distante, on empêche Playwright de lancer Next
           if echo "$BASE" | grep -Eq '^(http://|https://)(localhost|127\.0\.0\.1|0\.0\.0\.0)(:|/|$)'; then
             echo "E2E_WEBSERVER=1" >> "$GITHUB_ENV"
           else
@@ -262,7 +278,6 @@ jobs:
           fi
 
       - name: Configure session cookie (optional + safe)
-        id: sess
         shell: bash
         env:
           COOKIE_SECRET: ${{ secrets.E2E_SESSION_COOKIE }}
@@ -288,8 +303,27 @@ jobs:
           fi
 
           echo "E2E_SESSION_COOKIE=$OUT_COOKIE" >> "$GITHUB_ENV"
-          echo "cookie_used=$USED" >> "$GITHUB_OUTPUT"
           echo "Session cookie used: $USED (base=$BASE, local=$is_local)"
+
+      - name: Prepare DB (migrate + seed) when local webServer
+        shell: bash
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/exodus_test?schema=public
+          ALLOW_DEV_LOGIN: "1"
+        run: |
+          set -euo pipefail
+
+          if [ "${E2E_WEBSERVER:-1}" != "1" ]; then
+            echo "Remote base => skip local DB setup"
+            exit 0
+          fi
+
+          echo "DATABASE_URL=$DATABASE_URL" >> "$GITHUB_ENV"
+          echo "ALLOW_DEV_LOGIN=1" >> "$GITHUB_ENV"
+
+          pnpm exec prisma generate
+          pnpm exec prisma migrate deploy
+          pnpm exec prisma db seed
 
       - name: Run Playwright full suite (shard)
         env:
@@ -322,6 +356,5 @@ jobs:
           echo "### E2E Full (Playwright) — shard ${{ matrix.shardIndex }}/4" >> "$GITHUB_STEP_SUMMARY"
           echo "**Base URL:** ${{ steps.cfg.outputs.base }}" >> "$GITHUB_STEP_SUMMARY"
           echo "**WebServer:** ${E2E_WEBSERVER:-1}" >> "$GITHUB_STEP_SUMMARY"
-          echo "**Session cookie used:** ${{ steps.sess.outputs.cookie_used }}" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "Artifacts: *playwright-report-full-shard-${{ matrix.shardIndex }}*, *playwright-traces-full-shard-${{ matrix.shardIndex }}*" >> "$GITHUB_STEP_SUMMARY"

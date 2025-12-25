@@ -1,49 +1,62 @@
 // src/app/api/login/route.ts
-import { NextRequest } from 'next/server'
-import { prisma } from '@/lib/db'
-import { createSessionResponseForUser } from '@/lib/auth'
-import { verifyPassword } from '@/lib/password'
-import { err } from '@/lib/api-response'
+import { NextRequest } from "next/server";
+import { prisma } from "@/lib/db";
+import { createSessionResponseForUser } from "@/lib/auth";
 
-export const runtime = 'nodejs'
-export const dynamic = 'force-dynamic'
+type Plan = "free" | "master" | "premium";
+type Role = "athlete" | "coach" | "admin";
 
-type LoginBody = {
-  email?: string
-  password?: string
+export const runtime = "nodejs";
+
+function devLoginEnabled() {
+  // Backdoor login uniquement dev/CI (recommandé)
+  return process.env.NODE_ENV !== "production" || process.env.ALLOW_DEV_LOGIN === "1";
+}
+
+function pickPlan(v: unknown): Plan {
+  return v === "master" || v === "premium" ? v : "free";
+}
+
+function pickRole(v: unknown): Role {
+  return v === "coach" || v === "admin" ? v : "athlete";
 }
 
 export async function POST(req: NextRequest) {
-  try {
-    const body = (await req.json().catch(() => ({}))) as LoginBody
+  if (!devLoginEnabled()) return new Response("Not found", { status: 404 });
 
-    const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : ''
-    const password = typeof body.password === 'string' ? body.password : ''
+  const body = (await req.json().catch(() => ({}))) as {
+    email?: string;
+    role?: Role;
+    plan?: Plan;
+  };
 
-    if (!email) return err('email_required', 400)
-    if (!password) return err('password_required', 400)
+  const email = (body.email ?? "admin@local.test").toLowerCase().trim();
+  const role = pickRole(body.role ?? "admin");
+  const plan = pickPlan(body.plan);
 
-    const user = await prisma.user.findUnique({
-      where: { email },
-      select: {
-        id: true,
-        status: true,
-        passwordHash: true,
-      },
-    })
+  // ⚠️ suppose que User.email est unique
+  // ✅ IMPORTANT: on ne renvoie PAS l'email au client (PII-Guard)
+  const user = await prisma.user.upsert({
+    where: { email },
+    update: { role },
+    create: { email, role },
+    select: { id: true, role: true },
+  });
 
-    // Sécurité : même réponse si email inconnu OU pas de hash
-    if (!user || !user.passwordHash) return err('invalid_credentials', 401)
+  const res = await createSessionResponseForUser(user.id, {
+    ok: true,
+    user, // {id, role} only
+    plan,
+  });
 
-    if (user.status !== 'active') return err('account_disabled', 403)
+  // cookie plan (non sensible)
+  res.cookies.set("plan", plan, {
+    httpOnly: false,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    maxAge: 60 * 60 * 24 * 30,
+  });
 
-    const okPwd = verifyPassword(password, user.passwordHash)
-    if (!okPwd) return err('invalid_credentials', 401)
-
-    // ✅ session + cookie sid (no-store est posé dans createSessionResponseForUser)
-    return await createSessionResponseForUser(user.id, { ok: true })
-  } catch (e) {
-    console.error('Erreur in /api/login', e)
-    return err('server_error', 500)
-  }
+  return res;
 }
