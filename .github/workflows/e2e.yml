@@ -12,31 +12,167 @@ on:
         options: [smoke, full]
         default: smoke
       base_url:
-        description: "Base URL à tester (override vars.E2E_BASE_URL). Laisse vide pour localhost."
+        description: "Base URL à tester (override vars.E2E_BASE_URL). Laisse vide pour default (vars/fallback)."
         type: string
         required: false
       use_session_cookie:
-        description: "Injecte secrets.E2E_SESSION_COOKIE dans le navigateur (utile pour full)."
+        description: "Injecte secrets.E2E_SESSION_COOKIE dans le navigateur (utile pour full remote si cookie compatible)."
         type: boolean
         default: false
 
 concurrency:
-  # ✅ évite qu'un workflow_dispatch FULL annule un PR smoke
   group: e2e-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
 permissions:
   contents: read
 
+defaults:
+  run:
+    shell: bash
+
 env:
-  E2E_BASE_URL: ${{ vars.E2E_BASE_URL }}
-  E2E_SMOKE_PATH: ${{ vars.E2E_SMOKE_PATH }}
-  SAT_JWT_SECRET: ${{ secrets.SAT_JWT_SECRET }}
+  E2E_BASE_URL_DEFAULT: ${{ vars.E2E_BASE_URL }}
+  E2E_SMOKE_PATH_DEFAULT: ${{ vars.E2E_SMOKE_PATH }}
+  # Fallback hard (gratuit) si vars/input vides
+  E2E_BASE_URL_FALLBACK: https://exodus-app.vercel.app
 
 jobs:
-  e2e-smoke:
-    name: E2E Smoke (chromium)
-    if: ${{ github.event_name == 'pull_request' || github.event.inputs.mode == 'smoke' }}
+  cfg:
+    name: Resolve E2E config
+    runs-on: ubuntu-latest
+    outputs:
+      mode: ${{ steps.cfg.outputs.mode }}
+      base: ${{ steps.cfg.outputs.base }}
+      webserver: ${{ steps.cfg.outputs.webserver }}
+      smoke_path: ${{ steps.cfg.outputs.smoke_path }}
+    steps:
+      - name: Compute mode/base_url/webserver/smoke_path
+        id: cfg
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_MODE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.mode || '' }}
+          INPUT_BASE_URL: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.base_url || '' }}
+          VAR_BASE_URL: ${{ vars.E2E_BASE_URL }}
+          VAR_SMOKE_PATH: ${{ vars.E2E_SMOKE_PATH }}
+          FALLBACK_BASE_URL: ${{ env.E2E_BASE_URL_FALLBACK }}
+        run: |
+          set -euo pipefail
+
+          # Mode
+          MODE="${INPUT_MODE:-}"
+          if [ "${EVENT_NAME}" = "pull_request" ]; then
+            MODE="smoke"
+          fi
+          if [ -z "${MODE}" ]; then
+            MODE="smoke"
+          fi
+
+          # Base URL
+          if [ "${EVENT_NAME}" = "pull_request" ]; then
+            BASE="http://127.0.0.1:3000"
+          else
+            BASE="${INPUT_BASE_URL:-${VAR_BASE_URL:-${FALLBACK_BASE_URL:-}}}"
+            if [ -z "${BASE:-}" ]; then
+              BASE="${FALLBACK_BASE_URL}"
+            fi
+          fi
+
+          BASE="$(echo "$BASE" | tr -d '[:space:]')"
+          BASE="${BASE%/}"
+
+          if ! echo "$BASE" | grep -Eq '^https?://'; then
+            echo "::error::Invalid base_url (must start with http(s)://): $BASE"
+            exit 1
+          fi
+
+          # Validation URL robuste
+          BASE="$BASE" python3 - <<'PY'
+          import os, sys
+          from urllib.parse import urlparse
+          u = urlparse(os.environ["BASE"])
+          if u.scheme not in ("http","https") or not u.netloc:
+            sys.exit(1)
+          PY
+
+          # Smoke path
+          SMOKE_PATH="$(echo "${VAR_SMOKE_PATH:-/api/health/ready}" | tr -d '[:space:]')"
+          if [ -z "${SMOKE_PATH:-}" ]; then
+            SMOKE_PATH="/api/health/ready"
+          fi
+          case "$SMOKE_PATH" in
+            /*) : ;;
+            *) SMOKE_PATH="/$SMOKE_PATH" ;;
+          esac
+
+          # Local vs remote
+          WEBSERVER="0"
+          case "$BASE" in
+            http://127.0.0.1:*|http://localhost:*|http://0.0.0.0:*|https://127.0.0.1:*|https://localhost:*|https://0.0.0.0:* )
+              WEBSERVER="1"
+              ;;
+          esac
+
+          echo "mode=$MODE" >> "$GITHUB_OUTPUT"
+          echo "base=$BASE" >> "$GITHUB_OUTPUT"
+          echo "webserver=$WEBSERVER" >> "$GITHUB_OUTPUT"
+          echo "smoke_path=$SMOKE_PATH" >> "$GITHUB_OUTPUT"
+
+          echo "[cfg] event=$EVENT_NAME mode=$MODE base=$BASE webserver=$WEBSERVER smoke_path=$SMOKE_PATH"
+
+  preflight-remote:
+    name: Preflight (DNS + HTTP) - remote only
+    needs: [cfg]
+    if: ${{ needs.cfg.outputs.webserver == '0' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: DNS + HTTP reachability (fail fast)
+        env:
+          BASE: ${{ needs.cfg.outputs.base }}
+          SMOKE_PATH: ${{ needs.cfg.outputs.smoke_path }}
+        run: |
+          set -euo pipefail
+
+          echo "[preflight] base=$BASE smoke_path=$SMOKE_PATH"
+
+          HOST="$(python3 - <<'PY'
+          import os
+          from urllib.parse import urlparse
+          print(urlparse(os.environ["BASE"]).hostname or "")
+          PY
+          )"
+          echo "[preflight] host=$HOST"
+
+          if ! getent hosts "$HOST" >/dev/null; then
+            echo "::error::DNS resolution failed from GitHub runner for host=$HOST (base=$BASE)"
+            exit 1
+          fi
+
+          check_url () {
+            local url="$1"
+            echo ""
+            echo "--- $url"
+            local code
+            code="$(curl -sS -L -o /dev/null -w "%{http_code}" \
+              --connect-timeout 10 --max-time 25 \
+              --retry 2 --retry-delay 2 \
+              "$url" || echo "000")"
+            echo "status=$code"
+            if [ "$code" = "000" ]; then
+              echo "::error::Cannot reach $url (network/DNS/TLS)."
+              exit 1
+            fi
+          }
+
+          check_url "$BASE$SMOKE_PATH"
+          check_url "$BASE/"
+          echo "[preflight] OK"
+
+  e2e-smoke-local:
+    name: E2E Smoke - local (chromium)
+    needs: [cfg]
+    if: ${{ needs.cfg.outputs.mode == 'smoke' && needs.cfg.outputs.webserver == '1' }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
 
@@ -55,16 +191,24 @@ jobs:
           --health-timeout=5s
           --health-retries=10
 
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+    env:
+      CI: "true"
+      PW_USE_WEBSERVER: "0" # évite double start (workflow démarre déjà Next)
+      E2E_BASE_URL: ${{ needs.cfg.outputs.base }}
+      E2E_WEBSERVER: "1"
+      E2E_SMOKE_PATH: ${{ needs.cfg.outputs.smoke_path }}
+      SAT_JWT_SECRET: ${{ secrets.SAT_JWT_SECRET }}
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/exodus_test?schema=public
+      ALLOW_DEV_LOGIN: "1"
 
-      - name: Setup Node.js (20)
-        uses: actions/setup-node@v4
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
         with:
           node-version: 20
 
-      - name: Enable Corepack + pin pnpm (from packageManager)
+      - name: Enable Corepack + pin pnpm
         run: |
           corepack enable
           corepack prepare pnpm@9.15.9 --activate
@@ -72,16 +216,21 @@ jobs:
 
       - name: Get pnpm store path
         id: pnpm-store
-        shell: bash
         run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
 
-      - name: Cache pnpm store
-        uses: actions/cache@v4
+      - uses: actions/cache@v4
         with:
           path: ${{ steps.pnpm-store.outputs.path }}
           key: ${{ runner.os }}-pnpm-store-${{ hashFiles('pnpm-lock.yaml') }}
           restore-keys: |
             ${{ runner.os }}-pnpm-store-
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-playwright-
 
       - name: Install deps
         run: pnpm install --frozen-lockfile
@@ -89,66 +238,40 @@ jobs:
       - name: Install Playwright (chromium + deps)
         run: pnpm exec playwright install --with-deps chromium
 
-      - name: Resolve E2E target URL
-        id: cfg
-        shell: bash
+      - name: Prepare DB (migrate + seed)
         run: |
           set -euo pipefail
-
-          # ✅ PR => on teste en LOCAL (déterministe, pas besoin de secrets)
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            BASE="http://127.0.0.1:3000"
-          else
-            BASE_INPUT="${{ github.event.inputs.base_url }}"
-            BASE="${BASE_INPUT:-}"
-
-            if [ -z "${BASE:-}" ]; then
-              BASE="${E2E_BASE_URL:-}"
-            fi
-
-            if [ -z "${BASE:-}" ]; then
-              BASE="http://127.0.0.1:3000"
-            fi
-          fi
-
-          BASE="${BASE%/}"
-          echo "base=$BASE" >> "$GITHUB_OUTPUT"
-          echo "E2E_BASE_URL=$BASE" >> "$GITHUB_ENV"
-
-          if [ -z "${E2E_SMOKE_PATH:-}" ]; then
-            echo "E2E_SMOKE_PATH=/api/health" >> "$GITHUB_ENV"
-          fi
-
-          if echo "$BASE" | grep -Eq '^(http://|https://)(localhost|127\.0\.0\.1|0\.0\.0\.0)(:|/|$)'; then
-            echo "E2E_WEBSERVER=1" >> "$GITHUB_ENV"
-          else
-            echo "E2E_WEBSERVER=0" >> "$GITHUB_ENV"
-          fi
-
-      - name: Prepare DB (migrate + seed) when local webServer
-        shell: bash
-        env:
-          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/exodus_test?schema=public
-          ALLOW_DEV_LOGIN: "1"
-        run: |
-          set -euo pipefail
-
-          if [ "${E2E_WEBSERVER:-1}" != "1" ]; then
-            echo "Remote base => skip local DB setup"
-            exit 0
-          fi
-
-          # DB env pour Next/Prisma (Playwright webServer héritera de l'env)
-          echo "DATABASE_URL=$DATABASE_URL" >> "$GITHUB_ENV"
-          echo "ALLOW_DEV_LOGIN=1" >> "$GITHUB_ENV"
-
           pnpm exec prisma generate
           pnpm exec prisma migrate deploy
           pnpm exec prisma db seed
 
+      - name: Start Next server
+        run: |
+          set -euo pipefail
+          echo "[server] starting next dev on 127.0.0.1:3000"
+          nohup pnpm exec next dev -p 3000 --hostname 127.0.0.1 > .next-server.log 2>&1 &
+          echo $! > .next-server.pid
+
+          echo "[server] wait health ${E2E_SMOKE_PATH}"
+          for i in $(seq 1 60); do
+            if curl -fsS "http://127.0.0.1:3000${E2E_SMOKE_PATH}" >/dev/null; then
+              echo "[server] ready"
+              exit 0
+            fi
+            sleep 2
+          done
+
+          echo "[server] NOT ready - last logs:"
+          tail -n 200 .next-server.log || true
+          exit 1
+
+      - name: Debug env
+        run: |
+          echo "[env] E2E_BASE_URL=$E2E_BASE_URL"
+          echo "[env] E2E_WEBSERVER=$E2E_WEBSERVER"
+          echo "[env] E2E_SMOKE_PATH=$E2E_SMOKE_PATH"
+
       - name: Run Playwright smoke tests
-        env:
-          CI: "true"
         run: |
           set -euo pipefail
           if [ -f "e2e/smoke.spec.ts" ]; then
@@ -156,6 +279,15 @@ jobs:
           else
             pnpm exec playwright test --project=chromium --grep "@smoke" --reporter=github,html
           fi
+
+      - name: Stop Next server
+        if: always()
+        run: |
+          if [ -f .next-server.pid ]; then
+            kill "$(cat .next-server.pid)" || true
+          fi
+          echo "[server] last logs:"
+          tail -n 120 .next-server.log || true
 
       - name: Upload HTML report
         if: always()
@@ -175,20 +307,210 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-      - name: Publish Summary
-        if: always()
-        shell: bash
-        run: |
-          echo "### E2E Smoke (Playwright)" >> "$GITHUB_STEP_SUMMARY"
-          echo "**Base URL:** ${{ steps.cfg.outputs.base }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "**Smoke path:** ${E2E_SMOKE_PATH:-/api/health}" >> "$GITHUB_STEP_SUMMARY"
-          echo "**WebServer:** ${E2E_WEBSERVER:-1}" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Artifacts: *playwright-report-smoke*, *playwright-traces-smoke*" >> "$GITHUB_STEP_SUMMARY"
+  e2e-smoke-remote:
+    name: E2E Smoke - remote (chromium)
+    needs: [cfg, preflight-remote]
+    if: ${{ github.event_name == 'workflow_dispatch' && needs.cfg.outputs.mode == 'smoke' && needs.cfg.outputs.webserver == '0' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
 
-  e2e-full:
-    name: E2E Full (sharded)
-    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'full' }}
+    env:
+      CI: "true"
+      PW_USE_WEBSERVER: "0"
+      E2E_BASE_URL: ${{ needs.cfg.outputs.base }}
+      E2E_WEBSERVER: "0"
+      E2E_SMOKE_PATH: ${{ needs.cfg.outputs.smoke_path }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Enable Corepack + pin pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@9.15.9 --activate
+          pnpm -v
+
+      - name: Get pnpm store path
+        id: pnpm-store
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-playwright-
+
+      - name: Install deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright (chromium + deps)
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Configure session cookie (optional)
+        if: ${{ github.event.inputs.use_session_cookie == 'true' }}
+        env:
+          COOKIE_SECRET: ${{ secrets.E2E_SESSION_COOKIE }}
+        run: |
+          set -euo pipefail
+          OUT_COOKIE=""
+          if [ -n "${COOKIE_SECRET:-}" ]; then
+            OUT_COOKIE="$COOKIE_SECRET"
+            echo "::add-mask::$OUT_COOKIE"
+          fi
+          echo "E2E_SESSION_COOKIE=$OUT_COOKIE" >> "$GITHUB_ENV"
+          echo "[cookie] set? $([ -n "$OUT_COOKIE" ] && echo yes || echo no)"
+
+      - name: Debug env
+        run: |
+          echo "[env] E2E_BASE_URL=$E2E_BASE_URL"
+          echo "[env] E2E_WEBSERVER=$E2E_WEBSERVER"
+          echo "[env] E2E_SMOKE_PATH=$E2E_SMOKE_PATH"
+          echo "[env] E2E_SESSION_COOKIE set? $([ -n "${E2E_SESSION_COOKIE:-}" ] && echo yes || echo no)"
+
+      - name: Run Playwright smoke tests
+        run: |
+          set -euo pipefail
+          if [ -f "e2e/smoke.spec.ts" ]; then
+            pnpm exec playwright test e2e/smoke.spec.ts --project=chromium --reporter=github,html
+          else
+            pnpm exec playwright test --project=chromium --grep "@smoke" --reporter=github,html
+          fi
+
+      - name: Upload HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-smoke-remote
+          path: playwright-report
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Upload traces / test-results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-traces-smoke-remote
+          path: test-results
+          if-no-files-found: ignore
+          retention-days: 7
+
+  e2e-full-remote:
+    name: E2E Full - remote (sharded)
+    needs: [cfg, preflight-remote]
+    if: ${{ github.event_name == 'workflow_dispatch' && needs.cfg.outputs.mode == 'full' && needs.cfg.outputs.webserver == '0' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    strategy:
+      fail-fast: false
+      matrix:
+        shardIndex: [1, 2, 3, 4]
+
+    env:
+      CI: "true"
+      PW_USE_WEBSERVER: "0"
+      PW_DEBUG_CONFIG: "1"
+      E2E_BASE_URL: ${{ needs.cfg.outputs.base }}
+      E2E_WEBSERVER: "0"
+      E2E_SMOKE_PATH: ${{ needs.cfg.outputs.smoke_path }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Enable Corepack + pin pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@9.15.9 --activate
+          pnpm -v
+
+      - name: Get pnpm store path
+        id: pnpm-store
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-playwright-
+
+      - name: Install deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright (browsers & deps)
+        run: pnpm exec playwright install --with-deps
+
+      - name: Configure session cookie (optional)
+        if: ${{ github.event.inputs.use_session_cookie == 'true' }}
+        env:
+          COOKIE_SECRET: ${{ secrets.E2E_SESSION_COOKIE }}
+        run: |
+          set -euo pipefail
+          OUT_COOKIE=""
+          if [ -n "${COOKIE_SECRET:-}" ]; then
+            OUT_COOKIE="$COOKIE_SECRET"
+            echo "::add-mask::$OUT_COOKIE"
+          fi
+          echo "E2E_SESSION_COOKIE=$OUT_COOKIE" >> "$GITHUB_ENV"
+          echo "[cookie] set? $([ -n "$OUT_COOKIE" ] && echo yes || echo no)"
+
+      - name: Debug env
+        run: |
+          echo "[env] shard=${{ matrix.shardIndex }}/4"
+          echo "[env] E2E_BASE_URL=$E2E_BASE_URL"
+          echo "[env] E2E_WEBSERVER=$E2E_WEBSERVER"
+          echo "[env] E2E_SESSION_COOKIE set? $([ -n "${E2E_SESSION_COOKIE:-}" ] && echo yes || echo no)"
+
+      - name: Run Playwright full suite (shard)
+        run: |
+          set -euo pipefail
+          pnpm exec playwright test --shard=${{ matrix.shardIndex }}/4 --reporter=github,html
+
+      - name: Upload HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-full-remote-shard-${{ matrix.shardIndex }}
+          path: playwright-report
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Upload traces / test-results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-traces-full-remote-shard-${{ matrix.shardIndex }}
+          path: test-results
+          if-no-files-found: ignore
+          retention-days: 7
+
+  e2e-full-local:
+    name: E2E Full - local (sharded)
+    needs: [cfg]
+    if: ${{ github.event_name == 'workflow_dispatch' && needs.cfg.outputs.mode == 'full' && needs.cfg.outputs.webserver == '1' }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
 
@@ -212,16 +534,24 @@ jobs:
           --health-timeout=5s
           --health-retries=10
 
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+    env:
+      CI: "true"
+      PW_USE_WEBSERVER: "0"
+      E2E_BASE_URL: ${{ needs.cfg.outputs.base }}
+      E2E_WEBSERVER: "1"
+      E2E_SMOKE_PATH: ${{ needs.cfg.outputs.smoke_path }}
+      SAT_JWT_SECRET: ${{ secrets.SAT_JWT_SECRET }}
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/exodus_test?schema=public
+      ALLOW_DEV_LOGIN: "1"
 
-      - name: Setup Node.js (20)
-        uses: actions/setup-node@v4
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
         with:
           node-version: 20
 
-      - name: Enable Corepack + pin pnpm (from packageManager)
+      - name: Enable Corepack + pin pnpm
         run: |
           corepack enable
           corepack prepare pnpm@9.15.9 --activate
@@ -229,16 +559,21 @@ jobs:
 
       - name: Get pnpm store path
         id: pnpm-store
-        shell: bash
         run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
 
-      - name: Cache pnpm store
-        uses: actions/cache@v4
+      - uses: actions/cache@v4
         with:
           path: ${{ steps.pnpm-store.outputs.path }}
           key: ${{ runner.os }}-pnpm-store-${{ hashFiles('pnpm-lock.yaml') }}
           restore-keys: |
             ${{ runner.os }}-pnpm-store-
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-playwright-
 
       - name: Install deps
         run: pnpm install --frozen-lockfile
@@ -246,96 +581,58 @@ jobs:
       - name: Install Playwright (browsers & deps)
         run: pnpm exec playwright install --with-deps
 
-      - name: Resolve E2E target URL
-        id: cfg
-        shell: bash
+      - name: Prepare DB (migrate + seed)
         run: |
           set -euo pipefail
-
-          BASE_INPUT="${{ github.event.inputs.base_url }}"
-          BASE="${BASE_INPUT:-}"
-
-          if [ -z "${BASE:-}" ]; then
-            BASE="${E2E_BASE_URL:-}"
-          fi
-
-          if [ -z "${BASE:-}" ]; then
-            BASE="http://127.0.0.1:3000"
-          fi
-
-          BASE="${BASE%/}"
-          echo "base=$BASE" >> "$GITHUB_OUTPUT"
-          echo "E2E_BASE_URL=$BASE" >> "$GITHUB_ENV"
-
-          if [ -z "${E2E_SMOKE_PATH:-}" ]; then
-            echo "E2E_SMOKE_PATH=/api/health" >> "$GITHUB_ENV"
-          fi
-
-          if echo "$BASE" | grep -Eq '^(http://|https://)(localhost|127\.0\.0\.1|0\.0\.0\.0)(:|/|$)'; then
-            echo "E2E_WEBSERVER=1" >> "$GITHUB_ENV"
-          else
-            echo "E2E_WEBSERVER=0" >> "$GITHUB_ENV"
-          fi
-
-      - name: Configure session cookie (optional + safe)
-        shell: bash
-        env:
-          COOKIE_SECRET: ${{ secrets.E2E_SESSION_COOKIE }}
-          BASE: ${{ steps.cfg.outputs.base }}
-        run: |
-          set -euo pipefail
-
-          is_local="false"
-          case "$BASE" in
-            http://127.0.0.1:*|http://localhost:*|http://0.0.0.0:*|https://127.0.0.1:*|https://localhost:*|https://0.0.0.0:* ) is_local="true" ;;
-          esac
-
-          USED="false"
-          OUT_COOKIE=""
-
-          if [ "${{ github.event.inputs.use_session_cookie }}" = "true" ] && [ "$is_local" = "false" ] && [ -n "${COOKIE_SECRET:-}" ]; then
-            OUT_COOKIE="$COOKIE_SECRET"
-            USED="true"
-          fi
-
-          if [ -n "$OUT_COOKIE" ]; then
-            echo "::add-mask::$OUT_COOKIE"
-          fi
-
-          echo "E2E_SESSION_COOKIE=$OUT_COOKIE" >> "$GITHUB_ENV"
-          echo "Session cookie used: $USED (base=$BASE, local=$is_local)"
-
-      - name: Prepare DB (migrate + seed) when local webServer
-        shell: bash
-        env:
-          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/exodus_test?schema=public
-          ALLOW_DEV_LOGIN: "1"
-        run: |
-          set -euo pipefail
-
-          if [ "${E2E_WEBSERVER:-1}" != "1" ]; then
-            echo "Remote base => skip local DB setup"
-            exit 0
-          fi
-
-          echo "DATABASE_URL=$DATABASE_URL" >> "$GITHUB_ENV"
-          echo "ALLOW_DEV_LOGIN=1" >> "$GITHUB_ENV"
-
           pnpm exec prisma generate
           pnpm exec prisma migrate deploy
           pnpm exec prisma db seed
 
-      - name: Run Playwright full suite (shard)
-        env:
-          CI: "true"
+      - name: Start Next server
         run: |
+          set -euo pipefail
+          echo "[server] starting next dev on 127.0.0.1:3000"
+          nohup pnpm exec next dev -p 3000 --hostname 127.0.0.1 > .next-server.log 2>&1 &
+          echo $! > .next-server.pid
+
+          echo "[server] wait health ${E2E_SMOKE_PATH}"
+          for i in $(seq 1 60); do
+            if curl -fsS "http://127.0.0.1:3000${E2E_SMOKE_PATH}" >/dev/null; then
+              echo "[server] ready"
+              exit 0
+            fi
+            sleep 2
+          done
+
+          echo "[server] NOT ready - last logs:"
+          tail -n 200 .next-server.log || true
+          exit 1
+
+      - name: Debug env
+        run: |
+          echo "[env] shard=${{ matrix.shardIndex }}/4"
+          echo "[env] E2E_BASE_URL=$E2E_BASE_URL"
+          echo "[env] E2E_WEBSERVER=$E2E_WEBSERVER"
+
+      - name: Run Playwright full suite (shard)
+        run: |
+          set -euo pipefail
           pnpm exec playwright test --shard=${{ matrix.shardIndex }}/4 --reporter=github,html
+
+      - name: Stop Next server
+        if: always()
+        run: |
+          if [ -f .next-server.pid ]; then
+            kill "$(cat .next-server.pid)" || true
+          fi
+          echo "[server] last logs:"
+          tail -n 120 .next-server.log || true
 
       - name: Upload HTML report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-report-full-shard-${{ matrix.shardIndex }}
+          name: playwright-report-full-local-shard-${{ matrix.shardIndex }}
           path: playwright-report
           if-no-files-found: ignore
           retention-days: 7
@@ -344,17 +641,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-traces-full-shard-${{ matrix.shardIndex }}
+          name: playwright-traces-full-local-shard-${{ matrix.shardIndex }}
           path: test-results
           if-no-files-found: ignore
           retention-days: 7
-
-      - name: Publish Summary
-        if: always()
-        shell: bash
-        run: |
-          echo "### E2E Full (Playwright) — shard ${{ matrix.shardIndex }}/4" >> "$GITHUB_STEP_SUMMARY"
-          echo "**Base URL:** ${{ steps.cfg.outputs.base }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "**WebServer:** ${E2E_WEBSERVER:-1}" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Artifacts: *playwright-report-full-shard-${{ matrix.shardIndex }}*, *playwright-traces-full-shard-${{ matrix.shardIndex }}*" >> "$GITHUB_STEP_SUMMARY"

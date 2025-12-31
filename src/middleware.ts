@@ -1,57 +1,44 @@
-import { NextResponse, type NextRequest } from 'next/server'
+// src/middleware.ts
+import { NextRequest, NextResponse } from "next/server";
 
-const PROTECTED_PREFIX = '/pro'
-
-const SESSION_COOKIE_CANDIDATES = (
-  process.env.SESSION_COOKIE_NAMES ?? 'sid,session'
-)
-  .split(',')
-  .map((s) => s.trim())
-  .filter(Boolean)
-
-const LOGIN_PATH = '/login'
-
-export const config = {
-  matcher: ['/pro/:path*'],
-}
-
-function hasSession(req: NextRequest): boolean {
-  for (const name of SESSION_COOKIE_CANDIDATES) {
-    const v = req.cookies.get(name)?.value
-    if (v && v.trim() !== '') return true
-  }
-
-  const auth = req.headers.get('authorization')
-  if (auth?.startsWith('Bearer ') && auth.slice(7).trim() !== '') return true
-
-  return false
-}
+/**
+ * IMPORTANT:
+ * - Ne PAS imposer le SAT dans le middleware.
+ * - Le SAT est consommé dans les handlers NodeJS (/api/messages, /api/contacts).
+ * - /api/sat sert à acquérir le token.
+ */
 
 export function middleware(req: NextRequest) {
-  const path = req.nextUrl.pathname
+  const { pathname } = req.nextUrl;
 
-  // Ne jamais toucher /login, /api, /_next, /favicon...
+  // Laisser passer les assets Next internes / statiques
   if (
-    path.startsWith(LOGIN_PATH) ||
-    path.startsWith('/api') ||
-    path.startsWith('/_next') ||
-    path.startsWith('/favicon')
+    pathname.startsWith("/_next") ||
+    pathname.startsWith("/favicon") ||
+    pathname === "/robots.txt" ||
+    pathname === "/sitemap.xml"
   ) {
-    return NextResponse.next()
+    return NextResponse.next();
   }
 
-  // Par sécurité, on ne protège que /pro
-  if (!path.startsWith(PROTECTED_PREFIX)) {
-    return NextResponse.next()
+  // ✅ BYPASS: ne jamais appliquer de gate SAT en middleware sur ces routes
+  if (
+    pathname.startsWith("/api/messages") ||
+    pathname.startsWith("/api/contacts") ||
+    pathname.startsWith("/api/sat")
+  ) {
+    const res = NextResponse.next();
+    res.headers.set("x-content-type-options", "nosniff");
+    res.headers.set("referrer-policy", "strict-origin-when-cross-origin");
+    return res;
   }
 
-  // Si session -> OK
-  if (hasSession(req)) return NextResponse.next()
-
-  // Sinon -> /login?next=...
-  const url = req.nextUrl.clone()
-  url.pathname = LOGIN_PATH
-  url.searchParams.set('next', path)
-
-  return NextResponse.redirect(url, { status: 307 })
+  const res = NextResponse.next();
+  res.headers.set("x-content-type-options", "nosniff");
+  res.headers.set("referrer-policy", "strict-origin-when-cross-origin");
+  return res;
 }
+
+export const config = {
+  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
+};

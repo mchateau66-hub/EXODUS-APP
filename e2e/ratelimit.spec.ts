@@ -1,11 +1,20 @@
 // e2e/ratelimit.spec.ts
 import { test, expect } from "@playwright/test";
-import { BASE_URL, waitForHealth, login, getHeader, setSessionCookieFromEnv } from "./helpers";
+import {
+  BASE_URL,
+  IS_REMOTE_BASE,
+  waitForHealth,
+  login,
+  getHeader,
+  setSessionCookieFromEnv,
+} from "./helpers";
 
 const FEATURE = (process.env.E2E_SAT_FEATURE?.trim() || "chat.media") as string;
 const HAS_SESSION_COOKIE = Boolean(process.env.E2E_SESSION_COOKIE?.trim());
+const ALLOW_REMOTE = process.env.E2E_ALLOW_REMOTE_RATELIMIT === "1";
 
 async function ensureAuth(page: any, plan: "free" | "master" | "premium" = "premium") {
+  if (IS_REMOTE_BASE) return;
   if (HAS_SESSION_COOKIE) return;
   await login(page, { plan });
 }
@@ -20,6 +29,8 @@ test.describe("Rate-limit /api/sat", () => {
   });
 
   test("Burst /api/sat → finit par 429 (ou remaining descend)", async ({ page }) => {
+    test.skip(IS_REMOTE_BASE && !ALLOW_REMOTE, "Rate-limit headers/behavior may be filtered on remote. Set E2E_ALLOW_REMOTE_RATELIMIT=1 to force.");
+
     await ensureAuth(page, "premium");
 
     let hit429 = false;
@@ -32,7 +43,6 @@ test.describe("Rate-limit /api/sat", () => {
         headers: {
           origin: BASE_URL,
           "content-type": "application/json",
-          // ✅ IMPORTANT: force le mode E2E pour activer le rate-limit même en local
           "x-e2e": "1",
         },
         data: { feature: FEATURE, method: "POST", path: "/api/messages" },

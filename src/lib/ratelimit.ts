@@ -15,6 +15,7 @@ const redis = hasRedis
 
 // Fallback mémoire (dev / si Redis KO)
 const mem = new Map<string, { count: number; reset: number; limit: number }>();
+const MEM_MAX = 5_000;
 
 export type RateResult = {
   ok: boolean;
@@ -45,7 +46,20 @@ function getLimiter(name: string, limitN: number, windowMs: number) {
   return created;
 }
 
+function memGcIfNeeded() {
+  if (mem.size <= MEM_MAX) return;
+  const toDelete = Math.ceil(MEM_MAX * 0.1);
+  let i = 0;
+  for (const k of mem.keys()) {
+    mem.delete(k);
+    i += 1;
+    if (i >= toDelete) break;
+  }
+}
+
 function memLimit(name: string, key: string, limitN: number, windowMs: number): RateResult {
+  memGcIfNeeded();
+
   const now = Date.now();
   const k = `${name}:${key}:${limitN}:${windowMs}`;
   const entry = mem.get(k);
@@ -90,6 +104,7 @@ export async function limit(
     const rl = getLimiter(name, limitN, windowMs);
     const { success, reset, limit, remaining, pending } = await rl.limit(key);
     if (pending) await pending;
+
     return { ok: success, limit, remaining, reset: Math.ceil(Number(reset) / 1000) };
   } catch (e) {
     if (process.env.NODE_ENV !== "production") console.error("[ratelimit] redis error:", e);
@@ -97,10 +112,50 @@ export async function limit(
   }
 }
 
+// ✅ helper pratique (seconds)
+export async function limitSeconds(
+  name: string,
+  key: string,
+  limitN: number,
+  windowSeconds: number,
+): Promise<RateResult> {
+  return limit(name, key, limitN, Math.max(1, windowSeconds) * 1000);
+}
+
+// ✅ helper clé stable (sans PII)
+export function rateKeyFromRequest(req: { headers: Headers }, userId?: string) {
+  const xf = req.headers.get("x-forwarded-for");
+  const ip =
+    (xf ? xf.split(",")[0].trim() : null) ||
+    req.headers.get("x-real-ip")?.trim() ||
+    "unknown";
+  return userId ? `${userId}:${ip}` : ip;
+}
+
+// src/lib/ratelimit.ts
 export function rateHeaders(r: RateResult) {
-  return new Headers({
-    "RateLimit-Limit": String(r.limit),
-    "RateLimit-Remaining": String(r.remaining),
-    "RateLimit-Reset": String(r.reset),
+  const limit = String(r.limit);
+  const remaining = String(r.remaining);
+  const reset = String(r.reset);
+
+  const h = new Headers({
+    // "standard-ish"
+    "RateLimit-Limit": limit,
+    "RateLimit-Remaining": remaining,
+    "RateLimit-Reset": reset,
+
+    // compat (certaines stacks normalisent / filtrent)
+    "ratelimit-limit": limit,
+    "ratelimit-remaining": remaining,
+    "ratelimit-reset": reset,
   });
+
+  // Bonus pratique si 429 (pas obligatoire pour ton test)
+  if (!r.ok) {
+    const nowS = Math.ceil(Date.now() / 1000);
+    const retryAfter = Math.max(0, r.reset - nowS);
+    h.set("Retry-After", String(retryAfter));
+  }
+
+  return h;
 }

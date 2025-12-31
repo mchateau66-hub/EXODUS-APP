@@ -1,7 +1,20 @@
 import { test, expect } from "@playwright/test";
 import { PrismaClient } from "@prisma/client";
 
-const prisma = new PrismaClient();
+function isLocalBase(u: string) {
+  return /^(https?:\/\/)(localhost|127\.0\.0\.1|0\.0\.0\.0)(:\d+)?(\/|$)/.test(u);
+}
+
+const BASE_URL = (process.env.E2E_BASE_URL ?? "http://127.0.0.1:3000").replace(/\/$/, "");
+
+// ✅ Ce test ne peut PAS tourner sur une staging distante sans accès DB.
+// - Local: OK (DATABASE_URL local)
+// - CI/staging: skip par défaut
+const SHOULD_RUN_DB_TESTS =
+  process.env.E2E_RUN_DB_TESTS === "1" ||
+  (isLocalBase(BASE_URL) && Boolean(process.env.DATABASE_URL));
+
+const prisma = SHOULD_RUN_DB_TESTS ? new PrismaClient() : (null as any);
 
 async function waitForPasswordResetUrlFromResend(opts: {
   apiKey: string;
@@ -26,30 +39,22 @@ async function waitForPasswordResetUrlFromResend(opts: {
   while (Date.now() - startedAt < timeoutMs) {
     const list = await resendGet<{
       object: "list";
-      data: Array<{
-        id: string;
-        to: string[];
-        subject: string;
-        created_at: string;
-      }>;
+      data: Array<{ id: string; to: string[]; subject: string; created_at: string }>;
     }>(`/emails?limit=100`);
 
-    // ✅ on filtre (to + sujet) + on ignore les emails "anciens" (avant le test)
     const candidates = list.data
       .filter((e) => {
         const createdMs = Date.parse(e.created_at);
-        const isRecent = Number.isFinite(createdMs) ? createdMs >= startedAt - 30_000 : true; // tolérance 30s
+        const isRecent = Number.isFinite(createdMs) ? createdMs >= startedAt - 30_000 : true;
         return (
           e.to?.includes(to) &&
           (e.subject || "").toLowerCase().includes(subjectIncludes.toLowerCase()) &&
           isRecent
         );
       })
-      // ✅ on prend le plus récent
       .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
 
     const hit = candidates[0];
-
     if (hit) {
       const email = await resendGet<{
         object: "email";
@@ -71,64 +76,67 @@ async function waitForPasswordResetUrlFromResend(opts: {
   throw new Error("reset_email_not_found");
 }
 
-test("Password reset flow (dev + non-dev)", async ({ page }) => {
-  const resendKey = process.env.E2E_RESEND_API_KEY || "";
-
-  // 👉 Si Resend est configuré, utilise un email “deliverable”
-  const email = resendKey
-    ? `delivered+e2e-reset-${Date.now()}@resend.dev`
-    : `e2e-reset-${Date.now()}@example.com`;
-
-  const newPass = "NewPassw0rd!";
-
-  const user = await prisma.user.create({
-    data: { email, role: "athlete" },
-    select: { id: true },
+test.describe("Password reset flow (dev + non-dev)", () => {
+  test.beforeAll(() => {
+    test.skip(!SHOULD_RUN_DB_TESTS, "DB test skipped (remote staging / no DATABASE_URL). Set E2E_RUN_DB_TESTS=1 to force.");
   });
 
-  try {
-    await page.goto(`/forgot-password?email=${encodeURIComponent(email)}`);
-    await page.getByRole("button", { name: /envoyer le lien/i }).click();
+  test("Password reset flow (dev + non-dev)", async ({ page }) => {
+    const resendKey = process.env.E2E_RESEND_API_KEY || "";
 
-    // 1) DEV: resetUrl affichée
-    const resetUrlEl = page.getByTestId("reset-url");
-    const hasResetUrl = await resetUrlEl.isVisible().catch(() => false);
+    const email = resendKey
+      ? `delivered+e2e-reset-${Date.now()}@resend.dev`
+      : `e2e-reset-${Date.now()}@example.com`;
 
-    let resetUrl = "";
-    if (hasResetUrl) {
-      resetUrl = (await resetUrlEl.textContent())?.trim() || "";
-    } else {
-      // 2) NON-DEV: récup via Resend
-      test.skip(!resendKey, "resetUrl non exposée + E2E_RESEND_API_KEY manquante");
-      resetUrl = await waitForPasswordResetUrlFromResend({
-        apiKey: resendKey,
-        to: email,
-        timeoutMs: 60_000,
-      });
-    }
+    const newPass = "NewPassw0rd!";
 
-    expect(resetUrl).toContain("/reset-password?token=");
-
-    await page.goto(resetUrl);
-    await page.getByLabel(/nouveau mot de passe/i).fill(newPass);
-    await page.getByLabel(/confirmer le mot de passe/i).fill(newPass);
-    await page.getByRole("button", { name: /mettre à jour/i }).click();
-    await expect(page.getByText(/mot de passe mis à jour/i)).toBeVisible();
-
-    const res = await page.request.post("/api/login", {
-      data: { email, password: newPass },
+    const user = await prisma.user.create({
+      data: { email, role: "athlete" },
+      select: { id: true },
     });
-    expect(res.ok()).toBeTruthy();
 
-    await page.goto("/hub");
-    await expect(page).not.toHaveURL(/\/login/i);
-  } finally {
-    await prisma.passwordResetToken.deleteMany({ where: { user_id: user.id } }).catch(() => null);
-    await prisma.session.deleteMany({ where: { user_id: user.id } }).catch(() => null);
-    await prisma.user.delete({ where: { id: user.id } }).catch(() => null);
-  }
-});
+    try {
+      await page.goto(`/forgot-password?email=${encodeURIComponent(email)}`);
+      await page.getByRole("button", { name: /envoyer le lien/i }).click();
 
-test.afterAll(async () => {
-  await prisma.$disconnect();
+      const resetUrlEl = page.getByTestId("reset-url");
+      const hasResetUrl = await resetUrlEl.isVisible().catch(() => false);
+
+      let resetUrl = "";
+      if (hasResetUrl) {
+        resetUrl = (await resetUrlEl.textContent())?.trim() || "";
+      } else {
+        test.skip(!resendKey, "resetUrl non exposée + E2E_RESEND_API_KEY manquante");
+        resetUrl = await waitForPasswordResetUrlFromResend({
+          apiKey: resendKey,
+          to: email,
+          timeoutMs: 60_000,
+        });
+      }
+
+      expect(resetUrl).toContain("/reset-password?token=");
+
+      await page.goto(resetUrl);
+      await page.getByLabel(/nouveau mot de passe/i).fill(newPass);
+      await page.getByLabel(/confirmer le mot de passe/i).fill(newPass);
+      await page.getByRole("button", { name: /mettre à jour/i }).click();
+      await expect(page.getByText(/mot de passe mis à jour/i)).toBeVisible();
+
+      const res = await page.request.post("/api/login", {
+        data: { email, password: newPass },
+      });
+      expect(res.ok()).toBeTruthy();
+
+      await page.goto("/hub");
+      await expect(page).not.toHaveURL(/\/login/i);
+    } finally {
+      await prisma.passwordResetToken.deleteMany({ where: { user_id: user.id } }).catch(() => null);
+      await prisma.session.deleteMany({ where: { user_id: user.id } }).catch(() => null);
+      await prisma.user.delete({ where: { id: user.id } }).catch(() => null);
+    }
+  });
+
+  test.afterAll(async () => {
+    await prisma?.$disconnect?.().catch(() => null);
+  });
 });

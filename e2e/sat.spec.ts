@@ -3,7 +3,9 @@ import { test, expect, type Page } from "@playwright/test";
 import { BASE_URL, waitForHealth, login, setSessionCookieFromEnv } from "./helpers";
 
 const PATH = "/api/messages";
-const FEATURE = (process.env.E2E_SAT_FEATURE?.trim() || "chat.media") as string;
+
+// ✅ par défaut: feature non-premium pour tester SAT (pas entitlements)
+const FEATURE = (process.env.E2E_SAT_FEATURE?.trim() || "chat.send") as string;
 
 const HAS_SESSION_COOKIE = Boolean(process.env.E2E_SESSION_COOKIE?.trim());
 const HAS_SAT_SECRET = Boolean(process.env.SAT_JWT_SECRET?.trim());
