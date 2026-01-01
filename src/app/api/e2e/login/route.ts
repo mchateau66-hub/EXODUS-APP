@@ -1,5 +1,5 @@
 // src/app/api/e2e/login/route.ts
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
 import { createSessionResponseForUser } from "@/lib/auth";
 
@@ -9,9 +9,9 @@ type Role = "athlete" | "coach" | "admin";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-function devLoginEnabled() {
-  // Backdoor autorisé seulement si explicitement activé
-  return process.env.ALLOW_DEV_LOGIN === "1";
+function devLoginEnabled(): boolean {
+  const v = (process.env.ALLOW_DEV_LOGIN ?? "").trim().toLowerCase();
+  return v === "1" || v === "true";
 }
 
 function isE2E(req: NextRequest): boolean {
@@ -21,8 +21,9 @@ function isE2E(req: NextRequest): boolean {
 function tokenOk(req: NextRequest): boolean {
   const expected = (process.env.E2E_DEV_LOGIN_TOKEN ?? "").trim();
   if (!expected) return false;
+
   const got = (req.headers.get("x-e2e-token") ?? "").trim();
-  return got && got === expected;
+  return got !== "" && got === expected;
 }
 
 function pickPlan(v: unknown): Plan {
@@ -41,13 +42,8 @@ function isHttps(req: NextRequest): boolean {
 }
 
 export async function POST(req: NextRequest) {
-  // 1) caché si pas activé
   if (!devLoginEnabled()) return new Response("Not found", { status: 404 });
-
-  // 2) exige header e2e
   if (!isE2E(req)) return new Response("Not found", { status: 404 });
-
-  // 3) exige token secret
   if (!tokenOk(req)) return new Response("Not found", { status: 404 });
 
   const body = (await req.json().catch(() => ({}))) as {
@@ -55,7 +51,7 @@ export async function POST(req: NextRequest) {
     role?: Role;
     plan?: Plan | "pro";
     maxAgeSeconds?: number;
-    maxAge?: number; // compat ancienne signature
+    maxAge?: number;
   };
 
   const email = String(body.email ?? `e2e@exodus.local`).toLowerCase().trim();
@@ -81,7 +77,6 @@ export async function POST(req: NextRequest) {
     select: { id: true, role: true },
   });
 
-  // Pose cookie session + renvoie sid dans JSON (via auth.ts)
   const res = await createSessionResponseForUser(
     user.id,
     { ok: true, user, plan },
@@ -89,7 +84,6 @@ export async function POST(req: NextRequest) {
     maxAgeSeconds ? { maxAgeSeconds } : {},
   );
 
-  // cookie plan (non sensible)
   res.cookies.set("plan", plan, {
     httpOnly: false,
     sameSite: "lax",
@@ -102,7 +96,6 @@ export async function POST(req: NextRequest) {
   return res;
 }
 
-// (optionnel) Si quelqu’un tape l’URL dans un navigateur
 export async function GET() {
   return new Response("Not found", { status: 404 });
 }
