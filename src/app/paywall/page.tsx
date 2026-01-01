@@ -1,4 +1,3 @@
-// src/app/paywall/page.tsx
 import { Suspense } from "react";
 import PaywallClient from "./PaywallClient";
 

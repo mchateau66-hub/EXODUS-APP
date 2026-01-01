@@ -1,4 +1,3 @@
-// src/app/paywall/PaywallClient.tsx
 "use client";
 
 import Link from "next/link";
@@ -24,7 +23,6 @@ function safeInternalPath(raw: string | null | undefined, fallback = "/messages"
 export default function PaywallClient() {
   const sp = useSearchParams();
 
-  // compat: from=/pro ou next=/messages
   const raw = sp.get("from") || sp.get("next") || "/messages";
   const safeNext = useMemo(() => safeInternalPath(raw, "/messages"), [raw]);
 
