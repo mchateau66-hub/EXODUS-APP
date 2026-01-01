@@ -23,6 +23,7 @@ function safeInternalPath(raw: string | null | undefined, fallback = "/messages"
 export default function PaywallClient() {
   const sp = useSearchParams();
 
+  // compat: from=/pro ou next=/messages
   const raw = sp.get("from") || sp.get("next") || "/messages";
   const safeNext = useMemo(() => safeInternalPath(raw, "/messages"), [raw]);
 
