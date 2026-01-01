@@ -1,6 +1,8 @@
 // src/lib/onboarding.ts
-import { redirect } from 'next/navigation'
-import { getUserFromSession, type SessionContext } from '@/lib/auth'
+import { redirect } from "next/navigation";
+import { getUserFromSession } from "@/lib/auth";
+
+type SessionContext = NonNullable<Awaited<ReturnType<typeof getUserFromSession>>>;
 
 /**
  * Vérifie que l'utilisateur est loggé ET a atteint au moins `minStep`
@@ -8,33 +10,22 @@ import { getUserFromSession, type SessionContext } from '@/lib/auth'
  *
  * Retourne le SessionContext si tout est OK.
  */
-export async function requireOnboardingStep(
-  minStep: number = 3,
-): Promise<SessionContext> {
-  const session = await getUserFromSession()
+export async function requireOnboardingStep(minStep: number = 3): Promise<SessionContext> {
+  const session = await getUserFromSession();
 
   if (!session) {
-    redirect('/login')
+    redirect("/login");
   }
 
-  const { user } = session
-  const step = (user as any).onboardingStep ?? 0
+  const { user } = session;
+  const step = (user as any).onboardingStep ?? 0;
 
-  // Pas encore le niveau requis → on redirige dans le flow d'onboarding
   if (step < minStep) {
-    if (step <= 0) {
-      redirect('/onboarding')
-    }
-    if (step === 1) {
-      redirect('/onboarding/step-2')
-    }
-    if (step === 2) {
-      redirect('/onboarding/step-3')
-    }
-
-    // fallback au cas où
-    redirect('/onboarding')
+    if (step <= 0) redirect("/onboarding");
+    if (step === 1) redirect("/onboarding/step-2");
+    if (step === 2) redirect("/onboarding/step-3");
+    redirect("/onboarding");
   }
 
-  return session
+  return session;
 }
