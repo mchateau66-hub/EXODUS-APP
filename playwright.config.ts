@@ -36,16 +36,28 @@ const rawBaseURL = normalizeBaseUrl(process.env.E2E_BASE_URL || "http://127.0.0.
 const local = isLocalBase(rawBaseURL);
 const devPort = getPortFromBaseURL(rawBaseURL);
 
-// 👉 Important: en local on force 127.0.0.1 (cookies/host-only plus stables que localhost)
+// 👉 en local on force 127.0.0.1 (cookies host-only plus stables)
 const localURL = `http://127.0.0.1:${devPort}`;
 const baseURL = local ? localURL : rawBaseURL;
 
 // Aligne aussi l'env pour helpers.ts + global-setup.ts
 if (local) process.env.E2E_BASE_URL = baseURL;
 
-// ⚠️ Ton workflow CI démarre déjà Next => on ne le redémarre PAS ici.
+// ⚠️ Le workflow CI démarre déjà Next => on ne le redémarre PAS ici.
 // Si tu veux que Playwright démarre Next en local: PW_WEB_SERVER=1
 const startWebServer = local && (process.env.PW_WEB_SERVER ?? "").trim() === "1";
+
+// ✅ Headers globaux (UI + API)
+const extraHeaders: Record<string, string> = { "x-e2e": "1" };
+
+const e2eToken = (process.env.E2E_DEV_LOGIN_TOKEN ?? "").trim();
+if (e2eToken) extraHeaders["x-e2e-token"] = e2eToken;
+
+const vercelBypass = (process.env.VERCEL_AUTOMATION_BYPASS_SECRET ?? "").trim();
+if (vercelBypass) {
+  extraHeaders["x-vercel-protection-bypass"] = vercelBypass;
+  extraHeaders["x-vercel-set-bypass-cookie"] = "true";
+}
 
 if ((process.env.PW_DEBUG_CONFIG ?? "").trim() === "1") {
   console.log("[pw-config]", {
@@ -56,6 +68,8 @@ if ((process.env.PW_DEBUG_CONFIG ?? "").trim() === "1") {
     startWebServer,
     devPort,
     E2E_SMOKE_PATH: process.env.E2E_SMOKE_PATH,
+    hasE2EToken: Boolean(e2eToken),
+    hasVercelBypass: Boolean(vercelBypass),
   });
 }
 
@@ -85,8 +99,8 @@ export default defineConfig({
     screenshot: "only-on-failure",
     video: "retain-on-failure",
 
-    // ✅ obligatoire: ton /api/login exige x-e2e=1
-    extraHTTPHeaders: { "x-e2e": "1" },
+    // ✅ E2E + token + bypass Vercel si besoin
+    extraHTTPHeaders: extraHeaders,
   },
 
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
