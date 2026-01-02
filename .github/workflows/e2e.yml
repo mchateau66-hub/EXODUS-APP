@@ -110,8 +110,8 @@ jobs:
 
           SHARDS="${INPUT_SHARDS:-4}"
           if ! echo "$SHARDS" | grep -Eq '^[0-9]+$'; then
-          echo "::error::Invalid shards: $SHARDS"
-          exit 1
+            echo "::error::Invalid shards: $SHARDS"
+            exit 1
           fi
 
           SHARD_MATRIX="$(python3 - <<PY
@@ -120,8 +120,6 @@ jobs:
           print(json.dumps(list(range(1, n+1))))
           PY
           )"
-
-
 
           echo "mode=$MODE" >> "$GITHUB_OUTPUT"
           echo "base=$BASE" >> "$GITHUB_OUTPUT"
@@ -200,6 +198,7 @@ jobs:
 
             if [ "$code" = "404" ] && (grep -qi "DEPLOYMENT_NOT_FOUND" /tmp/pw_body.txt || grep -Eqi '^x-vercel-error:\s*DEPLOYMENT_NOT_FOUND' /tmp/pw_headers.txt); then
               echo "::error::DEPLOYMENT_NOT_FOUND: URL invalide ou déploiement supprimé."
+              echo "➡️ Mets une vraie URL Vercel (domains list), pas un placeholder."
               exit 1
             fi
 
@@ -237,7 +236,7 @@ jobs:
 
     env:
       CI: "true"
-      PW_USE_WEBSERVER: "0"
+      PW_WEB_SERVER: "0"
 
       E2E_BASE_URL: ${{ needs.cfg.outputs.base }}
       E2E_SMOKE_PATH: ${{ needs.cfg.outputs.smoke_path }}
@@ -252,7 +251,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: pnpm
 
       - name: Enable Corepack + pin pnpm
         run: |
@@ -260,10 +258,23 @@ jobs:
           corepack prepare pnpm@${{ env.PNPM_VERSION }} --activate
           pnpm -v
 
+      - name: Get pnpm store path
+        id: pnpm-store
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
       - uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
           key: ${{ runner.os }}-playwright-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-playwright-
 
       - name: Install deps
         run: pnpm install --frozen-lockfile
@@ -332,7 +343,7 @@ jobs:
 
     env:
       CI: "true"
-      PW_USE_WEBSERVER: "0"
+      PW_WEB_SERVER: "0"
 
       E2E_BASE_URL: ${{ needs.cfg.outputs.base }}
       E2E_SMOKE_PATH: ${{ needs.cfg.outputs.smoke_path }}
@@ -345,7 +356,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: pnpm
 
       - name: Enable Corepack + pin pnpm
         run: |
@@ -353,10 +363,23 @@ jobs:
           corepack prepare pnpm@${{ env.PNPM_VERSION }} --activate
           pnpm -v
 
+      - name: Get pnpm store path
+        id: pnpm-store
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
       - uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
           key: ${{ runner.os }}-playwright-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-playwright-
 
       - name: Install deps
         run: pnpm install --frozen-lockfile
@@ -414,7 +437,7 @@ jobs:
 
     env:
       CI: "true"
-      PW_USE_WEBSERVER: "0"
+      PW_WEB_SERVER: "0"
 
       E2E_BASE_URL: ${{ needs.cfg.outputs.base }}
       E2E_SMOKE_PATH: ${{ needs.cfg.outputs.smoke_path }}
@@ -427,7 +450,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: pnpm
 
       - name: Enable Corepack + pin pnpm
         run: |
@@ -435,10 +457,23 @@ jobs:
           corepack prepare pnpm@${{ env.PNPM_VERSION }} --activate
           pnpm -v
 
+      - name: Get pnpm store path
+        id: pnpm-store
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
       - uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
           key: ${{ runner.os }}-playwright-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-playwright-
 
       - name: Install deps
         run: pnpm install --frozen-lockfile
@@ -507,13 +542,23 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: pnpm
 
       - name: Enable Corepack + pin pnpm
         run: |
           corepack enable
           corepack prepare pnpm@${{ env.PNPM_VERSION }} --activate
           pnpm -v
+
+      - name: Get pnpm store path
+        id: pnpm-store
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
 
       - name: Install deps (for playwright CLI)
         run: pnpm install --frozen-lockfile
