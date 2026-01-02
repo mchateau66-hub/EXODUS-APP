@@ -110,16 +110,18 @@ jobs:
 
           SHARDS="${INPUT_SHARDS:-4}"
           if ! echo "$SHARDS" | grep -Eq '^[0-9]+$'; then
-            echo "::error::Invalid shards: $SHARDS"
-            exit 1
+          echo "::error::Invalid shards: $SHARDS"
+          exit 1
           fi
 
           SHARD_MATRIX="$(python3 - <<PY
-          import json, os
-          n=int(os.environ["SHARDS"])
+          import json
+          n=int("$SHARDS")
           print(json.dumps(list(range(1, n+1))))
           PY
           )"
+
+
 
           echo "mode=$MODE" >> "$GITHUB_OUTPUT"
           echo "base=$BASE" >> "$GITHUB_OUTPUT"
