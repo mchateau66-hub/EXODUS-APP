@@ -1,16 +1,10 @@
-// src/app/login/page.tsx
-import { redirect } from "next/navigation";
+import { Suspense } from "react";
+import LoginClient from "./LoginClient";
 
-export default function LoginPage({
-  searchParams,
-}: {
-  searchParams?: { next?: string | string[]; from?: string | string[] };
-}) {
-  const next =
-    (typeof searchParams?.next === "string" && searchParams.next) ||
-    (typeof searchParams?.from === "string" && searchParams.from) ||
-    "/";
-
-  const from = next.startsWith("/") ? next : `/${next}`;
-  redirect(`/paywall?from=${encodeURIComponent(from)}`);
+export default function LoginPage() {
+  return (
+    <Suspense fallback={<div className="p-6">Loading…</div>}>
+      <LoginClient />
+    </Suspense>
+  );
 }

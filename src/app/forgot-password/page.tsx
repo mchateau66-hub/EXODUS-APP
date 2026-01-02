@@ -4,12 +4,13 @@ import ForgotPasswordClient from "./ForgotPasswordClient";
 
 export const dynamic = "force-dynamic";
 
-export default function Page({
+export default async function Page({
   searchParams,
 }: {
-  searchParams?: { email?: string };
+  searchParams?: Promise<{ email?: string }>;
 }) {
-  const email = typeof searchParams?.email === "string" ? searchParams.email : "";
+  const sp = searchParams ? await searchParams : undefined;
+  const email = typeof sp?.email === "string" ? sp.email : "";
 
   return (
     <Suspense fallback={null}>

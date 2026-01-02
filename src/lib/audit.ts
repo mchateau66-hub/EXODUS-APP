@@ -30,7 +30,6 @@ export async function writeAuditLog(params: {
   const base = stripPII(params.meta || {});
   const meta: Meta = { ...base };
 
-  // pas de PII en clair
   if (params.email) meta.email_hash = sha256(params.email.toLowerCase());
   if (params.ip) meta.ip_hash = sha256(params.ip);
   if (params.ua) meta.ua_hash = sha256(params.ua);
@@ -50,9 +49,7 @@ export async function writeAuditLog(params: {
       });
       return;
     }
-
-    // best-effort: si aucun modèle Prisma, on ignore
   } catch {
-    // ne jamais casser un flow à cause de l’audit
+    // never break flows
   }
 }

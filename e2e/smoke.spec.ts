@@ -1,61 +1,38 @@
-// e2e/smoke.spec.ts
-import { test, expect } from '@playwright/test';
+import { test, expect } from "@playwright/test";
 
-/**
- * Smoke ultra-rapide :
- * - essaie une liste de chemins (dont E2E_SMOKE_PATH si fourni)
- * - valide qu'au moins un renvoie 2xx
- * - si ce n'est pas une route API, vérifie que le DOM est bien visible
- */
+// Par défaut on essaie /api/health/ready (public), sinon fallback
+const envPath = (process.env.E2E_SMOKE_PATH || "").trim();
+const preferred = envPath || "/api/health/ready";
 
-const envSmoke = process.env.E2E_SMOKE_PATH?.trim();
-const candidates: string[] = Array.from(
-  new Set(
-    [
-      envSmoke && (envSmoke.startsWith('/') ? envSmoke : `/${envSmoke}`),
-      '/',            // page d'accueil
-      '/home',
-      '/index',
-      '/api/health',  // fallback santé
-      '/api/healthz',
-      '/api/status',
-    ].filter(Boolean) as string[]
-  )
-);
+const apiCandidates = Array.from(
+  new Set([
+    preferred,
+    "/api/health/ready",
+    "/api/health",
+    "/api/healthz",
+    "/api/status",
+  ]),
+).map((p) => (p.startsWith("/") ? p : `/${p}`));
 
-const isApiPath = (p: string) => p.startsWith('/api/');
+const pageCandidates = ["/", "/home", "/index"];
 
-test('@smoke app or health endpoint responds 2xx', async ({ page }, testInfo) => {
+test("@smoke app or health endpoint responds 2xx and homepage loads", async ({ page }) => {
   let ok = false;
-  let last = '';
-  let hit = '';
+  let last = "";
 
-  for (const p of candidates) {
-    try {
-      const res = await page.goto(p, { waitUntil: 'commit' }); // rapide et OK pour JSON/HTML
-      if (!res) continue;
-      const status = res.status();
-      last = `HTTP ${status} @ ${res.url()}`;
-      if (status >= 200 && status < 300) {
-        ok = true;
-        hit = p;
-        break;
-      }
-    } catch (err) {
-      last = `ERR @ ${p}: ${(err as Error).message}`;
-      // on continue sur le prochain candidat
+  for (const p of apiCandidates) {
+    const r = await page.request.get(p, { timeout: 15_000 }).catch(() => null);
+    const status = r?.status() ?? 0;
+    last = `API ${p} status=${status}`;
+    if (status >= 200 && status < 300) {
+      ok = true;
+      break;
     }
   }
 
-  // Aide au debug dans le report
-  testInfo.annotations.push({ type: 'smoke-last', description: last });
+  expect(ok, `Health failed. Tried=${apiCandidates.join(", ")} last=${last}`).toBe(true);
 
-  // Au moins un chemin doit répondre 2xx
-  expect(ok, `Tried: ${candidates.join(', ')} — Last: ${last}`).toBe(true);
-
-  // Si on n'est pas sur une route API, on vérifie que le DOM est visible
-  if (ok && !isApiPath(hit)) {
-    await expect(page.locator('body')).toBeVisible();
-    await expect.soft(page).toHaveURL(/^(?!about:blank)/);
-  }
+  const res = await page.goto(pageCandidates[0]!, { waitUntil: "domcontentloaded" });
+  expect(res, "homepage navigation returned null response").toBeTruthy();
+  await expect(page.locator("body")).toBeVisible();
 });

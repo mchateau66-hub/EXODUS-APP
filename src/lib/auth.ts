@@ -1,80 +1,188 @@
 // src/lib/auth.ts
-import { cookies } from 'next/headers'
-import { NextResponse } from 'next/server'
-import { prisma } from '@/lib/db'
+import { NextRequest, NextResponse } from "next/server";
+import { cookies as nextCookies } from "next/headers";
+import { randomUUID } from "node:crypto";
+import { prisma } from "@/lib/db";
 
-export const SESSION_COOKIE_NAME = 'sid'
+type CreateSessionOpts = { maxAgeSeconds?: number };
 
-export type SessionContext = {
-  user: any
-  session: any
-  sid: string
-}
+const SESSION_COOKIE_CANDIDATES = (process.env.SESSION_COOKIE_NAMES ?? "sid,session")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+
+const DEFAULT_COOKIE_NAME = SESSION_COOKIE_CANDIDATES[0] ?? "sid";
 
 /**
- * Récupère l'utilisateur courant à partir du cookie "sid".
- * Retourne null s'il n'y a pas de session valide.
+ * Détermine si les cookies doivent être Secure.
+ * - Si req est fourni : se base sur le protocole réel (x-forwarded-proto / req.nextUrl.protocol)
+ * - Sinon : fallback sur NODE_ENV (prod => secure)
  */
-export async function getUserFromSession(): Promise<SessionContext | null> {
-  // Next 15 : cookies() est async
-  const store = await cookies()
-
-  const sid =
-    store.get(SESSION_COOKIE_NAME)?.value ??
-    store.get('session')?.value ?? // compat éventuelle
-    null
-
-  if (!sid) return null
-
-  let session: any = null
-  try {
-    session = await prisma.session.findUnique({
-      where: { id: sid },
-      include: { user: true },
-    })
-  } catch {
-    return null
+function secureCookieFromReq(req?: NextRequest) {
+  if (req) {
+    const xfProto = req.headers
+      .get("x-forwarded-proto")
+      ?.split(",")[0]
+      ?.trim()
+      .toLowerCase();
+    if (xfProto) return xfProto === "https";
+    return req.nextUrl.protocol === "https:";
   }
+  return process.env.NODE_ENV === "production";
+}
 
-  if (!session || !session.user) return null
-
+function prismaModels(db: any) {
   return {
-    user: session.user as any,
-    session,
-    sid,
+    session: db.session ?? db.sessions,
+  };
+}
+
+async function createSessionRow(sessionModel: any, data: any) {
+  try {
+    return await sessionModel.create({ data: { ...data, last_seen_at: new Date() } });
+  } catch {
+    return await sessionModel.create({ data });
   }
 }
 
-type SessionPayload = {
-  ok: boolean
-  redirectTo?: string
-  checkoutUrl?: string
-  [k: string]: unknown
+/**
+ * Crée une session DB + pose le cookie session.
+ * Robustesse:
+ * - pose la session sur TOUS les noms candidats (sid + session + ...)
+ *   => évite invalid_session si une partie de l'app lit un autre nom.
+ */
+export async function createSessionResponseForUser<T extends Record<string, any>>(
+  userId: string,
+  payload: T,
+  req?: NextRequest,
+  opts: CreateSessionOpts = {},
+) {
+  const { session } = prismaModels(prisma as any);
+  if (!session?.create) {
+    const res = NextResponse.json({ ok: false, error: "session_model_missing" }, { status: 500 });
+    res.headers.set("cache-control", "no-store");
+    return res;
+  }
+
+  const sid = randomUUID();
+
+  try {
+    await createSessionRow(session, { id: sid, user_id: userId });
+  } catch (err) {
+    // DB down / schema mismatch => réponse stable
+    console.error("[auth] createSessionRow_failed", {
+      name: (err as any)?.name,
+      code: (err as any)?.code,
+      message: String((err as any)?.message ?? "").slice(0, 800),
+    });
+    const res = NextResponse.json({ ok: false, error: "db_unavailable" }, { status: 503 });
+    res.headers.set("cache-control", "no-store");
+    return res;
+  }
+
+  // ✅ CRITIQUE : sid dans le JSON (utile E2E), sans PII
+  const res = NextResponse.json({ ...payload, sid }, { status: 200 });
+  res.headers.set("cache-control", "no-store");
+
+  const secure = secureCookieFromReq(req);
+  const maxAge = opts.maxAgeSeconds ?? 60 * 60 * 24 * 30;
+
+  // ✅ Pose sur TOUS les noms candidats (sid/session/...)
+  // -> si ailleurs on lit "session" mais ici on posait "sid" uniquement, ça crée invalid_session.
+  const names = SESSION_COOKIE_CANDIDATES.length ? SESSION_COOKIE_CANDIDATES : [DEFAULT_COOKIE_NAME];
+
+  for (const name of names) {
+    res.cookies.set(name, sid, {
+      httpOnly: true,
+      sameSite: "lax",
+      secure,
+      path: "/", // 🔥 essentiel (sinon cookie non envoyé sur /paywall, /pro, etc.)
+      maxAge,
+    });
+  }
+
+  return res;
+}
+
+export async function deleteSessionBySid(sid: string) {
+  const { session } = prismaModels(prisma as any);
+  if (!session?.delete) return;
+  await session.delete({ where: { id: sid } }).catch(() => null);
+}
+
+export async function getUserFromSession() {
+  // ✅ compatible Next (cookies() sync/async)
+  const store = await Promise.resolve(nextCookies() as any);
+
+  let sid: string | null = null;
+
+  // support multi-noms
+  const names = SESSION_COOKIE_CANDIDATES.length ? SESSION_COOKIE_CANDIDATES : [DEFAULT_COOKIE_NAME];
+
+  for (const name of names) {
+    const c = store.get?.(name);
+    const v = typeof c === "string" ? c : c?.value;
+    if (v && String(v).trim()) {
+      sid = String(v).trim();
+      break;
+    }
+  }
+
+  if (!sid) return null;
+
+  const { session } = prismaModels(prisma as any);
+  if (!session?.findUnique) return null;
+
+  const s = await session
+    .findUnique({ where: { id: sid }, include: { user: true } })
+    .catch(() => null);
+
+  if (!s?.user) return null;
+
+  if (session.update) {
+    session
+      .update({ where: { id: sid }, data: { last_seen_at: new Date() } })
+      .catch(() => null);
+  }
+
+  return { user: s.user, sid };
+}
+
+function expireCookie(
+  res: NextResponse,
+  name: string,
+  opts: { httpOnly: boolean; secure: boolean; sameSite?: "lax" | "strict" | "none" } = {
+    httpOnly: true,
+    secure: false,
+    sameSite: "lax",
+  },
+) {
+  res.cookies.set({
+    name,
+    value: "",
+    path: "/",
+    httpOnly: opts.httpOnly,
+    sameSite: opts.sameSite ?? "lax",
+    secure: opts.secure,
+    expires: new Date(0),
+    maxAge: 0,
+  });
 }
 
 /**
- * Crée une session pour le userId donné et renvoie une NextResponse.json(payload)
- * avec le cookie "sid" déjà posé.
+ * Efface les cookies de session (toutes variantes).
+ * - On expire chaque cookie candidat en Secure=false ET Secure=true
+ *   pour éviter les cas proxy/staging où un cookie Secure resterait présent.
+ *
+ * ⚠️ Signature backward-compatible: req optionnel.
  */
-export async function createSessionResponseForUser(userId: string, payload: SessionPayload) {
-  // 1) Créer la ligne de session en DB
-  const session = await prisma.session.create({
-    data: { user_id: userId },
-  })
+export function clearSessionCookies(res: NextResponse, req?: NextRequest) {
+  void req;
 
-  // 2) Construire la réponse JSON
-  const res = NextResponse.json(payload)
+  const names = SESSION_COOKIE_CANDIDATES.length ? SESSION_COOKIE_CANDIDATES : [DEFAULT_COOKIE_NAME];
 
-  // ✅ no-store centralisé ici
-  res.headers.set('cache-control', 'no-store')
-
-  // 3) Poser le cookie de session
-  res.cookies.set(SESSION_COOKIE_NAME, session.id, {
-    httpOnly: true,
-    sameSite: 'lax',
-    secure: process.env.NODE_ENV === 'production',
-    path: '/',
-  })
-
-  return res
+  for (const name of names) {
+    expireCookie(res, name, { httpOnly: true, secure: false, sameSite: "lax" });
+    expireCookie(res, name, { httpOnly: true, secure: true, sameSite: "lax" });
+  }
 }

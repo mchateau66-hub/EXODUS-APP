@@ -1,46 +1,89 @@
 // e2e/pro-paywall.spec.ts
-import { test, expect } from '@playwright/test';
-import { BASE_URL, login, readStatus } from './helpers';
+import { test, expect } from "@playwright/test";
+import {
+  BASE_URL,
+  IS_REMOTE_BASE,
+  waitForHealth,
+  setSessionCookieFromEnv,
+  login,
+  readStatus,
+} from "./helpers";
 
-const FROM = '/pro';
+const FROM = "/pro";
 
-test.describe('Paywall /pro (cas détaillés)', () => {
-  test('Anon → redirect vers /paywall?from=/pro (ou 401/403/404 si flag)', async ({ page }) => {
-    const res = await page.goto(FROM, { waitUntil: 'domcontentloaded' });
+async function setPlanCookie(context: any, plan: "free" | "master" | "premium") {
+  const u = new URL(BASE_URL);
+  await context.addCookies([
+    {
+      name: "plan",
+      value: plan,
+      url: u.origin,
+      path: "/",
+      httpOnly: false,
+      sameSite: "Lax",
+      secure: u.protocol === "https:",
+    },
+  ]);
+}
 
-    // URL finale (fiable) pour lire pathname/searchParams
+test.describe("Paywall /pro (cas détaillés)", () => {
+  test.beforeAll(async () => {
+    await waitForHealth(BASE_URL, process.env.E2E_SMOKE_PATH ?? "/api/health", 20_000);
+  });
+
+  test.beforeEach(async ({ context }) => {
+    await setSessionCookieFromEnv(context);
+  });
+
+  test("Anon → redirect vers /paywall?from=/pro (ou 401/403/404 si flag)", async ({ page }) => {
+    await page.context().clearCookies();
+
+    const res = await page.goto(FROM, { waitUntil: "domcontentloaded" });
+
     const u = new URL(page.url(), BASE_URL);
 
-    // Si ce n’est PAS /paywall, on tolère une API-block (401/403/404) quand le flag est ON
-    if (u.pathname !== '/paywall') {
-      const allow404 = process.env.E2E_PAYWALL_ALLOW_404_AS_BLOCK === '1';
+    if (u.pathname !== "/paywall") {
+      const allow404 = process.env.E2E_PAYWALL_ALLOW_404_AS_BLOCK === "1";
       const status = readStatus(res);
       if (allow404) {
         expect([401, 403, 404]).toContain(status);
       } else {
         throw new Error(`Attendu /paywall?from=${FROM}, obtenu ${page.url()} (status ${status})`);
       }
-      return; // cas « toléré » terminé
+      return;
     }
 
-    // Cas nominal : bien sur /paywall + bon query param from
-    expect(u.searchParams.get('from') ?? '').toBe(FROM);
+    expect(u.searchParams.get("from") ?? "").toBe(FROM);
   });
 
-  test('Paywall /pro | session cookie → 200 /pro', async ({ page }) => {
-    // Pose un cookie "session" (ex: plan premium)
-    await login(page, { plan: 'premium' });
+  test("Paywall /pro | session cookie → 200 /pro", async ({ page, context }) => {
+    test.skip(
+      IS_REMOTE_BASE && !process.env.E2E_SESSION_COOKIE?.trim(),
+      "Remote /pro needs E2E_SESSION_COOKIE",
+    );
 
-    const r = await page.goto(FROM, { waitUntil: 'domcontentloaded' });
-    expect(r?.ok()).toBeTruthy();
+    await setPlanCookie(context, "premium");
+
+    // Local: backdoor login pour poser session + plan
+    // Remote: login() s'appuie sur cookie env (et ne touche pas /api/login)
+    await login(page, { plan: "premium" });
+
+    const r = await page.goto(FROM, { waitUntil: "domcontentloaded" });
+    expect(r).not.toBeNull();
 
     const u = new URL(page.url(), BASE_URL);
-    expect(u.pathname).toBe('/pro');
+    if (u.pathname !== "/pro") {
+      throw new Error(
+        `Expected /pro with session cookie, got ${u.pathname}${u.search} (base=${BASE_URL}). ` +
+          `Likely: cookie is not PRO or expired.`,
+      );
+    }
+
+    expect(r?.ok()).toBeTruthy();
   });
 
-  test('Paywall /pro | Authorization: Bearer <token> → 200 /pro', async ({ browser }) => {
-    // ⛳️ Skip uniquement ce test si pas de token
-    test.skip(!process.env.E2E_BEARER_TOKEN, 'E2E_BEARER_TOKEN manquant');
+  test("Paywall /pro | Authorization: Bearer <token> → 200 /pro", async ({ browser }) => {
+    test.skip(!process.env.E2E_BEARER_TOKEN, "E2E_BEARER_TOKEN manquant");
 
     const ctx = await browser.newContext({
       baseURL: BASE_URL,
@@ -48,11 +91,11 @@ test.describe('Paywall /pro (cas détaillés)', () => {
     });
 
     const page = await ctx.newPage();
-    const r = await page.goto(FROM, { waitUntil: 'domcontentloaded' });
+    const r = await page.goto(FROM, { waitUntil: "domcontentloaded" });
     expect(r?.ok()).toBeTruthy();
 
     const u = new URL(page.url(), BASE_URL);
-    expect(u.pathname).toBe('/pro');
+    expect(u.pathname).toBe("/pro");
 
     await ctx.close();
   });

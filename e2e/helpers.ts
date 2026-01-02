@@ -1,5 +1,7 @@
 // e2e/helpers.ts
-import { randomUUID } from "node:crypto"; // ✅ AJOUTE ÇA EN HAUT (avec tes imports)
+import { randomUUID } from "node:crypto";
+import fs from "node:fs/promises";
+import path from "node:path";
 import {
   expect,
   request,
@@ -9,32 +11,99 @@ import {
 } from "@playwright/test";
 
 /**
- * Exports:
- *  BASE_URL, E2E_SMOKE_PATH,
+ * Exports (compat):
+ *  BASE_URL, E2E_SMOKE_PATH, IS_LOCAL_BASE, IS_REMOTE_BASE
  *  readStatus, headerValue, getHeader,
  *  expectOk, gotoOk, waitForHealth,
  *  login, logout, setSessionCookieFromEnv,
  *  isPaywallVisible, expectRedirectToPaywall, firstRedirectResponse
+ *
+ * Extras:
+ *  ORIGIN, originHeaders, envBool, envInt,
+ *  ensureAnon, setPlanCookie,
+ *  acquireSatToken
  */
 
-// ---- Types utilitaires (Playwright + Fetch) ----
-type PWResponse = import("@playwright/test").Response; // network Response (page.goto, etc.)
+type PWResponse = import("@playwright/test").Response;
 type FetchResponse = globalThis.Response;
 export type ResLike = APIResponse | PWResponse | FetchResponse;
 
-// ---- Constantes env ----
-export const BASE_URL = (process.env.E2E_BASE_URL?.trim() ?? "http://127.0.0.1:3000") as string;
-export const E2E_SMOKE_PATH = (process.env.E2E_SMOKE_PATH?.trim() ?? "/api/health") as string;
+const CI = !!process.env.CI;
 
-// ---- Détecteurs de status ----
+function log(...args: any[]) {
+  if (CI) console.log("[e2e]", ...args);
+}
+
+// ------------------------------
+// Base URL / env helpers
+// ------------------------------
+function normalizeBaseUrl(raw: string) {
+  const base = (raw || "").trim().replace(/\/+$/, "");
+  let u: URL;
+  try {
+    u = new URL(base);
+  } catch {
+    throw new Error(`[e2e] Invalid E2E_BASE_URL: "${raw}"`);
+  }
+  if (u.protocol !== "http:" && u.protocol !== "https:") {
+    throw new Error(
+      `[e2e] E2E_BASE_URL must start with http(s)://, got "${u.protocol}"`
+    );
+  }
+  if (!u.hostname) throw new Error(`[e2e] E2E_BASE_URL has no hostname: "${base}"`);
+
+  // Local: forcer 127.0.0.1 pour stabiliser les cookies
+  if (u.hostname === "localhost") u.hostname = "127.0.0.1";
+
+  return u.toString().replace(/\/+$/, "");
+}
+
+function normalizePath(p: string) {
+  let s = (p || "").trim();
+  if (!s) s = "/api/health";
+  if (!s.startsWith("/")) s = `/${s}`;
+  return s.replace(/\/{2,}/g, "/");
+}
+
+export function envBool(name: string, def = false) {
+  const v = process.env[name];
+  if (v == null) return def;
+  return v === "1" || v.toLowerCase() === "true" || v.toLowerCase() === "yes";
+}
+
+export function envInt(name: string, def: number) {
+  const v = process.env[name];
+  if (!v) return def;
+  const n = parseInt(v, 10);
+  return Number.isFinite(n) ? n : def;
+}
+
+export const BASE_URL = normalizeBaseUrl(process.env.E2E_BASE_URL ?? "http://127.0.0.1:3000");
+export const ORIGIN = new URL(BASE_URL).origin;
+
+export const E2E_SMOKE_PATH = normalizePath(process.env.E2E_SMOKE_PATH ?? "/api/health");
+
+function isLocalBase(u: string) {
+  try {
+    const parsed = new URL(u);
+    const host = parsed.hostname.toLowerCase();
+    return host === "localhost" || host === "127.0.0.1" || host === "0.0.0.0";
+  } catch {
+    return true;
+  }
+}
+export const IS_LOCAL_BASE = isLocalBase(BASE_URL);
+export const IS_REMOTE_BASE = !IS_LOCAL_BASE;
+
+// ------------------------------
+// status / headers helpers
+// ------------------------------
 function hasStatusFn(r: unknown): r is { status(): number } {
   return typeof (r as any)?.status === "function";
 }
 function hasStatusNumber(r: unknown): r is { status: number } {
   return typeof (r as any)?.status === "number";
 }
-
-/** Lecture normalisée du status, quel que soit le type de réponse */
 export function readStatus(r: ResLike | null | undefined): number {
   if (!r) return 0;
   if (hasStatusFn(r)) return r.status();
@@ -42,18 +111,17 @@ export function readStatus(r: ResLike | null | undefined): number {
   return 0;
 }
 
-// ---- Headers utilitaires ----
 function headersOf(res: unknown): Record<string, string> | null {
   const any = res as any;
 
-  // Fetch Response: res.headers: Headers
+  // Fetch Response (Headers)
   if (any?.headers && typeof any.headers.get === "function") {
     const out: Record<string, string> = {};
     for (const [k, v] of any.headers.entries()) out[k.toLowerCase()] = v;
     return out;
   }
 
-  // Playwright Response/APIResponse: res.headers(): Record<string,string>
+  // Playwright APIResponse / PWResponse
   if (typeof any?.headers === "function") {
     const rec = (any.headers() as Record<string, string>) ?? {};
     const out: Record<string, string> = {};
@@ -61,7 +129,7 @@ function headersOf(res: unknown): Record<string, string> | null {
     return out;
   }
 
-  // Objet déjà normalisé
+  // plain object
   if (typeof any?.headers === "object" && any?.headers) {
     const rec = any.headers as Record<string, string>;
     const out: Record<string, string> = {};
@@ -75,151 +143,204 @@ function headersOf(res: unknown): Record<string, string> | null {
 export function headerValue(res: unknown, name: string): string | null {
   const rec = headersOf(res);
   if (!rec) return null;
-  const lower = name.toLowerCase();
-  return rec[lower] ?? null;
+  return rec[name.toLowerCase()] ?? null;
 }
-
 export const getHeader = (res: unknown, name: string) => headerValue(res, name);
 
-// ---- Assertions HTTP & helpers de nav ----
+// ------------------------------
+// Assertions / goto
+// ------------------------------
 export function expectOk(
   res: ResLike | null | undefined,
-  opts?: { allowRedirects?: boolean; allowedStatuses?: number[] },
+  opts?: { allowRedirects?: boolean; allowedStatuses?: number[]; hint?: string },
 ): void {
   if (!res) throw new Error("HTTP response is null");
 
   const allowRedirects = opts?.allowRedirects ?? false;
-
   const defaultStatuses = allowRedirects
     ? [200, 201, 202, 203, 204, 206, 301, 302, 303, 307, 308]
     : [200, 201, 202, 203, 204, 206];
 
   const okSet = new Set<number>(opts?.allowedStatuses ?? defaultStatuses);
-  expect(okSet.has(readStatus(res))).toBeTruthy();
+  const st = readStatus(res);
+
+  if (!okSet.has(st)) {
+    const url = (res as any)?.url?.() ?? (res as any)?.url ?? "";
+    throw new Error(
+      `[e2e] expectOk failed: status=${st}${url ? ` url=${url}` : ""}${opts?.hint ? ` hint=${opts.hint}` : ""}`
+    );
+  }
+  expect(okSet.has(st)).toBeTruthy();
 }
 
 export async function gotoOk(
   page: Page,
-  path: string,
+  pathOrUrl: string,
   opts?: {
     waitUntil?: "load" | "domcontentloaded" | "networkidle";
     allowRedirects?: boolean;
   },
 ): Promise<ResLike> {
-  const res = await page.goto(path, { waitUntil: opts?.waitUntil ?? "domcontentloaded" });
+  const res = await page.goto(pathOrUrl, { waitUntil: opts?.waitUntil ?? "domcontentloaded" });
   if (!res) throw new Error("Navigation returned null response");
-  expectOk(res, { allowRedirects: opts?.allowRedirects });
+  expectOk(res, { allowRedirects: opts?.allowRedirects, hint: `goto(${pathOrUrl})` });
   return res;
 }
 
-// ---- Healthcheck ----
+// ------------------------------
+// Headers same-origin + x-e2e + (optional) vercel bypass + (optional) e2e-token
+// ------------------------------
+export function originHeaders(baseUrl: string = BASE_URL): Record<string, string> {
+  const origin = new URL(baseUrl).origin;
+
+  const headers: Record<string, string> = {
+    accept: "application/json",
+    "content-type": "application/json",
+    origin,
+    referer: `${origin}/`,
+    "x-e2e": "1",
+  };
+
+  // ✅ Vercel Deployment Protection bypass (Preview protégée)
+  const bypass = (process.env.VERCEL_AUTOMATION_BYPASS_SECRET ?? "").trim();
+  if (bypass) headers["x-vercel-protection-bypass"] = bypass;
+
+  // ✅ Backdoor token (/api/e2e/login via rewrite /api/login)
+  const token = (process.env.E2E_DEV_LOGIN_TOKEN ?? "").trim();
+  if (token) headers["x-e2e-token"] = token;
+
+  return headers;
+}
+
+// ------------------------------
+// Healthcheck robuste (candidates + retry)
+// ------------------------------
+function buildHealthCandidates(primary: string) {
+  const candidates = [
+    normalizePath(primary),
+    "/api/health",
+    "/api/health/ready",
+    "/api/healthz",
+    "/api/status",
+    "/health",
+    "/",
+  ];
+
+  const seen = new Set<string>();
+  return candidates.filter((p) => {
+    if (seen.has(p)) return false;
+    seen.add(p);
+    return true;
+  });
+}
+
 export async function waitForHealth(
   baseUrl: string = BASE_URL,
   healthPath: string = E2E_SMOKE_PATH,
-  timeoutMs = 15_000,
-): Promise<void> {
-  const client = await request.newContext({ baseURL: baseUrl });
+  timeoutMs = 20_000,
+): Promise<{ usedPath: string; status: number }> {
+  const base = normalizeBaseUrl(baseUrl);
+  const paths = buildHealthCandidates(healthPath);
+
+  const client = await request.newContext({
+    baseURL: base,
+    ignoreHTTPSErrors: envBool("E2E_IGNORE_HTTPS_ERRORS", false),
+    // ✅ si Preview protégée, le bypass doit aussi passer sur le healthcheck
+    extraHTTPHeaders: originHeaders(base),
+  });
+
   const deadline = Date.now() + timeoutMs;
-  let lastStatus = 0;
+  let last: { url: string; status: number; err?: string } = { url: "", status: 0 };
 
   while (Date.now() < deadline) {
-    try {
-      const res = await client.get(healthPath, { timeout: 5_000 });
-      lastStatus = res.status();
-      if (res.ok()) {
-        await client.dispose();
-        return;
+    for (const p of paths) {
+      try {
+        const res = await client.get(p, { timeout: 6_000 });
+        const st = res.status();
+        last = { url: `${base}${p}`, status: st };
+
+        // ✅ reachable: 2xx/3xx
+        if (st >= 200 && st < 400) {
+          await client.dispose();
+          process.env.E2E_SMOKE_PATH = p; // utile aux specs
+          log("health OK:", `${base}${p}`, "status=", st);
+          return { usedPath: p, status: st };
+        }
+      } catch (e: any) {
+        last = { url: `${base}${p}`, status: 0, err: String(e?.message ?? e) };
       }
-    } catch {
-      // ignore, retry below
     }
-    await new Promise((r) => setTimeout(r, 500));
+    await new Promise((r) => setTimeout(r, 800));
   }
 
   await client.dispose();
-  throw new Error(`Healthcheck failed for ${baseUrl}${healthPath} (last status ${lastStatus})`);
+  throw new Error(
+    `Healthcheck failed (base=${base}) after ${timeoutMs}ms. ` +
+      `Last: url=${last.url} status=${last.status}${last.err ? ` err=${last.err}` : ""}`,
+  );
 }
 
-// ---- Auth API helpers ----
-function originHeaders(baseUrl: string = BASE_URL): Record<string, string> {
-  const origin = new URL(baseUrl).origin;
-  return {
-    // ⚠️ important si tu as un guard JSON strict
-    "content-type": "application/json",
-    accept: "application/json",
-
-    // ✅ important si requireSameOrigin / anti-CSRF en prod
-    origin,
-    referer: `${origin}/`,
-  };
+// ------------------------------
+// Cookies helpers
+// ------------------------------
+function cookieUrlForBase(baseUrl: string) {
+  return new URL(baseUrl).origin;
 }
 
-export async function login(
-  page: Page,
-  data: { email?: string; plan?: string; maxAge?: number } = {},
-): Promise<APIResponse> {
-  // ✅ /api/login exige un email -> on en fournit un
-  // ✅ email unique par login -> évite que le test "quota free" flingue les autres tests
-  const email =
-    (data.email ??
-      process.env.E2E_TEST_EMAIL ??
-      `e2e+${randomUUID()}@exodus.local`).trim();
-
-  const payload = {
-    email,
-    plan: data.plan ?? "free",
-    maxAge: data.maxAge,
-  };
-
-  const res = await page.request.post("/api/login", { data: payload });
-
-  // debug utile en CI si ça recasse
-  if (res.status() >= 400) {
-    let body = "";
-    try {
-      body = await res.text();
-    } catch {}
-    console.error(
-      `[e2e] /api/login failed: status=${res.status()} url=${res.url()}\n${body.slice(0, 800)}`,
-    );
-  }
-
-  // ✅ accepte 2xx/3xx
-  expect(res.status(), `/api/login status=${res.status()}`).toBeLessThan(400);
-  return res;
-}
-export async function logout(page: Page): Promise<APIResponse> {
-  const res = await page.request.post("/api/logout", {
-    headers: originHeaders(),
-  });
-
-  if (res.status() >= 400) {
-    const body = await res.text().catch(() => "");
-    console.error(`[e2e] /api/logout failed: status=${res.status()} url=${res.url()}`);
-    console.error(body.slice(0, 1200));
-  }
-
-  // ✅ robuste (certains backends renvoient 200/204/302)
-  expect(res.status(), `/api/logout status=${res.status()}`).toBeLessThan(400);
-  return res;
-}
-
-/** Pose un cookie depuis la variable d'env E2E_SESSION_COOKIE (format Set-Cookie). */
-export async function setSessionCookieFromEnv(
+export async function setPlanCookie(
   context: BrowserContext,
+  plan: "free" | "master" | "premium" | "pro" = "free",
   baseUrl: string = BASE_URL,
 ): Promise<void> {
-  const raw = process.env.E2E_SESSION_COOKIE?.trim() ?? "";
-  if (!raw) return;
+  const p = (plan === "pro" ? "premium" : plan).toLowerCase() as any;
+  await context.addCookies([
+    {
+      name: "plan",
+      value: p,
+      url: cookieUrlForBase(baseUrl),
+      path: "/",
+      httpOnly: false,
+      sameSite: "Lax",
+      secure: new URL(baseUrl).protocol === "https:",
+    },
+  ]);
+}
 
-  const parts = raw
+export async function ensureAnon(page: Page): Promise<void> {
+  await page.context().clearCookies();
+
+  await page.addInitScript(() => {
+    try {
+      window.localStorage?.clear();
+      window.sessionStorage?.clear();
+    } catch {}
+  });
+}
+
+/**
+ * Parse E2E_SESSION_COOKIE:
+ * - "sid=xxx"
+ * - "sid=xxx; Path=/; Secure; SameSite=Lax; HttpOnly; Domain=..."
+ * - "Set-Cookie: sid=xxx; ..."
+ * - multi-lignes (1 cookie / ligne)
+ */
+function splitCookieLines(raw: string): string[] {
+  return raw
+    .split("\n")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((s) => s.replace(/^set-cookie:\s*/i, ""));
+}
+
+function parseCookieLine(line: string) {
+  const parts = line
     .split(";")
     .map((s) => s.trim())
     .filter(Boolean);
 
   const cookieKV = parts.shift() ?? "";
   const eq = cookieKV.indexOf("=");
-  if (eq < 0) throw new Error('E2E_SESSION_COOKIE must be "name=value; Attr=...";');
+  if (eq < 0) throw new Error(`[e2e] Invalid cookie (expected name=value): "${cookieKV}"`);
 
   const name = cookieKV.slice(0, eq);
   const value = cookieKV.slice(eq + 1);
@@ -231,28 +352,311 @@ export async function setSessionCookieFromEnv(
     else attrs.set(p.slice(0, i).toLowerCase(), p.slice(i + 1));
   }
 
-  const url = new URL(baseUrl);
-  const domain = (attrs.get("domain") as string | undefined)?.replace(/^\./, "") ?? url.hostname;
-  const path = (attrs.get("path") as string | undefined) ?? "/";
-
-  const sameSiteAttr = (attrs.get("samesite") as string | undefined)?.toLowerCase() ?? "lax";
+  const cookiePath = (attrs.get("path") as string | undefined) ?? "/";
+  const sameSiteAttr =
+    (attrs.get("samesite") as string | undefined)?.toLowerCase() ?? "lax";
   const sameSite: "Strict" | "Lax" | "None" =
     sameSiteAttr === "none" ? "None" : sameSiteAttr === "strict" ? "Strict" : "Lax";
 
-  await context.addCookies([
-    {
-      name,
-      value,
-      domain,
-      path,
-      httpOnly: attrs.has("httponly"),
-      secure: attrs.has("secure"),
-      sameSite,
-    },
-  ]);
+  return { name, value, attrs, cookiePath, sameSite };
 }
 
-// ---- UI helper ----
+export async function setSessionCookieFromEnv(
+  context: BrowserContext,
+  baseUrl: string = BASE_URL,
+): Promise<void> {
+  const raw0 = (process.env.E2E_SESSION_COOKIE ?? "").trim();
+  if (!raw0) return;
+
+  const lines = splitCookieLines(raw0);
+  if (!lines.length) return;
+
+  const base = new URL(baseUrl);
+  const origin = base.origin;
+
+  const cookies: any[] = [];
+  for (const line of lines) {
+    const { name, value, attrs, cookiePath, sameSite } = parseCookieLine(line);
+
+    const domainAttr = (attrs.get("domain") as string | undefined)?.trim();
+    const secure = attrs.has("secure") || base.protocol === "https:";
+
+    const c: any = {
+      name,
+      value,
+      path: cookiePath,
+      httpOnly: attrs.has("httponly"),
+      secure,
+      sameSite,
+      ...(domainAttr
+        ? { domain: domainAttr.replace(/^\./, "") }
+        : { url: origin }),
+    };
+
+    cookies.push(c);
+  }
+
+  await context.addCookies(cookies);
+  log("session cookie(s) injected:", cookies.map((c) => c.name).join(", "));
+}
+
+// ------------------------------
+// Auth helpers
+// ------------------------------
+function normalizePlan(plan?: string) {
+  const p = (plan ?? "free").toLowerCase().trim();
+  if (p === "pro") return "premium";
+  return p;
+}
+
+/**
+ * login() stratégie:
+ * - Local : POST /api/login (backdoor) avec headers E2E
+ * - Remote :
+ *   - si E2E_SESSION_COOKIE présent => on l’injecte (ancien mode staging)
+ *   - sinon si E2E_DEV_LOGIN_TOKEN présent => on tente POST /api/login (rewrite -> /api/e2e/login)
+ *   - sinon => erreur explicite
+ */
+export async function login(
+  page: Page,
+  data: { email?: string; plan?: string; maxAge?: number; maxAgeSeconds?: number } = {},
+): Promise<APIResponse> {
+  const plan = normalizePlan(data.plan);
+  const email =
+    (data.email ??
+      process.env.E2E_TEST_EMAIL ??
+      `e2e+${randomUUID()}@exodus.local`).trim();
+
+  const maxAgeSeconds = (() => {
+    const v =
+      typeof data.maxAgeSeconds === "number" ? data.maxAgeSeconds :
+      typeof data.maxAge === "number" ? data.maxAge :
+      undefined;
+    return typeof v === "number" && Number.isFinite(v) && v > 0 ? Math.floor(v) : undefined;
+  })();
+
+  // ----------------
+  // REMOTE
+  // ----------------
+  if (IS_REMOTE_BASE) {
+    // 1) Cookie partagé (ancien mode)
+    const rawCookie = (process.env.E2E_SESSION_COOKIE ?? "").trim();
+    if (rawCookie) {
+      await setSessionCookieFromEnv(page.context(), BASE_URL);
+
+      // ping health (reachability)
+      const hp = normalizePath(process.env.E2E_SMOKE_PATH ?? E2E_SMOKE_PATH);
+      const res = await page.request.get(hp, { headers: originHeaders() });
+      expect(res.status(), `remote reachability status=${res.status()}`).toBeLessThan(400);
+      return res;
+    }
+
+    // 2) Backdoor token (Preview / staging autorisée)
+    const token = (process.env.E2E_DEV_LOGIN_TOKEN ?? "").trim();
+    if (token) {
+      const loginPath = normalizePath(process.env.E2E_DEV_LOGIN_PATH ?? "/api/login");
+
+      const payload: any = { email, plan };
+      if (maxAgeSeconds) payload.maxAgeSeconds = maxAgeSeconds;
+
+      const res = await page.request.post(loginPath, {
+        data: payload,
+        headers: originHeaders(),
+      });
+
+      if (res.status() >= 400) {
+        const body = await res.text().catch(() => "");
+        console.error(`[e2e] remote login failed: status=${res.status()} url=${res.url()}`);
+        console.error(body.slice(0, 1200));
+      }
+
+      expect(res.status(), `remote ${loginPath} status=${res.status()}`).toBeLessThan(400);
+      return res;
+    }
+
+    throw new Error(
+      `[e2e] login() on REMOTE base (${BASE_URL}) but no auth method is configured.\n` +
+        `Provide ONE of:\n` +
+        `  - E2E_SESSION_COOKIE (shared session cookie)\n` +
+        `  - E2E_DEV_LOGIN_TOKEN (+ ALLOW_DEV_LOGIN=1 on the deployment) for /api/e2e/login via rewrite\n` +
+        `Also, if Preview is protected, provide VERCEL_AUTOMATION_BYPASS_SECRET.`
+    );
+  }
+
+  // ----------------
+  // LOCAL
+  // ----------------
+  const payload: any = { email, plan };
+  if (maxAgeSeconds) payload.maxAgeSeconds = maxAgeSeconds;
+
+  const res = await page.request.post("/api/login", {
+    data: payload,
+    headers: originHeaders(),
+  });
+
+  if (res.status() >= 400) {
+    const body = await res.text().catch(() => "");
+    console.error(`[e2e] /api/login failed: status=${res.status()} url=${res.url()}`);
+    console.error(body.slice(0, 1200));
+  }
+
+  expect(res.status(), `/api/login status=${res.status()}`).toBeLessThan(400);
+  return res;
+}
+
+export async function logout(page: Page): Promise<APIResponse> {
+  const res = await page.request.post("/api/logout", { headers: originHeaders() });
+
+  if (res.status() >= 400) {
+    const body = await res.text().catch(() => "");
+    console.error(`[e2e] /api/logout failed: status=${res.status()} url=${res.url()}`);
+    console.error(body.slice(0, 1200));
+  }
+
+  return res;
+}
+
+// ------------------------------
+// SAT helpers (lock + backoff)
+// ------------------------------
+function jitter(ms: number) {
+  return ms + Math.floor(Math.random() * 120);
+}
+
+async function sleep(ms: number) {
+  await new Promise((r) => setTimeout(r, ms));
+}
+
+async function withFileLock<T>(
+  lockName: string,
+  fn: () => Promise<T>,
+  timeoutMs = 25_000,
+): Promise<T> {
+  const dir = path.join(process.cwd(), ".pw");
+  const lockFile = path.join(dir, lockName);
+  await fs.mkdir(dir, { recursive: true }).catch(() => {});
+
+  const deadline = Date.now() + timeoutMs;
+
+  while (true) {
+    try {
+      const handle = await fs.open(lockFile, "wx");
+      try {
+        return await fn();
+      } finally {
+        await handle.close().catch(() => {});
+        await fs.unlink(lockFile).catch(() => {});
+      }
+    } catch (e: any) {
+      if (e?.code !== "EEXIST") throw e;
+      if (Date.now() > deadline) throw new Error(`[e2e] lock timeout: ${lockFile}`);
+      await sleep(jitter(180));
+    }
+  }
+}
+
+function parseRateLimitResetMs(res: APIResponse) {
+  const h =
+    headerValue(res, "ratelimit-reset") ??
+    headerValue(res, "RateLimit-Reset") ??
+    headerValue(res, "x-ratelimit-reset");
+
+  if (!h) return null;
+
+  const n = Number(h);
+  if (!Number.isFinite(n) || n <= 0) return null;
+
+  if (n > 1e12) return n - Date.now();
+  if (n > 1e9) return n * 1000 - Date.now();
+  return n * 1000;
+}
+
+/**
+ * Acquire SAT token avec:
+ * - lock inter-workers (.pw/sat.lock)
+ * - backoff exponentiel + respect ratelimit-reset si présent
+ */
+export async function acquireSatToken(
+  page: Page,
+  opts?: {
+    payload?: Record<string, any>;
+    maxAttempts?: number;
+    lockTimeoutMs?: number;
+  }
+): Promise<string> {
+  const maxAttempts = opts?.maxAttempts ?? 8;
+
+  return await withFileLock(
+    "sat.lock",
+    async () => {
+      let lastStatus = 0;
+      let lastBody = "";
+
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        const payload = opts?.payload ?? { nonce: randomUUID() };
+
+        const res = await page.request.post("/api/sat", {
+          data: payload,
+          headers: originHeaders(),
+        });
+
+        lastStatus = res.status();
+        lastBody = await res.text().catch(() => "");
+
+        if (lastStatus >= 200 && lastStatus < 300) {
+          const json = (() => {
+            try { return JSON.parse(lastBody || "{}"); } catch { return null; }
+          })();
+
+          const token = json?.token || json?.sat || json?.jwt;
+          if (!token || typeof token !== "string") {
+            throw new Error(
+              `[e2e] /api/sat 2xx but missing token field. body=${(lastBody || "").slice(0, 700)}`
+            );
+          }
+          return token;
+        }
+
+        if (lastStatus === 401 || lastStatus === 403) {
+          throw new Error(
+            `[e2e] Unable to acquire SAT token (status=${lastStatus}). ` +
+              `Check session cookie / entitlements / CSRF. body=${(lastBody || "").slice(0, 700)}`
+          );
+        }
+
+        const retryable =
+          lastStatus === 429 ||
+          lastStatus === 408 ||
+          lastStatus === 500 ||
+          lastStatus === 502 ||
+          lastStatus === 503 ||
+          lastStatus === 504;
+
+        if (!retryable) {
+          throw new Error(
+            `[e2e] Unable to acquire SAT token (status=${lastStatus}). body=${(lastBody || "").slice(0, 700)}`
+          );
+        }
+
+        const resetMs = parseRateLimitResetMs(res);
+        const exp = 250 * Math.pow(2, attempt - 1);
+        const wait = Math.min(6_000, Math.max(350, resetMs ?? jitter(exp)));
+
+        log(`SAT retry attempt=${attempt}/${maxAttempts} status=${lastStatus} wait=${wait}ms`);
+        await sleep(wait);
+      }
+
+      throw new Error(
+        `Unable to acquire SAT token (rate-limited too long). last status=${lastStatus} body=${(lastBody || "").slice(0, 700)}`
+      );
+    },
+    opts?.lockTimeoutMs ?? 25_000,
+  );
+}
+
+// ------------------------------
+// UI helpers / paywall
+// ------------------------------
 export async function isPaywallVisible(
   page: Page,
   customSelector?: string,
@@ -273,30 +677,24 @@ export async function isPaywallVisible(
     try {
       const loc = page.locator(sel).first();
       if ((await loc.count()) > 0 && (await loc.isVisible({ timeout: timeoutMs }))) return true;
-    } catch {
-      // ignore
-    }
+    } catch {}
   }
 
-  // Fallback texte (FR/EN)
   const byText = page
     .locator("body")
-    .getByText(/subscribe|upgrade|premium|paywall|sign in|log in|abonne(?:ment)?|premium/i, {
+    .getByText(/subscribe|upgrade|premium|paywall|sign in|log in|abonne(?:ment)?/i, {
       exact: false,
     })
     .first();
 
   try {
     if ((await byText.count()) && (await byText.isVisible({ timeout: timeoutMs }))) return true;
-  } catch {
-    // ignore
-  }
+  } catch {}
 
   return false;
 }
 
-// ---- Redirection -> /paywall ----
-function normalizePath(p: string): string {
+function normalizePathForCompare(p: string): string {
   if (!p) return "/";
   let n = p.replace(/\/{2,}/g, "/");
   if (!n.startsWith("/")) n = "/" + n;
@@ -316,7 +714,8 @@ export function expectRedirectToPaywall(res: ResLike | null | undefined, fromPat
     expect(u.pathname).toBe("/paywall");
 
     const from = u.searchParams.get("from");
-    const fromSame = normalizePath(decodeURIComponent(from ?? "")) === normalizePath(fromPath);
+    const fromSame =
+      normalizePathForCompare(decodeURIComponent(from ?? "")) === normalizePathForCompare(fromPath);
     expect(fromSame).toBeTruthy();
     return;
   }
@@ -324,7 +723,6 @@ export function expectRedirectToPaywall(res: ResLike | null | undefined, fromPat
   expect(xPaywall && xPaywall !== "0").toBeTruthy();
 }
 
-// Chaîne de redirections: récupère la première Response (celle du 307/302 initial)
 export async function firstRedirectResponse(
   res: import("@playwright/test").Response | null,
 ): Promise<import("@playwright/test").Response | null> {

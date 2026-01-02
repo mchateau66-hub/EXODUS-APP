@@ -17,22 +17,8 @@ type ComposerProps = {
   onSend: (payload: { text: string }) => Promise<void> | void
   disabled?: boolean
   error?: string | null
-
-  /**
-   * Optionnel (UX++) : si tu veux piloter explicitement l’état.
-   * Sinon, on tente d’inférer depuis `error`.
-   */
   mode?: ComposerMode
-
-  /**
-   * Optionnel : lien de paywall (par défaut /paywall?next=/messages)
-   */
   upgradeHref?: string
-
-  /**
-   * Optionnel : tu peux afficher le quota ici si tu veux.
-   * (ex: remainingToday, dailyLimit)
-   */
   quotaRemaining?: number | null
   quotaLimit?: number | null
 } & HTMLAttributes<HTMLFormElement>
@@ -50,14 +36,10 @@ export default function Composer({
   const [text, setText] = useState('')
   const [sending, setSending] = useState(false)
 
-  // Entitlements côté client
   const { data: ent } = useEntitlements()
   const features = ent?.features ?? []
   const plan = ent?.plan ?? 'free'
 
-  // ✅ On peut révéler la PII si :
-  //  - on a explicitement 'messages.unlimited'
-  //  - ou le plan est master/premium (au cas où ton /api/entitlements encode ça comme tel)
   const hasMessagesUnlimited = features.includes('messages.unlimited' as any)
   const isPaidPlan = plan === 'master' || plan === 'premium'
   const canReveal = hasMessagesUnlimited || isPaidPlan
@@ -65,22 +47,14 @@ export default function Composer({
   const inferredMode: ComposerMode = useMemo(() => {
     if (mode) return mode
     const msg = (error ?? '').toLowerCase()
-
-    // heuristique simple (rétro-compatible)
-    if (msg.includes('essai') || msg.includes('période d’essai') || msg.includes('trial')) {
-      return 'trial_expired'
-    }
-    if (msg.includes('limite') || msg.includes('quota') || msg.includes('messages restants')) {
-      return 'quota'
-    }
-    if (msg.includes('ne peut plus accepter') || msg.includes('nouveaux athlètes')) {
-      return 'coach_limit'
-    }
+    if (msg.includes('essai') || msg.includes('période d’essai') || msg.includes('trial')) return 'trial_expired'
+    if (msg.includes('limite') || msg.includes('quota') || msg.includes('messages restants')) return 'quota'
+    if (msg.includes('ne peut plus accepter') || msg.includes('nouveaux athlètes')) return 'coach_limit'
     return 'default'
   }, [mode, error])
 
-  const blocked = !!disabled && !sending
   const canSend = !disabled && !sending && text.trim().length > 0
+  const blocked = !!disabled && !sending
 
   const showUpgradeCta =
     blocked &&
@@ -89,56 +63,30 @@ export default function Composer({
 
   const placeholder = useMemo(() => {
     if (blocked) {
-      if (inferredMode === 'trial_expired') {
-        return 'Essai terminé : déverrouille la messagerie pour continuer…'
-      }
-      if (inferredMode === 'quota') {
-        return 'Quota atteint : passe en illimité pour continuer…'
-      }
+      if (inferredMode === 'trial_expired') return 'Essai terminé : déverrouille la messagerie pour continuer…'
+      if (inferredMode === 'quota') return 'Quota atteint : passe en illimité pour continuer…'
       return 'Messagerie momentanément indisponible…'
     }
-
-    return canReveal
-      ? 'Votre message au coach…'
-      : "Plan Free : emails/téléphones/pseudos seront masqués."
+    return canReveal ? 'Votre message au coach…' : "Plan Free : emails/téléphones/pseudos seront masqués."
   }, [blocked, inferredMode, canReveal])
 
   const headerHint = useMemo(() => {
     if (!blocked) return null
 
     if (inferredMode === 'trial_expired') {
-      return {
-        tone: 'danger' as const,
-        title: 'Essai terminé',
-        subtitle: 'Passe en Premium pour envoyer de nouveaux messages.',
-      }
+      return { tone: 'danger' as const, title: 'Essai terminé', subtitle: 'Passe en Premium pour envoyer de nouveaux messages.' }
     }
-
     if (inferredMode === 'quota') {
       const quotaLine =
         typeof quotaRemaining === 'number' && typeof quotaLimit === 'number'
           ? `Quota : ${Math.max(0, quotaRemaining)}/${quotaLimit} restant(s)`
           : 'Quota du plan Free atteint.'
-      return {
-        tone: 'warning' as const,
-        title: 'Quota atteint',
-        subtitle: quotaLine,
-      }
+      return { tone: 'warning' as const, title: 'Quota atteint', subtitle: quotaLine }
     }
-
     if (inferredMode === 'coach_limit') {
-      return {
-        tone: 'warning' as const,
-        title: 'Coach indisponible',
-        subtitle: "Ce coach a atteint sa limite d’athlètes sur son plan actuel.",
-      }
+      return { tone: 'warning' as const, title: 'Coach indisponible', subtitle: "Ce coach a atteint sa limite d’athlètes sur son plan actuel." }
     }
-
-    return {
-      tone: 'neutral' as const,
-      title: 'Envoi désactivé',
-      subtitle: 'Tu peux toujours lire l’historique.',
-    }
+    return { tone: 'neutral' as const, title: 'Envoi désactivé', subtitle: 'Tu peux toujours lire l’historique.' }
   }, [blocked, inferredMode, quotaRemaining, quotaLimit])
 
   async function handleSubmit(e?: FormEvent) {
@@ -146,8 +94,6 @@ export default function Composer({
     if (!canSend) return
 
     const raw = text.trim()
-
-    // 🛡 On masque les PII si l’utilisateur n’a pas encore débloqué la messagerie illimitée
     const safeText = maskPII(raw, canReveal)
 
     setSending(true)
@@ -163,7 +109,6 @@ export default function Composer({
 
   function handleKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
     if (disabled) return
-
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       void handleSubmit()
@@ -202,6 +147,7 @@ export default function Composer({
       <div className="flex items-end gap-2">
         <div className="flex-1">
           <textarea
+            data-testid="composer-input"
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={handleKeyDown}
@@ -217,8 +163,7 @@ export default function Composer({
 
           {!canReveal && !blocked && (
             <p className="mt-0.5 text-[10px] text-slate-500">
-              Les emails et numéros de téléphone sont masqués tant que vous n’avez pas débloqué la
-              messagerie illimitée.
+              Les emails et numéros de téléphone sont masqués tant que vous n’avez pas débloqué la messagerie illimitée.
             </p>
           )}
 
@@ -226,6 +171,7 @@ export default function Composer({
         </div>
 
         <button
+          data-testid="composer-send"
           type="submit"
           disabled={!canSend}
           className={`mb-1 inline-flex h-9 items-center rounded-2xl px-4 text-sm font-medium ${

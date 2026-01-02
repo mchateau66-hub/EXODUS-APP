@@ -1,32 +1,37 @@
 // e2e/ratelimit.spec.ts
-import { test, expect } from '@playwright/test';
+import { test, expect } from "@playwright/test";
 import {
   BASE_URL,
+  IS_REMOTE_BASE,
   waitForHealth,
   login,
   getHeader,
   setSessionCookieFromEnv,
-} from './helpers';
+} from "./helpers";
 
-const FEATURE = (process.env.E2E_SAT_FEATURE?.trim() || 'chat.media') as string;
+const FEATURE = (process.env.E2E_SAT_FEATURE?.trim() || "chat.media") as string;
 const HAS_SESSION_COOKIE = Boolean(process.env.E2E_SESSION_COOKIE?.trim());
+const ALLOW_REMOTE = process.env.E2E_ALLOW_REMOTE_RATELIMIT === "1";
 
-async function ensureAuth(page: any, plan: 'free' | 'master' | 'premium' = 'premium') {
+async function ensureAuth(page: any, plan: "free" | "master" | "premium" = "premium") {
+  if (IS_REMOTE_BASE) return;
   if (HAS_SESSION_COOKIE) return;
   await login(page, { plan });
 }
 
-test.describe('Rate-limit /api/sat', () => {
+test.describe("Rate-limit /api/sat", () => {
   test.beforeAll(async () => {
-    await waitForHealth(BASE_URL, process.env.E2E_SMOKE_PATH ?? '/api/health', 20_000);
+    await waitForHealth(BASE_URL, process.env.E2E_SMOKE_PATH ?? "/api/health", 20_000);
   });
 
   test.beforeEach(async ({ context }) => {
     await setSessionCookieFromEnv(context);
   });
 
-  test('Burst /api/sat → finit par 429 (ou remaining descend)', async ({ page }) => {
-    await ensureAuth(page, 'premium');
+  test("Burst /api/sat → finit par 429 (ou remaining descend)", async ({ page }) => {
+    test.skip(IS_REMOTE_BASE && !ALLOW_REMOTE, "Rate-limit headers/behavior may be filtered on remote. Set E2E_ALLOW_REMOTE_RATELIMIT=1 to force.");
+
+    await ensureAuth(page, "premium");
 
     let hit429 = false;
     let sawRateHeaders = false;
@@ -34,14 +39,18 @@ test.describe('Rate-limit /api/sat', () => {
     let remainingLast: number | null = null;
 
     for (let i = 0; i < 50; i++) {
-      const r = await page.request.post('/api/sat', {
-        headers: { origin: BASE_URL },
-        data: { feature: FEATURE, method: 'POST', path: '/api/messages' },
+      const r = await page.request.post("/api/sat", {
+        headers: {
+          origin: BASE_URL,
+          "content-type": "application/json",
+          "x-e2e": "1",
+        },
+        data: { feature: FEATURE, method: "POST", path: "/api/messages" },
       });
 
-      const limit = getHeader(r, 'ratelimit-limit') ?? getHeader(r, 'RateLimit-Limit');
-      const remaining = getHeader(r, 'ratelimit-remaining') ?? getHeader(r, 'RateLimit-Remaining');
-      const reset = getHeader(r, 'ratelimit-reset') ?? getHeader(r, 'RateLimit-Reset');
+      const limit = getHeader(r, "ratelimit-limit") ?? getHeader(r, "RateLimit-Limit");
+      const remaining = getHeader(r, "ratelimit-remaining") ?? getHeader(r, "RateLimit-Remaining");
+      const reset = getHeader(r, "ratelimit-reset") ?? getHeader(r, "RateLimit-Reset");
 
       if (limit && remaining && reset) sawRateHeaders = true;
 
@@ -57,13 +66,11 @@ test.describe('Rate-limit /api/sat', () => {
       }
     }
 
-    // Cas idéal: 429 atteint
     if (hit429) {
       expect(hit429).toBeTruthy();
       return;
     }
 
-    // Cas tolérant: pas de 429 (limite augmentée côté serveur) => au moins headers + remaining qui baisse
     expect(sawRateHeaders).toBeTruthy();
     if (remainingFirst !== null && remainingLast !== null) {
       expect(remainingLast).toBeLessThanOrEqual(remainingFirst);

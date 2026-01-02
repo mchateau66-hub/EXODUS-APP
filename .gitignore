@@ -47,3 +47,8 @@ blob-report/
 
 # CI tmp/backups
 .github/workflows/*.backup.*
+playwright-report/
+test-results/
+playwright-traces*/
+playwright-report-*/
+.next/
