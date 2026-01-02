@@ -45,7 +45,7 @@ env:
   NODE_VERSION: "20"
   PNPM_VERSION: "9.15.9"
 
-  # Fallback si vars/input vides (workflow_dispatch)
+  # Fallback si vars/input vides
   E2E_BASE_URL_FALLBACK: https://exodus-app.vercel.app
 
 jobs:
@@ -93,7 +93,6 @@ jobs:
             exit 1
           fi
 
-          # smoke_path: input > vars > default
           SMOKE_PATH_RAW="${INPUT_SMOKE_PATH:-${VAR_SMOKE_PATH:-/api/health}}"
           SMOKE_PATH="$(echo "${SMOKE_PATH_RAW}" | tr -d '[:space:]')"
           if [ -z "${SMOKE_PATH:-}" ]; then SMOKE_PATH="/api/health"; fi
@@ -115,10 +114,9 @@ jobs:
             exit 1
           fi
 
-          export SHARDS
-          SHARD_MATRIX="$(python3 - <<'PY'
-          import json, os
-          n = int(os.environ.get("SHARDS", "4"))
+          SHARD_MATRIX="$(python3 - <<PY
+          import json
+          n=int("$SHARDS")
           print(json.dumps(list(range(1, n+1))))
           PY
           )"
@@ -143,14 +141,12 @@ jobs:
         env:
           BASE: ${{ needs.cfg.outputs.base }}
           SMOKE_PATH: ${{ needs.cfg.outputs.smoke_path }}
-          E2E_DEV_LOGIN_TOKEN: ${{ secrets.E2E_DEV_LOGIN_TOKEN }}
           VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
         run: |
           set -euo pipefail
 
           echo "[preflight] base=$BASE"
           echo "[preflight] smoke_path=$SMOKE_PATH"
-          echo "[preflight] has_e2e_token=$([ -n "${E2E_DEV_LOGIN_TOKEN:-}" ] && echo yes || echo no)"
           echo "[preflight] has_vercel_bypass=$([ -n "${VERCEL_AUTOMATION_BYPASS_SECRET:-}" ] && echo yes || echo no)"
 
           HOST="$(python3 - <<'PY'
@@ -166,15 +162,12 @@ jobs:
             exit 1
           fi
 
-          hdrs=(-H "x-e2e: 1")
-          if [ -n "${E2E_DEV_LOGIN_TOKEN:-}" ]; then
-            hdrs+=(-H "x-e2e-token: ${E2E_DEV_LOGIN_TOKEN}")
-          fi
+          hdrs=()
           if [ -n "${VERCEL_AUTOMATION_BYPASS_SECRET:-}" ]; then
-            hdrs+=(-H "x-vercel-protection-bypass: ${VERCEL_AUTOMATION_BYPASS_SECRET}")
+            hdrs=(-H "x-vercel-protection-bypass: ${VERCEL_AUTOMATION_BYPASS_SECRET}")
           fi
 
-          fetch_code () {
+          curl_code () {
             local url="$1"
             rm -f /tmp/pw_body.txt /tmp/pw_headers.txt || true
             curl -sS -L \
@@ -187,64 +180,70 @@ jobs:
               "$url" || echo "000"
           }
 
-          # 1) Trouver un endpoint health qui répond 2xx
-          candidates=()
-          # priorité à SMOKE_PATH, puis fallbacks connus
-          candidates+=("$SMOKE_PATH")
-          candidates+=("/api/health" "/api/healthz" "/api/status" "/api/health/ready")
-
-          ok="0"
-          last=""
-          for p in "${candidates[@]}"; do
-            # normalise
-            p="$(echo "$p" | tr -d '[:space:]')"
-            [ -z "$p" ] && continue
-            [[ "$p" != /* ]] && p="/$p"
-
-            url="$BASE$p"
-            code="$(fetch_code "$url")"
-            last="$url -> $code"
-            echo "[preflight] $last"
-
+          check_root () {
+            local code
+            code="$(curl_code "$BASE/")"
+            echo "[preflight] GET / => $code"
+            if [ "$code" = "000" ]; then
+              echo "::error::Cannot reach $BASE/ (network/DNS/TLS)."
+              exit 1
+            fi
             if [ "$code" = "401" ] && grep -qi "Authentication Required" /tmp/pw_body.txt; then
               echo "::error::Vercel Deployment Protection bloque la Preview (401 Authentication Required)."
               echo "➡️ Configure VERCEL_AUTOMATION_BYPASS_SECRET dans GitHub Secrets."
               exit 1
             fi
+          }
 
-            if [ "$code" = "404" ] && (grep -qi "DEPLOYMENT_NOT_FOUND" /tmp/pw_body.txt || grep -Eqi '^x-vercel-error:\s*DEPLOYMENT_NOT_FOUND' /tmp/pw_headers.txt); then
-              echo "::error::DEPLOYMENT_NOT_FOUND: URL invalide ou déploiement supprimé."
+          check_smoke_any () {
+            local paths=(
+              "$SMOKE_PATH"
+              "/api/health"
+              "/api/healthz"
+              "/api/status"
+            )
+
+            local ok="0"
+            local last=""
+            for p in "${paths[@]}"; do
+              p="$(echo "$p" | tr -d '[:space:]')"
+              [ -z "$p" ] && continue
+              case "$p" in /*) : ;; *) p="/$p" ;; esac
+
+              local url="$BASE$p"
+              local code
+              code="$(curl_code "$url")"
+              last="$p -> $code"
+              echo "[preflight] GET $p => $code"
+
+              if [ "$code" = "401" ] && grep -qi "Authentication Required" /tmp/pw_body.txt; then
+                echo "::error::Vercel Deployment Protection bloque la Preview (401 Authentication Required)."
+                echo "➡️ Configure VERCEL_AUTOMATION_BYPASS_SECRET dans GitHub Secrets."
+                exit 1
+              fi
+
+              if [ "$code" -ge 200 ] && [ "$code" -lt 400 ]; then
+                ok="1"
+                break
+              fi
+            done
+
+            if [ "$ok" != "1" ]; then
+              echo "::error::No health endpoint returned 2xx/3xx. Last=$last"
+              echo "➡️ Mets smoke_path sur un endpoint existant (ex: /api/health ou /api/healthz)."
               exit 1
             fi
+          }
 
-            if [ "$code" -ge 200 ] && [ "$code" -lt 300 ]; then
-              ok="1"
-              echo "[preflight] health ok on $p"
-              break
-            fi
-          done
-
-          if [ "$ok" != "1" ]; then
-            echo "::error::No health endpoint returned 2xx. Last=$last"
-            echo "➡️ Mets un smoke_path valide (workflow input ou vars.E2E_SMOKE_PATH) OU rends /api/health public."
-            exit 1
-          fi
-
-          # 2) Vérifie aussi que la home répond (pas bloquée par 401 protection)
-          code="$(fetch_code "$BASE/")"
-          echo "[preflight] $BASE/ -> $code"
-          if [ "$code" = "401" ] && grep -qi "Authentication Required" /tmp/pw_body.txt; then
-            echo "::error::Vercel Deployment Protection bloque la Preview (401 Authentication Required) sur /."
-            echo "➡️ Configure VERCEL_AUTOMATION_BYPASS_SECRET."
-            exit 1
-          fi
-
+          check_root
+          check_smoke_any
           echo "[preflight] OK"
 
   e2e-smoke-local:
-    name: E2E Smoke - local (chromium)
+    # ⚠️ IMPORTANT: ce nom doit matcher le Required Check de ta protection de branche
+    name: E2E Smoke (chromium)
     needs: [cfg]
-    if: ${{ needs.cfg.outputs.mode == 'smoke' && needs.cfg.outputs.webserver == '1' && github.event.pull_request.head.repo.fork == false }}
+    if: ${{ needs.cfg.outputs.mode == 'smoke' && needs.cfg.outputs.webserver == '1' }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
 
@@ -265,6 +264,8 @@ jobs:
 
     env:
       CI: "true"
+      PW_USE_WEBSERVER: "0"
+
       E2E_BASE_URL: ${{ needs.cfg.outputs.base }}
       E2E_SMOKE_PATH: ${{ needs.cfg.outputs.smoke_path }}
 
@@ -281,7 +282,6 @@ jobs:
 
       - name: Enable Corepack + pin pnpm
         run: |
-          set -euo pipefail
           corepack enable
           corepack prepare pnpm@${{ env.PNPM_VERSION }} --activate
           pnpm -v
@@ -317,38 +317,43 @@ jobs:
           pnpm exec prisma migrate deploy
           pnpm exec prisma db seed || true
 
-      - name: Start Next server
+      - name: Start Next server (wait ready)
         run: |
           set -euo pipefail
           nohup pnpm exec next dev -p 3000 --hostname 127.0.0.1 > .next-server.log 2>&1 &
           echo $! > .next-server.pid
 
-          # on teste plusieurs endpoints (car /api/health/ready peut ne pas exister)
-          CANDIDATES=(
+          echo "[server] wait ready (tries health candidates)"
+          candidates=(
             "${E2E_SMOKE_PATH}"
             "/api/health"
             "/api/healthz"
             "/api/status"
-            "/api/health/ready"
+            "/"
           )
 
-          echo "[server] wait health (candidates) ..."
+          ok="0"
           for i in $(seq 1 60); do
-            for p in "${CANDIDATES[@]}"; do
+            for p in "${candidates[@]}"; do
               p="$(echo "$p" | tr -d '[:space:]')"
               [ -z "$p" ] && continue
-              [[ "$p" != /* ]] && p="/$p"
-              if curl -fsS -H "x-e2e: 1" "http://127.0.0.1:3000${p}" >/dev/null; then
-                echo "[server] ready on ${p}"
-                exit 0
+              case "$p" in /*) : ;; *) p="/$p" ;; esac
+              code="$(curl -sS -o /dev/null -w "%{http_code}" --max-time 4 "http://127.0.0.1:3000${p}" || echo 000)"
+              if [ "$code" -ge 200 ] && [ "$code" -lt 400 ]; then
+                echo "[server] ready on $p ($code)"
+                ok="1"
+                break
               fi
             done
+            [ "$ok" = "1" ] && break
             sleep 2
           done
 
-          echo "[server] NOT ready - last logs:"
-          tail -n 200 .next-server.log || true
-          exit 1
+          if [ "$ok" != "1" ]; then
+            echo "[server] NOT ready - last logs:"
+            tail -n 200 .next-server.log || true
+            exit 1
+          fi
 
       - name: Debug env (no secrets)
         run: |
@@ -362,7 +367,7 @@ jobs:
         if: always()
         run: |
           if [ -f .next-server.pid ]; then kill "$(cat .next-server.pid)" || true; fi
-          tail -n 160 .next-server.log || true
+          tail -n 120 .next-server.log || true
 
       - name: Upload artifacts
         if: always()
@@ -385,6 +390,8 @@ jobs:
 
     env:
       CI: "true"
+      PW_USE_WEBSERVER: "0"
+
       E2E_BASE_URL: ${{ needs.cfg.outputs.base }}
       E2E_SMOKE_PATH: ${{ needs.cfg.outputs.smoke_path }}
       E2E_DEV_LOGIN_TOKEN: ${{ secrets.E2E_DEV_LOGIN_TOKEN }}
@@ -399,7 +406,6 @@ jobs:
 
       - name: Enable Corepack + pin pnpm
         run: |
-          set -euo pipefail
           corepack enable
           corepack prepare pnpm@${{ env.PNPM_VERSION }} --activate
           pnpm -v
@@ -478,6 +484,8 @@ jobs:
 
     env:
       CI: "true"
+      PW_USE_WEBSERVER: "0"
+
       E2E_BASE_URL: ${{ needs.cfg.outputs.base }}
       E2E_SMOKE_PATH: ${{ needs.cfg.outputs.smoke_path }}
       E2E_DEV_LOGIN_TOKEN: ${{ secrets.E2E_DEV_LOGIN_TOKEN }}
@@ -492,7 +500,6 @@ jobs:
 
       - name: Enable Corepack + pin pnpm
         run: |
-          set -euo pipefail
           corepack enable
           corepack prepare pnpm@${{ env.PNPM_VERSION }} --activate
           pnpm -v
@@ -540,9 +547,6 @@ jobs:
           echo "[env] shard=${{ matrix.shardIndex }}/${{ needs.cfg.outputs.shards }}"
           echo "[env] E2E_BASE_URL=$E2E_BASE_URL"
           echo "[env] E2E_SMOKE_PATH=$E2E_SMOKE_PATH"
-          echo "[env] hasE2EToken=$([ -n "${E2E_DEV_LOGIN_TOKEN:-}" ] && echo yes || echo no)"
-          echo "[env] hasVercelBypass=$([ -n "${VERCEL_AUTOMATION_BYPASS_SECRET:-}" ] && echo yes || echo no)"
-          echo "[env] E2E_SESSION_COOKIE set? $([ -n "${E2E_SESSION_COOKIE:-}" ] && echo yes || echo no)"
 
       - name: Run Playwright full suite (shard) + blob report
         run: |
@@ -585,21 +589,9 @@ jobs:
 
       - name: Enable Corepack + pin pnpm
         run: |
-          set -euo pipefail
           corepack enable
           corepack prepare pnpm@${{ env.PNPM_VERSION }} --activate
           pnpm -v
-
-      - name: Get pnpm store path
-        id: pnpm-store
-        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
-
-      - uses: actions/cache@v4
-        with:
-          path: ${{ steps.pnpm-store.outputs.path }}
-          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-pnpm-store-
 
       - name: Install deps (for playwright CLI)
         run: pnpm install --frozen-lockfile
