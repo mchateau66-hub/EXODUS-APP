@@ -18,7 +18,7 @@ import {
  *  login, logout, setSessionCookieFromEnv,
  *  isPaywallVisible, expectRedirectToPaywall, firstRedirectResponse
  *
- * Extras (nouveaux):
+ * Extras:
  *  ORIGIN, originHeaders, envBool, envInt,
  *  ensureAnon, setPlanCookie,
  *  acquireSatToken
@@ -188,6 +188,31 @@ export async function gotoOk(
 }
 
 // ------------------------------
+// Headers same-origin + x-e2e + (optional) vercel bypass + (optional) e2e-token
+// ------------------------------
+export function originHeaders(baseUrl: string = BASE_URL): Record<string, string> {
+  const origin = new URL(baseUrl).origin;
+
+  const headers: Record<string, string> = {
+    accept: "application/json",
+    "content-type": "application/json",
+    origin,
+    referer: `${origin}/`,
+    "x-e2e": "1",
+  };
+
+  // ✅ Vercel Deployment Protection bypass (Preview protégée)
+  const bypass = (process.env.VERCEL_AUTOMATION_BYPASS_SECRET ?? "").trim();
+  if (bypass) headers["x-vercel-protection-bypass"] = bypass;
+
+  // ✅ Backdoor token (/api/e2e/login via rewrite /api/login)
+  const token = (process.env.E2E_DEV_LOGIN_TOKEN ?? "").trim();
+  if (token) headers["x-e2e-token"] = token;
+
+  return headers;
+}
+
+// ------------------------------
 // Healthcheck robuste (candidates + retry)
 // ------------------------------
 function buildHealthCandidates(primary: string) {
@@ -220,6 +245,8 @@ export async function waitForHealth(
   const client = await request.newContext({
     baseURL: base,
     ignoreHTTPSErrors: envBool("E2E_IGNORE_HTTPS_ERRORS", false),
+    // ✅ si Preview protégée, le bypass doit aussi passer sur le healthcheck
+    extraHTTPHeaders: originHeaders(base),
   });
 
   const deadline = Date.now() + timeoutMs;
@@ -228,7 +255,7 @@ export async function waitForHealth(
   while (Date.now() < deadline) {
     for (const p of paths) {
       try {
-        const res = await client.get(p, { timeout: 6_000, headers: { accept: "application/json" } });
+        const res = await client.get(p, { timeout: 6_000 });
         const st = res.status();
         last = { url: `${base}${p}`, status: st };
 
@@ -254,20 +281,6 @@ export async function waitForHealth(
 }
 
 // ------------------------------
-// Headers same-origin + x-e2e
-// ------------------------------
-export function originHeaders(baseUrl: string = BASE_URL): Record<string, string> {
-  const origin = new URL(baseUrl).origin;
-  return {
-    accept: "application/json",
-    "content-type": "application/json",
-    origin,
-    referer: `${origin}/`,
-    "x-e2e": "1",
-  };
-}
-
-// ------------------------------
 // Cookies helpers
 // ------------------------------
 function cookieUrlForBase(baseUrl: string) {
@@ -284,7 +297,7 @@ export async function setPlanCookie(
     {
       name: "plan",
       value: p,
-      url: cookieUrlForBase(baseUrl), // ✅ Playwright requires url OR domain+path
+      url: cookieUrlForBase(baseUrl),
       path: "/",
       httpOnly: false,
       sameSite: "Lax",
@@ -296,7 +309,6 @@ export async function setPlanCookie(
 export async function ensureAnon(page: Page): Promise<void> {
   await page.context().clearCookies();
 
-  // clear storages avant navigation
   await page.addInitScript(() => {
     try {
       window.localStorage?.clear();
@@ -362,7 +374,6 @@ export async function setSessionCookieFromEnv(
   const base = new URL(baseUrl);
   const origin = base.origin;
 
-  // Injecte tous les cookies donnés (souvent 1 seul: sid=...)
   const cookies: any[] = [];
   for (const line of lines) {
     const { name, value, attrs, cookiePath, sameSite } = parseCookieLine(line);
@@ -398,40 +409,85 @@ function normalizePlan(plan?: string) {
   return p;
 }
 
+/**
+ * login() stratégie:
+ * - Local : POST /api/login (backdoor) avec headers E2E
+ * - Remote :
+ *   - si E2E_SESSION_COOKIE présent => on l’injecte (ancien mode staging)
+ *   - sinon si E2E_DEV_LOGIN_TOKEN présent => on tente POST /api/login (rewrite -> /api/e2e/login)
+ *   - sinon => erreur explicite
+ */
 export async function login(
   page: Page,
-  data: { email?: string; plan?: string; maxAge?: number } = {},
+  data: { email?: string; plan?: string; maxAge?: number; maxAgeSeconds?: number } = {},
 ): Promise<APIResponse> {
   const plan = normalizePlan(data.plan);
-
-  // Remote: /api/login souvent désactivé => cookie requis
-  if (IS_REMOTE_BASE) {
-    const raw = process.env.E2E_SESSION_COOKIE?.trim() ?? "";
-    if (!raw) {
-      throw new Error(
-        `[e2e] login() called on REMOTE base (${BASE_URL}) but E2E_SESSION_COOKIE is empty.\n` +
-          `Solution: ajoute un secret E2E_SESSION_COOKIE (format "sid=...; Path=/; Secure; SameSite=Lax")\n` +
-          `ou skip les tests auth en remote.`,
-      );
-    }
-
-    // inject cookie (idempotent)
-    await setSessionCookieFromEnv(page.context(), BASE_URL);
-
-    // ping health pour valider "reachable"
-    const hp = normalizePath(process.env.E2E_SMOKE_PATH ?? E2E_SMOKE_PATH);
-    const res = await page.request.get(hp, { headers: { accept: "application/json" } });
-    expect(res.status(), `remote login reachability status=${res.status()}`).toBeLessThan(400);
-    return res;
-  }
-
-  // Local: backdoor login
   const email =
     (data.email ??
       process.env.E2E_TEST_EMAIL ??
       `e2e+${randomUUID()}@exodus.local`).trim();
 
-  const payload = { email, plan, maxAge: data.maxAge };
+  const maxAgeSeconds = (() => {
+    const v =
+      typeof data.maxAgeSeconds === "number" ? data.maxAgeSeconds :
+      typeof data.maxAge === "number" ? data.maxAge :
+      undefined;
+    return typeof v === "number" && Number.isFinite(v) && v > 0 ? Math.floor(v) : undefined;
+  })();
+
+  // ----------------
+  // REMOTE
+  // ----------------
+  if (IS_REMOTE_BASE) {
+    // 1) Cookie partagé (ancien mode)
+    const rawCookie = (process.env.E2E_SESSION_COOKIE ?? "").trim();
+    if (rawCookie) {
+      await setSessionCookieFromEnv(page.context(), BASE_URL);
+
+      // ping health (reachability)
+      const hp = normalizePath(process.env.E2E_SMOKE_PATH ?? E2E_SMOKE_PATH);
+      const res = await page.request.get(hp, { headers: originHeaders() });
+      expect(res.status(), `remote reachability status=${res.status()}`).toBeLessThan(400);
+      return res;
+    }
+
+    // 2) Backdoor token (Preview / staging autorisée)
+    const token = (process.env.E2E_DEV_LOGIN_TOKEN ?? "").trim();
+    if (token) {
+      const loginPath = normalizePath(process.env.E2E_DEV_LOGIN_PATH ?? "/api/login");
+
+      const payload: any = { email, plan };
+      if (maxAgeSeconds) payload.maxAgeSeconds = maxAgeSeconds;
+
+      const res = await page.request.post(loginPath, {
+        data: payload,
+        headers: originHeaders(),
+      });
+
+      if (res.status() >= 400) {
+        const body = await res.text().catch(() => "");
+        console.error(`[e2e] remote login failed: status=${res.status()} url=${res.url()}`);
+        console.error(body.slice(0, 1200));
+      }
+
+      expect(res.status(), `remote ${loginPath} status=${res.status()}`).toBeLessThan(400);
+      return res;
+    }
+
+    throw new Error(
+      `[e2e] login() on REMOTE base (${BASE_URL}) but no auth method is configured.\n` +
+        `Provide ONE of:\n` +
+        `  - E2E_SESSION_COOKIE (shared session cookie)\n` +
+        `  - E2E_DEV_LOGIN_TOKEN (+ ALLOW_DEV_LOGIN=1 on the deployment) for /api/e2e/login via rewrite\n` +
+        `Also, if Preview is protected, provide VERCEL_AUTOMATION_BYPASS_SECRET.`
+    );
+  }
+
+  // ----------------
+  // LOCAL
+  // ----------------
+  const payload: any = { email, plan };
+  if (maxAgeSeconds) payload.maxAgeSeconds = maxAgeSeconds;
 
   const res = await page.request.post("/api/login", {
     data: payload,
@@ -484,7 +540,7 @@ async function withFileLock<T>(
 
   while (true) {
     try {
-      const handle = await fs.open(lockFile, "wx"); // fail if exists
+      const handle = await fs.open(lockFile, "wx");
       try {
         return await fn();
       } finally {
@@ -507,25 +563,18 @@ function parseRateLimitResetMs(res: APIResponse) {
 
   if (!h) return null;
 
-  // Deux formats possibles:
-  // - epoch seconds
-  // - delta seconds (rare)
   const n = Number(h);
   if (!Number.isFinite(n) || n <= 0) return null;
 
-  // heuristique: si > 10^10 => ms, si > 10^9 => epoch seconds
   if (n > 1e12) return n - Date.now();
   if (n > 1e9) return n * 1000 - Date.now();
-  return n * 1000; // delta seconds
+  return n * 1000;
 }
 
 /**
  * Acquire SAT token avec:
  * - lock inter-workers (.pw/sat.lock)
  * - backoff exponentiel + respect ratelimit-reset si présent
- *
- * opts.payload: envoyé tel quel à /api/sat
- * opts.maxAttempts: défaut 8
  */
 export async function acquireSatToken(
   page: Page,
@@ -568,11 +617,10 @@ export async function acquireSatToken(
           return token;
         }
 
-        // 401/403 : session/entitlements/CSRF → pas de retry infini
         if (lastStatus === 401 || lastStatus === 403) {
           throw new Error(
             `[e2e] Unable to acquire SAT token (status=${lastStatus}). ` +
-              `Check session cookie / entitlements. body=${(lastBody || "").slice(0, 700)}`
+              `Check session cookie / entitlements / CSRF. body=${(lastBody || "").slice(0, 700)}`
           );
         }
 
@@ -590,7 +638,6 @@ export async function acquireSatToken(
           );
         }
 
-        // backoff: d’abord ratelimit-reset si dispo
         const resetMs = parseRateLimitResetMs(res);
         const exp = 250 * Math.pow(2, attempt - 1);
         const wait = Math.min(6_000, Math.max(350, resetMs ?? jitter(exp)));
@@ -647,7 +694,6 @@ export async function isPaywallVisible(
   return false;
 }
 
-// ---- Redirect -> /paywall ----
 function normalizePathForCompare(p: string): string {
   if (!p) return "/";
   let n = p.replace(/\/{2,}/g, "/");
