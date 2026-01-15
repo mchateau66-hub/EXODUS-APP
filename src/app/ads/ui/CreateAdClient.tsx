@@ -1,12 +1,26 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import dynamic from 'next/dynamic'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useRouter } from 'next/navigation'
 
-import L from 'leaflet'
-import { MapContainer, TileLayer, Marker, useMapEvents } from 'react-leaflet'
-
 type Defaults = { country: string; language: string }
+type Mode = 'create' | 'edit'
+
+type AdInitial = {
+  id?: string
+  title?: string | null
+  goal?: string | null
+  sport?: string | null
+  keywords?: any
+  country?: string | null
+  city?: string | null
+  language?: string | null
+  budget_min?: number | null
+  budget_max?: number | null
+  lat?: number | null
+  lng?: number | null
+}
 
 type PlaceItem = {
   id: string
@@ -29,11 +43,31 @@ const DEBUG_MAX_LINES = 30
 type ReverseBadgeKind = 'idle' | 'skip' | 'inflight' | 'ok' | 'fail' | 'abort'
 type ReverseBadge = { kind: ReverseBadgeKind; text: string; sub?: string; at: number }
 
+// ✅ LeafletPicker chargé uniquement côté navigateur
+const LeafletPicker = dynamic(() => import('./LeafletPicker'), {
+  ssr: false,
+  loading: () => (
+    <div className="flex h-[280px] w-full items-center justify-center text-sm text-slate-600">
+      Chargement de la carte…
+    </div>
+  ),
+})
+
 function splitKeywords(input: string) {
   return input
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean)
+}
+
+function keywordsToRaw(raw: any): string {
+  if (!raw) return ''
+  if (Array.isArray(raw)) return raw.map(String).filter(Boolean).join(', ')
+  if (typeof raw === 'object') {
+    const flat = Object.values(raw).flat().map(String).filter(Boolean)
+    return flat.join(', ')
+  }
+  return String(raw ?? '')
 }
 
 function toNumber(v: string): number | null {
@@ -66,47 +100,13 @@ function metersBetween(a: { lat: number; lng: number }, b: { lat: number; lng: n
   return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)))
 }
 
-/** Fix icônes Leaflet (Next + bundlers) */
-function ensureLeafletIcons() {
-  // @ts-ignore
-  delete (L.Icon.Default.prototype as any)._getIconUrl
-  L.Icon.Default.mergeOptions({
-    iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
-    iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
-    shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
-  })
-}
-
-function PickOnMap({ onPick }: { onPick: (lat: number, lng: number) => void }) {
-  useMapEvents({
-    click(e) {
-      onPick(e.latlng.lat, e.latlng.lng)
-    },
-  })
-  return null
-}
-
-function MapZoomWatcher({ onZoom }: { onZoom: (z: number) => void }) {
-  const map = useMapEvents({
-    zoomend() {
-      onZoom(map.getZoom())
-    },
-  })
-
-  useEffect(() => {
-    onZoom(map.getZoom())
-  }, [map, onZoom])
-
-  return null
-}
-
 function Badge({
   kind = 'neutral',
   children,
   title,
 }: {
   kind?: 'neutral' | 'good' | 'warn' | 'bad' | 'info'
-  children: React.ReactNode
+  children: ReactNode
   title?: string
 }) {
   const cls =
@@ -135,24 +135,35 @@ function kindToBadgeStyle(kind: ReverseBadgeKind): 'neutral' | 'good' | 'warn' |
   if (kind === 'inflight') return 'info'
   if (kind === 'skip') return 'warn'
   if (kind === 'fail') return 'bad'
-  if (kind === 'abort') return 'neutral'
   return 'neutral'
 }
 
-export default function CreateAdClient({ defaults }: { defaults: Defaults }) {
+export default function CreateAdClient({
+  defaults,
+  mode = 'create',
+  adId,
+  initial,
+}: {
+  defaults: Defaults
+  mode?: Mode
+  adId?: string
+  initial?: AdInitial
+}) {
   const router = useRouter()
+  const isEdit = mode === 'edit' && !!adId
 
-  const [title, setTitle] = useState('')
-  const [goal, setGoal] = useState('')
-  const [sport, setSport] = useState('')
-  const [keywordsRaw, setKeywordsRaw] = useState('')
+  const [title, setTitle] = useState(() => String(initial?.title ?? ''))
+  const [goal, setGoal] = useState(() => String(initial?.goal ?? ''))
+  const [sport, setSport] = useState(() => String(initial?.sport ?? ''))
+  const [keywordsRaw, setKeywordsRaw] = useState(() => keywordsToRaw(initial?.keywords))
 
-  const [country, setCountry] = useState(normCountry(defaults.country))
-  const [language, setLanguage] = useState(normLanguage(defaults.language))
+  const [country, setCountry] = useState(() => normCountry(String(initial?.country ?? defaults.country)))
+  const [language, setLanguage] = useState(() => normLanguage(String(initial?.language ?? defaults.language)))
 
   // Ville + autocomplete
-  const [city, setCity] = useState('')
-  const [cityTouched, setCityTouched] = useState(false)
+  const [city, setCity] = useState(() => String(initial?.city ?? ''))
+  const [cityTouched, setCityTouched] = useState(() => Boolean(initial?.city)) // edit: verrouillée si déjà remplie
+
   const [places, setPlaces] = useState<PlaceItem[]>([])
   const [placeLoading, setPlaceLoading] = useState(false)
   const [placeErr, setPlaceErr] = useState<string | null>(null)
@@ -161,8 +172,8 @@ export default function CreateAdClient({ defaults }: { defaults: Defaults }) {
   const placeDebounceRef = useRef<number | null>(null)
 
   // Localisation
-  const [latStr, setLatStr] = useState('')
-  const [lngStr, setLngStr] = useState('')
+  const [latStr, setLatStr] = useState(() => (typeof initial?.lat === 'number' ? initial.lat.toFixed(6) : ''))
+  const [lngStr, setLngStr] = useState(() => (typeof initial?.lng === 'number' ? initial.lng.toFixed(6) : ''))
   const [geoLoading, setGeoLoading] = useState(false)
 
   // Reverse geocode
@@ -171,7 +182,6 @@ export default function CreateAdClient({ defaults }: { defaults: Defaults }) {
   const lastReverseAttemptRef = useRef<{ lat: number; lng: number; at: number } | null>(null)
   const [reverseLoading, setReverseLoading] = useState(false)
 
-  // ✅ badges reverse
   const [reverseBadge, setReverseBadge] = useState<ReverseBadge>(() => ({
     kind: 'idle',
     text: 'Reverse: idle',
@@ -180,18 +190,18 @@ export default function CreateAdClient({ defaults }: { defaults: Defaults }) {
 
   // Map picker + zoom badge
   const [showMapPicker, setShowMapPicker] = useState(false)
-  const mapRef = useRef<L.Map | null>(null)
   const [mapZoom, setMapZoom] = useState<number | null>(null)
+  const [recenterNonce, setRecenterNonce] = useState(0)
 
   useEffect(() => {
     if (!showMapPicker) setMapZoom(null)
   }, [showMapPicker])
 
   // Budget (optionnel)
-  const [budgetMinStr, setBudgetMinStr] = useState('')
-  const [budgetMaxStr, setBudgetMaxStr] = useState('')
+  const [budgetMinStr, setBudgetMinStr] = useState(() => (initial?.budget_min != null ? String(initial.budget_min) : ''))
+  const [budgetMaxStr, setBudgetMaxStr] = useState(() => (initial?.budget_max != null ? String(initial.budget_max) : ''))
 
-  // Backend clamp 60 dans /api/ads
+  // Backend clamp 60 dans /api/ads (create uniquement)
   const [durationDays, setDurationDays] = useState(14)
 
   const [loading, setLoading] = useState(false)
@@ -210,24 +220,14 @@ export default function CreateAdClient({ defaults }: { defaults: Defaults }) {
     console.debug(full)
   }
 
-  useEffect(() => {
-    ensureLeafletIcons()
-  }, [])
-
   // auto-enable debug via URL
   useEffect(() => {
-    try {
-      const sp = new URLSearchParams(window.location.search)
-      if (sp.get('geoDebug') === '1') setDebug(true)
-    } catch {
-      // ignore
-    }
+    if (typeof window === 'undefined') return
+    const sp = new URLSearchParams(window.location.search)
+    if (sp.get('geoDebug') === '1') setDebug(true)
   }, [])
 
-  const keywordsPreview = useMemo(
-    () => splitKeywords(keywordsRaw).slice(0, 25),
-    [keywordsRaw]
-  )
+  const keywordsPreview = useMemo(() => splitKeywords(keywordsRaw).slice(0, 25), [keywordsRaw])
 
   const latNum = toNumber(latStr)
   const lngNum = toNumber(lngStr)
@@ -238,12 +238,13 @@ export default function CreateAdClient({ defaults }: { defaults: Defaults }) {
     return [48.8566, 2.3522]
   }, [hasCoords, latNum, lngNum])
 
-  function recenterIfOpen(lat: number, lng: number, zoom = 13) {
-    mapRef.current?.setView([lat, lng], zoom, { animate: true })
+  const mapZoomWanted = hasCoords ? 12 : 6
+
+  function requestRecenter() {
+    setRecenterNonce((n) => n + 1)
   }
 
   /**
-   * ✅ Règle finale:
    * reverse uniquement si >100m depuis la dernière tentative
    * + cooldown
    * + si carte ouverte => zoom >= REVERSE_ZOOM_MIN
@@ -253,23 +254,20 @@ export default function CreateAdClient({ defaults }: { defaults: Defaults }) {
     const reasons: string[] = []
     if (cityTouched) reasons.push('ville verrouillée')
 
-    const zoom = mapRef.current?.getZoom() ?? null
+    const zoom = showMapPicker ? mapZoom : null
     if (zoom !== null && zoom < REVERSE_ZOOM_MIN) reasons.push(`zoom ${zoom} < ${REVERSE_ZOOM_MIN}`)
 
     const now = Date.now()
     const last = lastReverseAttemptRef.current
 
-    let dist = null as number | null
-    let since = null as number | null
-
     if (last) {
-      dist = metersBetween({ lat: last.lat, lng: last.lng }, { lat, lng })
-      since = now - last.at
+      const dist = metersBetween({ lat: last.lat, lng: last.lng }, { lat, lng })
+      const since = now - last.at
       if (dist < REVERSE_MIN_METERS) reasons.push(`distance ${Math.round(dist)}m < ${REVERSE_MIN_METERS}m`)
       if (since < REVERSE_COOLDOWN_MS) reasons.push(`cooldown ${since}ms < ${REVERSE_COOLDOWN_MS}ms`)
     }
 
-    return { ok: reasons.length === 0, reasons, zoom, dist, since }
+    return { ok: reasons.length === 0, reasons }
   }
 
   async function reverseGeocode(lat: number, lng: number) {
@@ -288,7 +286,6 @@ export default function CreateAdClient({ defaults }: { defaults: Defaults }) {
       return
     }
 
-    // ✅ on mémorise la tentative tout de suite (même si échec)
     lastReverseAttemptRef.current = { lat, lng, at: Date.now() }
 
     reverseAbortRef.current?.abort()
@@ -345,16 +342,12 @@ export default function CreateAdClient({ defaults }: { defaults: Defaults }) {
     }
   }
 
-  function setCoords(
-    lat: number,
-    lng: number,
-    opts?: { recenter?: boolean; reverse?: boolean; reason?: string }
-  ) {
+  function setCoords(lat: number, lng: number, opts?: { recenter?: boolean; reverse?: boolean; reason?: string }) {
     setLatStr(lat.toFixed(6))
     setLngStr(lng.toFixed(6))
     dbg(`setCoords lat=${lat.toFixed(5)} lng=${lng.toFixed(5)} reason=${opts?.reason || 'n/a'}`)
 
-    if (opts?.recenter) recenterIfOpen(lat, lng, 12)
+    if (opts?.recenter) requestRecenter()
     if (opts?.reverse !== false) reverseGeocode(lat, lng)
   }
 
@@ -368,7 +361,7 @@ export default function CreateAdClient({ defaults }: { defaults: Defaults }) {
   async function useMyLocation() {
     setError(null)
 
-    if (!('geolocation' in navigator)) {
+    if (typeof navigator === 'undefined' || !('geolocation' in navigator)) {
       setError("La géolocalisation n’est pas supportée sur ce navigateur.")
       return
     }
@@ -466,9 +459,7 @@ export default function CreateAdClient({ defaults }: { defaults: Defaults }) {
 
       const bmin = toNumber(budgetMinStr)
       const bmax = toNumber(budgetMaxStr)
-      if (bmin !== null && bmax !== null && bmin > bmax) {
-        throw new Error('budget_min doit être <= budget_max.')
-      }
+      if (bmin !== null && bmax !== null && bmin > bmax) throw new Error('budget_min doit être <= budget_max.')
 
       const d = Math.max(1, Math.min(60, Math.round(durationDays || 14)))
 
@@ -484,18 +475,22 @@ export default function CreateAdClient({ defaults }: { defaults: Defaults }) {
         budget_max: bmax !== null ? Math.max(0, Math.round(bmax)) : null,
         lat,
         lng,
-        durationDays: d,
+        durationDays: d, // create only
       }
 
-      const r = await fetch('/api/ads', {
-        method: 'POST',
+      const url = isEdit ? `/api/ads/${adId}` : '/api/ads'
+      const method = isEdit ? 'PATCH' : 'POST'
+      const body = isEdit ? { action: 'update', ...payload } : payload
+
+      const r = await fetch(url, {
+        method,
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(payload),
+        body: JSON.stringify(body),
       })
 
       const json = await r.json().catch(() => null)
       if (!r.ok || json?.ok === false) {
-        const msg = json?.message || json?.error || 'Impossible de créer l’annonce'
+        const msg = json?.message || json?.error || 'Impossible de sauvegarder l’annonce'
         throw new Error(msg)
       }
 
@@ -559,17 +554,23 @@ export default function CreateAdClient({ defaults }: { defaults: Defaults }) {
             />
           </div>
 
-          <div>
-            <label className="text-sm font-medium">Durée (jours)</label>
-            <input
-              type="number"
-              className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2"
-              value={durationDays}
-              onChange={(e) => setDurationDays(parseInt(e.target.value || '14', 10))}
-              min={1}
-              max={60}
-            />
-          </div>
+          {mode === 'create' ? (
+            <div>
+              <label className="text-sm font-medium">Durée (jours)</label>
+              <input
+                type="number"
+                className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2"
+                value={durationDays}
+                onChange={(e) => setDurationDays(parseInt(e.target.value || '14', 10))}
+                min={1}
+                max={60}
+              />
+            </div>
+          ) : (
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
+              ℹ️ La durée se gère via “Relancer 7/30/90j” dans le Hub.
+            </div>
+          )}
         </div>
 
         <div>
@@ -581,8 +582,8 @@ export default function CreateAdClient({ defaults }: { defaults: Defaults }) {
           />
           {keywordsPreview.length > 0 && (
             <div className="mt-2 flex flex-wrap gap-2">
-              {keywordsPreview.map((k) => (
-                <span key={k} className="rounded-full bg-slate-100 px-2 py-1 text-xs text-slate-700">
+              {keywordsPreview.map((k, i) => (
+                <span key={`${k}-${i}`} className="rounded-full bg-slate-100 px-2 py-1 text-xs text-slate-700">
                   {k}
                 </span>
               ))}
@@ -626,7 +627,6 @@ export default function CreateAdClient({ defaults }: { defaults: Defaults }) {
             maxLength={80}
           />
 
-          {/* ✅ badges */}
           <div className="mt-2 flex flex-wrap gap-2">
             <Badge kind={cityBadgeKind} title="Si verrouillée, le reverse n'écrase pas la ville">
               {cityTouched ? 'Ville: verrouillée' : 'Ville: auto'}
@@ -650,8 +650,7 @@ export default function CreateAdClient({ defaults }: { defaults: Defaults }) {
           </div>
 
           <div className="mt-1 text-xs text-slate-500">
-            Reverse: &gt;{REVERSE_MIN_METERS}m depuis dernière tentative + cooldown {REVERSE_COOLDOWN_MS}ms
-            + zoom mini {REVERSE_ZOOM_MIN} si carte ouverte.
+            Reverse: &gt;{REVERSE_MIN_METERS}m + cooldown {REVERSE_COOLDOWN_MS}ms + zoom mini {REVERSE_ZOOM_MIN} si carte ouverte.
             {placeLoading ? ' (autocomplete…) ' : null}
             {reverseLoading ? ' (reverse…) ' : null}
             {placeErr ? <span className="text-red-600"> {placeErr}</span> : null}
@@ -659,9 +658,9 @@ export default function CreateAdClient({ defaults }: { defaults: Defaults }) {
 
           {showPlaces && places.length > 0 ? (
             <div className="absolute z-20 mt-2 w-full overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg">
-              {places.map((p) => (
+              {places.map((p, i) => (
                 <button
-                  key={p.id}
+                  key={`${p.id}-${i}`}
                   type="button"
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={() => selectPlace(p)}
@@ -747,7 +746,6 @@ export default function CreateAdClient({ defaults }: { defaults: Defaults }) {
             </div>
           </div>
 
-          {/* ✅ mini debug UI */}
           <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
             <div className="flex items-center justify-between gap-2">
               <label className="flex items-center gap-2 text-xs font-medium text-slate-700">
@@ -766,9 +764,7 @@ export default function CreateAdClient({ defaults }: { defaults: Defaults }) {
 
             {debug ? (
               <pre className="mt-2 max-h-44 overflow-auto whitespace-pre-wrap rounded-lg bg-white p-2 text-[11px] text-slate-700">
-                {debugLines.length
-                  ? debugLines.join('\n')
-                  : 'Aucun log pour le moment (clic carte / drag marker / geoloc).'}
+                {debugLines.length ? debugLines.join('\n') : 'Aucun log pour le moment.'}
               </pre>
             ) : null}
           </div>
@@ -776,43 +772,21 @@ export default function CreateAdClient({ defaults }: { defaults: Defaults }) {
           {showMapPicker ? (
             <div className="mt-3 overflow-hidden rounded-2xl border border-slate-200">
               <div className="h-[280px] w-full">
-                <MapContainer
+                <LeafletPicker
                   center={mapCenter}
-                  zoom={hasCoords ? 12 : 6}
-                  className="h-full w-full"
-                  ref={(map: L.Map | null) => {
-                    mapRef.current = map
+                  zoom={mapZoomWanted}
+                  marker={hasCoords ? { lat: latNum as number, lng: lngNum as number } : null}
+                  recenterNonce={recenterNonce}
+                  onZoom={setMapZoom}
+                  onPick={(lat, lng) => {
+                    setCityTouched(false)
+                    setCoords(lat, lng, { recenter: true, reverse: true, reason: 'map_click' })
                   }}
-                >
-                  <TileLayer
-                    attribution="&copy; OpenStreetMap"
-                    url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                  />
-
-                  <MapZoomWatcher onZoom={setMapZoom} />
-
-                  <PickOnMap
-                    onPick={(lat, lng) => {
-                      setCityTouched(false)
-                      setCoords(lat, lng, { recenter: true, reverse: true, reason: 'map_click' })
-                    }}
-                  />
-
-                  {hasCoords ? (
-                    <Marker
-                      position={[latNum as number, lngNum as number]}
-                      draggable
-                      eventHandlers={{
-                        dragend: (e) => {
-                          const m = e.target as L.Marker
-                          const p = m.getLatLng()
-                          setCityTouched(false)
-                          setCoords(p.lat, p.lng, { recenter: false, reverse: true, reason: 'marker_dragend' })
-                        },
-                      }}
-                    />
-                  ) : null}
-                </MapContainer>
+                  onDragEnd={(lat, lng) => {
+                    setCityTouched(false)
+                    setCoords(lat, lng, { recenter: false, reverse: true, reason: 'marker_dragend' })
+                  }}
+                />
               </div>
 
               <div className="bg-slate-50 px-3 py-2 text-xs text-slate-600">
@@ -857,7 +831,7 @@ export default function CreateAdClient({ defaults }: { defaults: Defaults }) {
           disabled={loading}
           className="inline-flex items-center justify-center rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
         >
-          {loading ? 'Publication…' : 'Publier l’annonce'}
+          {loading ? (isEdit ? 'Sauvegarde…' : 'Publication…') : isEdit ? 'Enregistrer' : 'Publier l’annonce'}
         </button>
       </div>
     </form>
