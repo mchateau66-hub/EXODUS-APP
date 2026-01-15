@@ -69,7 +69,6 @@ export async function createSessionResponseForUser<T extends Record<string, any>
   try {
     await createSessionRow(session, { id: sid, user_id: userId });
   } catch (err) {
-    // DB down / schema mismatch => réponse stable
     console.error("[auth] createSessionRow_failed", {
       name: (err as any)?.name,
       code: (err as any)?.code,
@@ -80,15 +79,13 @@ export async function createSessionResponseForUser<T extends Record<string, any>
     return res;
   }
 
-  // ✅ CRITIQUE : sid dans le JSON (utile E2E), sans PII
+  // ✅ sid dans le JSON (utile E2E), sans PII
   const res = NextResponse.json({ ...payload, sid }, { status: 200 });
   res.headers.set("cache-control", "no-store");
 
   const secure = secureCookieFromReq(req);
   const maxAge = opts.maxAgeSeconds ?? 60 * 60 * 24 * 30;
 
-  // ✅ Pose sur TOUS les noms candidats (sid/session/...)
-  // -> si ailleurs on lit "session" mais ici on posait "sid" uniquement, ça crée invalid_session.
   const names = SESSION_COOKIE_CANDIDATES.length ? SESSION_COOKIE_CANDIDATES : [DEFAULT_COOKIE_NAME];
 
   for (const name of names) {
@@ -96,7 +93,7 @@ export async function createSessionResponseForUser<T extends Record<string, any>
       httpOnly: true,
       sameSite: "lax",
       secure,
-      path: "/", // 🔥 essentiel (sinon cookie non envoyé sur /paywall, /pro, etc.)
+      path: "/",
       maxAge,
     });
   }
@@ -111,12 +108,10 @@ export async function deleteSessionBySid(sid: string) {
 }
 
 export async function getUserFromSession() {
-  // ✅ compatible Next (cookies() sync/async)
   const store = await Promise.resolve(nextCookies() as any);
 
   let sid: string | null = null;
 
-  // support multi-noms
   const names = SESSION_COOKIE_CANDIDATES.length ? SESSION_COOKIE_CANDIDATES : [DEFAULT_COOKIE_NAME];
 
   for (const name of names) {
@@ -140,9 +135,7 @@ export async function getUserFromSession() {
   if (!s?.user) return null;
 
   if (session.update) {
-    session
-      .update({ where: { id: sid }, data: { last_seen_at: new Date() } })
-      .catch(() => null);
+    session.update({ where: { id: sid }, data: { last_seen_at: new Date() } }).catch(() => null);
   }
 
   return { user: s.user, sid };
@@ -171,10 +164,6 @@ function expireCookie(
 
 /**
  * Efface les cookies de session (toutes variantes).
- * - On expire chaque cookie candidat en Secure=false ET Secure=true
- *   pour éviter les cas proxy/staging où un cookie Secure resterait présent.
- *
- * ⚠️ Signature backward-compatible: req optionnel.
  */
 export function clearSessionCookies(res: NextResponse, req?: NextRequest) {
   void req;

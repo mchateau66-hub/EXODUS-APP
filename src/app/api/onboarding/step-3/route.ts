@@ -77,6 +77,62 @@ function sanitizeUrl(v: unknown, max = 500) {
   }
 }
 
+function addDays(d: Date, days: number) {
+  return new Date(d.getTime() + days * 24 * 60 * 60 * 1000)
+}
+
+/**
+ * Grant 30j "Hub Map listing" aux coachs quand ils finalisent réellement l'étape 3.
+ * - Respecte la contrainte anti-overlap (EXCLUDE gist) : on UPDATE si déjà actif.
+ * - Ne re-grant pas si l'utilisateur édite son profil après coup.
+ */
+async function grantCoachHubMapTrialIfNeeded(tx: typeof prisma, userId: string) {
+  const now = new Date()
+  const trialDays = 30
+  const featureKey = "hub.map.listing"
+  const trialEnd = addDays(now, trialDays)
+
+  // Si déjà une entitlement active sur cette feature, on évite d'en créer une seconde (overlap).
+  const existingActive = await tx.userEntitlement.findFirst({
+    where: {
+      user_id: userId,
+      feature_key: featureKey,
+      starts_at: { lte: now },
+      OR: [{ expires_at: null }, { expires_at: { gt: now } }],
+    },
+    select: { id: true, source: true, expires_at: true },
+  })
+
+  if (existingActive) {
+    // Si c'est une promo déjà en cours, on peut éventuellement prolonger jusqu'à trialEnd.
+    if (existingActive.source === "promo") {
+      const currentExp = existingActive.expires_at
+      if (!currentExp || currentExp < trialEnd) {
+        await tx.userEntitlement.update({
+          where: { id: existingActive.id },
+          data: {
+            expires_at: trialEnd,
+            meta: { reason: "coach_trial_30d_extended_on_step3" },
+          },
+        })
+      }
+    }
+    return
+  }
+
+  // Sinon, on crée la promo 30j
+  await tx.userEntitlement.create({
+    data: {
+      user_id: userId,
+      feature_key: featureKey,
+      source: "promo",
+      starts_at: now,
+      expires_at: trialEnd,
+      meta: { reason: "coach_trial_30d_on_step3" },
+    },
+  })
+}
+
 /**
  * GET /api/onboarding/step-3
  * → Source de vérité DB (évite session stale)
@@ -147,6 +203,7 @@ export async function GET(_req: NextRequest) {
  * }
  *
  * → Met à jour le profil User + onboardingStep >= 3
+ * → si role=coach et passage réel à step3 : grant hub.map.listing (promo 30j)
  * → next = /hub (destination unique)
  */
 export async function POST(req: NextRequest) {
@@ -215,29 +272,40 @@ export async function POST(req: NextRequest) {
       : parsedKeywords
 
   const nextStep = currentStep < 3 ? 3 : currentStep
+  const isCompletingStep3Now = currentStep < 3 && nextStep === 3
+  const isCoach = String(dbUser.role ?? "").toLowerCase() === "coach"
 
-  const updated = await prisma.user.update({
-    where: { id: userId },
-    data: {
-      name: sanitizeText((body as any).name, 80) || null,
-      age,
-      country: sanitizeText((body as any).country, 80) || null,
-      language: sanitizeText((body as any).language, 20) || null,
-      avatarUrl: sanitizeUrl((body as any).avatarUrl, 500) || null,
-      bio: sanitizeBio((body as any).bio, 1200) || null,
-      keywords,
-      theme: rawTheme,
-      onboardingStep: nextStep,
-    },
-    select: {
-      id: true,
-      role: true,
-      onboardingStep: true,
-      name: true,
-      country: true,
-      language: true,
-      theme: true,
-    },
+  const updated = await prisma.$transaction(async (tx) => {
+    const u = await tx.user.update({
+      where: { id: userId },
+      data: {
+        name: sanitizeText((body as any).name, 80) || null,
+        age,
+        country: sanitizeText((body as any).country, 80) || null,
+        language: sanitizeText((body as any).language, 20) || null,
+        avatarUrl: sanitizeUrl((body as any).avatarUrl, 500) || null,
+        bio: sanitizeBio((body as any).bio, 1200) || null,
+        keywords,
+        theme: rawTheme,
+        onboardingStep: nextStep,
+      },
+      select: {
+        id: true,
+        role: true,
+        onboardingStep: true,
+        name: true,
+        country: true,
+        language: true,
+        theme: true,
+      },
+    })
+
+    // ✅ Grant promo Hub Map listing (30j) seulement au moment où le coach atteint l'étape 3
+    if (isCoach && isCompletingStep3Now) {
+      await grantCoachHubMapTrialIfNeeded(tx, userId)
+    }
+
+    return u
   })
 
   return NextResponse.json(

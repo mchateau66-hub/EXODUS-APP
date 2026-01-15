@@ -1,8 +1,9 @@
 // prisma/schema.prisma
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL") // pooled / pooler (runtime)
+  directUrl = env("DIRECT_URL")   // direct (migrations Prisma)
 }
 
 generator client {
@@ -42,10 +43,10 @@ enum Source {
 }
 
 enum CoachAthleteStatus {
-  LEAD // a commencé à parler / nouveau
-  ACTIVE // suivi en cours
+  LEAD      // a commencé à parler / nouveau
+  ACTIVE    // suivi en cours
   TO_FOLLOW // à relancer
-  ENDED // collaboration terminée
+  ENDED     // collaboration terminée
 }
 
 enum TrainingSessionStatus {
@@ -130,6 +131,9 @@ model User {
   // ✅ Documents coach (diplômes/certifs)
   coachDocuments         CoachDocument[]
   reviewedCoachDocuments CoachDocument[] @relation("CoachDocReviewer")
+
+  // ✅ Annonces athlètes (hub map)
+  athleteAds AthleteAd[]
 
   @@index([role])
 }
@@ -403,4 +407,47 @@ model CoachDocument {
 
   @@index([user_id])
   @@index([status])
+}
+
+/**
+ * ✅ AthleteAd (table SQL: athlete_ads)
+ * IMPORTANT: DB a "User".id en TEXT -> athlete_id = String
+ */
+model AthleteAd {
+  id String @id @default(uuid())
+
+  athlete_id String
+  athlete    User   @relation(fields: [athlete_id], references: [id], onDelete: Cascade)
+
+  title    String
+  goal     String @default("")
+  sport    String @default("")
+
+  // jsonb array côté DB: ["...","..."]
+  keywords Json @default(dbgenerated("'[]'::jsonb"))
+
+  country  String?
+  city     String?
+  language String?
+
+  budget_min Int?
+  budget_max Int?
+
+  lat Float?
+  lng Float?
+
+  status String @default("active")
+  published_until DateTime?
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  @@map("athlete_ads")
+  @@index([athlete_id])
+  @@index([country])
+  @@index([language])
+
+  // ✅ perf hub map (bbox + “active/non expirée”)
+  @@index([lat, lng])
+  @@index([status, published_until])
 }

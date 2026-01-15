@@ -9,9 +9,9 @@ type Role = "athlete" | "coach" | "admin";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 function devLoginEnabled() {
-  // Backdoor login uniquement dev/CI (ou si explicitement autorisé)
   return process.env.NODE_ENV !== "production" || process.env.ALLOW_DEV_LOGIN === "1";
 }
 
@@ -19,10 +19,11 @@ function isE2E(req: NextRequest): boolean {
   return (req.headers.get("x-e2e") ?? "").trim() === "1";
 }
 
-/**
- * Si E2E_DEV_LOGIN_TOKEN est défini (ex: sur Vercel), on exige le header x-e2e-token.
- * Sinon (local), on laisse passer sans token.
- */
+function isLocalhost(req: NextRequest): boolean {
+  const host = (req.headers.get("host") ?? "").toLowerCase();
+  return host.startsWith("localhost") || host.startsWith("127.0.0.1");
+}
+
 function tokenOk(req: NextRequest): boolean {
   const expected = (process.env.E2E_DEV_LOGIN_TOKEN ?? "").trim();
   if (!expected) return true;
@@ -30,7 +31,6 @@ function tokenOk(req: NextRequest): boolean {
   const got = (req.headers.get("x-e2e-token") ?? "").trim();
   if (!got) return false;
 
-  // compare “safe-ish”
   const a = Buffer.from(got);
   const b = Buffer.from(expected);
   if (a.length !== b.length) return false;
@@ -49,7 +49,10 @@ function pickRole(v: unknown): Role {
 }
 
 function isHttps(req: NextRequest): boolean {
-  return req.headers.get("x-forwarded-proto")?.split(",")[0]?.trim() === "https" || req.nextUrl.protocol === "https:";
+  return (
+    req.headers.get("x-forwarded-proto")?.split(",")[0]?.trim() === "https" ||
+    req.nextUrl.protocol === "https:"
+  );
 }
 
 function logPrismaError(err: unknown, meta: Record<string, unknown>) {
@@ -64,25 +67,37 @@ function logPrismaError(err: unknown, meta: Record<string, unknown>) {
 }
 
 export async function POST(req: NextRequest) {
-  // 1) caché en prod (sauf ALLOW_DEV_LOGIN=1)
   if (!devLoginEnabled()) return new Response("Not found", { status: 404 });
 
-  // 2) uniquement tests/CI via header x-e2e
-  if (!isE2E(req)) return new Response("Not found", { status: 404 });
+  const e2e = isE2E(req);
+  const local = isLocalhost(req);
+  const isProd = process.env.NODE_ENV === "production";
 
-  // 3) token (si défini)
-  if (!tokenOk(req)) return new Response("Not found", { status: 404 });
+  // prod => uniquement e2e (+ token si défini)
+  // dev => e2e ok (+ token si défini), sinon browser ok si localhost
+  if (isProd) {
+    if (!e2e) return new Response("Not found", { status: 404 });
+    if (!tokenOk(req)) return new Response("Not found", { status: 404 });
+  } else {
+    if (e2e) {
+      if (!tokenOk(req)) return new Response("Not found", { status: 404 });
+    } else {
+      if (!local && process.env.ALLOW_BROWSER_DEV_LOGIN !== "1") {
+        return new Response("Not found", { status: 404 });
+      }
+    }
+  }
 
   const body = (await req.json().catch(() => ({}))) as {
     email?: string;
     role?: Role;
     plan?: Plan | "pro";
     maxAgeSeconds?: number;
-    maxAge?: number; // compat ancienne payload
+    maxAge?: number;
   };
 
-  const email = String(body.email ?? `e2e@local.test`).toLowerCase().trim();
-  const role = pickRole(body.role ?? "admin");
+  const email = String(body.email ?? `dev@local.test`).toLowerCase().trim();
+  const role = pickRole(body.role ?? "athlete");
   const plan = pickPlan(body.plan);
 
   const rawMaxAge = body.maxAgeSeconds ?? body.maxAge;
@@ -95,8 +110,19 @@ export async function POST(req: NextRequest) {
   try {
     user = await prisma.user.upsert({
       where: { email },
-      update: { role },
-      create: { email, role },
+      update: {
+        role,
+        onboardingStep: 3,
+        country: "FR",
+        language: "fr",
+      },
+      create: {
+        email,
+        role,
+        onboardingStep: 3,
+        country: "FR",
+        language: "fr",
+      },
       select: { id: true, role: true },
     });
   } catch (err) {

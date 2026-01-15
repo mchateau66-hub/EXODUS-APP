@@ -2,6 +2,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { Suspense } from "react";
+import { Prisma } from "@prisma/client";
 import { requireOnboardingStep } from "@/lib/onboarding";
 import { getCoachMatchesForAthlete } from "@/lib/matching";
 import CoachFiltersClient from "./ui/CoachFiltersClient";
@@ -101,7 +102,11 @@ export default async function CoachsPage({
 
   // URL -> valeurs
   const q = getStringParam(searchParams, "q");
-  const country = getStringParam(searchParams, "country");
+
+  // ✅ pays par défaut = pays de l’utilisateur (si absent de l’URL)
+  const countryParam = getStringParam(searchParams, "country");
+  const defaultCountry = (user as any)?.country as string | undefined;
+  const country = countryParam || defaultCountry;
 
   const sports = getListParam(searchParams, "sport");
   const languages = getListParam(searchParams, "language");
@@ -154,6 +159,25 @@ export default async function CoachsPage({
     }
   }
 
+  // ✅ Gating visibilité hub/listing : feature `hub.map.listing`
+  // Fallback: si la vue SQL n’existe pas encore, on ne bloque pas l’affichage.
+  let allowedListingSet: Set<string> | null = null;
+  if (coachUserIds.length > 0) {
+    try {
+      const allowedRows = await prisma.$queryRaw<{ user_id: string }[]>(
+        Prisma.sql`
+          SELECT user_id
+          FROM user_effective_entitlements
+          WHERE user_id IN (${Prisma.join(coachUserIds.map((id) => Prisma.sql`${id}::uuid`))})
+            AND 'hub.map.listing' = ANY(features)
+        `,
+      );
+      allowedListingSet = new Set(allowedRows.map((r) => String(r.user_id)));
+    } catch {
+      allowedListingSet = null;
+    }
+  }
+
   // Post-filtrage OR (multi sports/langues/keywords)
   const sportsSet = new Set(sports.map(norm));
   const langSet = new Set(languages.map(norm));
@@ -161,6 +185,13 @@ export default async function CoachsPage({
 
   const matchesFiltered = matchesRaw.filter(({ coach }) => {
     const coachUser = coach.user as any;
+    const coachUserId = String(coachUser?.id ?? "");
+
+    // ✅ si on a la liste des coachs autorisés, on filtre ici
+    if (allowedListingSet && coachUserId && !allowedListingSet.has(coachUserId)) {
+      return false;
+    }
+
     const step1 = coachUser?.onboardingStep1Answers ?? {};
     const step2 = coachUser?.onboardingStep2Answers ?? {};
 
@@ -269,6 +300,23 @@ export default async function CoachsPage({
             <p className="mt-2 text-sm text-white/70">
               Tri automatique + badge vérification. Tu peux partager l’URL avec tes filtres.
             </p>
+
+            {country ? (
+              <p className="mt-2 text-xs text-white/55">
+                Pays par défaut appliqué :{" "}
+                <span className="font-semibold text-white/75">{String(country).toUpperCase()}</span>
+              </p>
+            ) : null}
+
+            {allowedListingSet !== null ? (
+              <p className="mt-1 text-xs text-white/45">
+                Visibilité Hub : seuls les coachs avec <span className="font-semibold">hub.map.listing</span> sont affichés.
+              </p>
+            ) : (
+              <p className="mt-1 text-xs text-white/45">
+                Visibilité Hub : fallback actif (vue entitlements non disponible).
+              </p>
+            )}
           </div>
 
           <div className="flex flex-wrap gap-3">
