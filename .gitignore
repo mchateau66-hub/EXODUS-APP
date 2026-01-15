@@ -52,3 +52,6 @@ test-results/
 playwright-traces*/
 playwright-report-*/
 .next/
+.env*
+!.env.example
+!.env.*.example
