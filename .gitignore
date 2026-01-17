@@ -57,3 +57,6 @@ playwright-report-*/
 !.env.*.example
 .e2e.local.env
 e2e.local.env
+
+# Local E2E env (never commit)
+e2e.local.env
