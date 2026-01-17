@@ -1,61 +1,67 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { prisma } from '@/lib/db'
-import { getUserFromSession } from '@/lib/auth'
+// src/app/api/ads/[id]/route.ts
+import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/db";
+import { getUserFromSession } from "@/lib/auth";
+import type { Prisma } from "@prisma/client";
 
-export const runtime = 'nodejs'
-export const dynamic = 'force-dynamic'
-export const revalidate = 0
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 function getUserIdFromSession(sess: any): string | null {
-  return (sess?.userId ?? sess?.id ?? sess?.user?.id ?? sess?.user?.userId) || null
+  return (sess?.userId ?? sess?.id ?? sess?.user?.id ?? sess?.user?.userId) || null;
 }
 
 function clampDays(v: any, def = 30) {
-  const n = Number(v)
-  if (!Number.isFinite(n)) return def
-  return Math.max(1, Math.min(365, Math.floor(n)))
+  const n = Number(v);
+  if (!Number.isFinite(n)) return def;
+  return Math.max(1, Math.min(365, Math.floor(n)));
 }
 
-function cleanText(v: any, max = 240) {
-  const s = String(v ?? '').replace(/\s+/g, ' ').trim()
-  if (!s) return null
-  return s.length > max ? s.slice(0, max).trim() : s
+function cleanText(v: any, max = 240): string | null {
+  const s = String(v ?? "").replace(/\s+/g, " ").trim();
+  if (!s) return null;
+  return s.length > max ? s.slice(0, max).trim() : s;
 }
 
 function cleanKeywords(raw: any): string[] {
   const arr = Array.isArray(raw)
     ? raw
-    : typeof raw === 'string'
-      ? raw.split(',')
-      : raw && typeof raw === 'object'
+    : typeof raw === "string"
+      ? raw.split(",")
+      : raw && typeof raw === "object"
         ? Object.values(raw).flat()
-        : []
+        : [];
 
-  const uniq = new Set<string>()
+  const uniq = new Set<string>();
   for (const x of arr) {
-    const k = String(x ?? '').trim()
-    if (!k) continue
-    uniq.add(k.slice(0, 32))
-    if (uniq.size >= 20) break
+    const k = String(x ?? "").trim();
+    if (!k) continue;
+    uniq.add(k.slice(0, 32));
+    if (uniq.size >= 20) break;
   }
-  return Array.from(uniq)
+  return Array.from(uniq);
 }
 
-function clampLatLng(lat: any, lng: any) {
-  const la = Number(lat)
-  const lo = Number(lng)
-  const latOk = Number.isFinite(la) && la >= -90 && la <= 90
-  const lngOk = Number.isFinite(lo) && lo >= -180 && lo <= 180
+function clampLatLng(lat: any, lng: any): { lat: number | null; lng: number | null } {
+  const la = Number(lat);
+  const lo = Number(lng);
+  const latOk = Number.isFinite(la) && la >= -90 && la <= 90;
+  const lngOk = Number.isFinite(lo) && lo >= -180 && lo <= 180;
   return {
     lat: latOk ? la : null,
     lng: lngOk ? lo : null,
-  }
+  };
 }
 
-function clampBudget(v: any) {
-  const n = Number(v)
-  if (!Number.isFinite(n)) return null
-  return Math.max(0, Math.min(100000, Math.floor(n)))
+function clampBudget(v: any): number | null {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return null;
+  return Math.max(0, Math.min(100000, Math.floor(n)));
+}
+
+function hasOwn(obj: any, key: string) {
+  return obj != null && Object.prototype.hasOwnProperty.call(obj, key);
 }
 
 /**
@@ -64,129 +70,142 @@ function clampBudget(v: any) {
  *  - { action: 'deactivate' }
  *  - { action: 'activate', durationDays?: number }
  *  - { action: 'update', title, goal?, sport?, keywords?, country?, city?, language?, budget_min?, budget_max?, lat?, lng? }
- *
- * Athlete only. Must own the ad.
  */
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
-  const sess: any = await getUserFromSession()
-  const userId = getUserIdFromSession(sess)
-  if (!userId) return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 })
+  // session / user
+  const sess: any = await getUserFromSession();
+  const userId = getUserIdFromSession(sess);
+  if (!userId) return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
 
   const me = await prisma.user.findUnique({
     where: { id: userId },
     select: { id: true, role: true, onboardingStep: true },
-  })
-  if (!me) return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 })
-  if (String(me.role) !== 'athlete') return NextResponse.json({ ok: false, error: 'forbidden' }, { status: 403 })
+  });
+  if (!me) return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
+  if (String(me.role) !== "athlete") return NextResponse.json({ ok: false, error: "forbidden" }, { status: 403 });
   if ((me.onboardingStep ?? 0) < 3) {
-    return NextResponse.json({ ok: false, error: 'onboarding_required' }, { status: 409 })
+    return NextResponse.json({ ok: false, error: "onboarding_required" }, { status: 409 });
   }
 
-  const id = params?.id
-  if (!id || typeof id !== 'string') {
-    return NextResponse.json({ ok: false, error: 'bad_request' }, { status: 400 })
+  const id = params?.id;
+  if (!id || typeof id !== "string") {
+    return NextResponse.json({ ok: false, error: "bad_request" }, { status: 400 });
   }
-
-  const body = await req.json().catch(() => ({}))
-  const action = String(body?.action ?? '').toLowerCase()
 
   // ownership check
   const owned = await prisma.athleteAd.findFirst({
     where: { id, athlete_id: userId },
     select: { id: true },
-  })
-  if (!owned) return NextResponse.json({ ok: false, error: 'not_found' }, { status: 404 })
+  });
+  if (!owned) return NextResponse.json({ ok: false, error: "not_found" }, { status: 404 });
 
-  const now = new Date()
+  const body = await req.json().catch(() => ({} as any));
+  const action = String(body?.action ?? "").toLowerCase();
+  const now = new Date();
 
   // 1) deactivate
-  if (action === 'deactivate') {
+  if (action === "deactivate") {
     const updated = await prisma.athleteAd.update({
       where: { id },
       data: {
-        status: 'inactive',
-        published_until: now, // rend “expirée” immédiatement
+        status: "inactive",
+        published_until: now,
       },
       select: { id: true, status: true, published_until: true, updated_at: true },
-    })
-    return NextResponse.json({ ok: true, item: updated }, { headers: { 'cache-control': 'no-store' } })
+    });
+
+    return NextResponse.json({ ok: true, item: updated }, { headers: { "cache-control": "no-store" } });
   }
 
-  // 2) activate (prolongation intelligente)
-  if (action === 'activate') {
-    const durationDays = clampDays(body?.durationDays, 30)
+  // 2) activate
+  if (action === "activate") {
+    const durationDays = clampDays(body?.durationDays, 30);
 
     const current = await prisma.athleteAd.findUnique({
       where: { id },
       select: { published_until: true },
-    })
+    });
 
-    const base =
-      current?.published_until && current.published_until > now
-        ? current.published_until
-        : now
-
-    const publishedUntil = new Date(base.getTime() + durationDays * 24 * 60 * 60 * 1000)
+    const base = current?.published_until && current.published_until > now ? current.published_until : now;
+    const publishedUntil = new Date(base.getTime() + durationDays * 24 * 60 * 60 * 1000);
 
     const updated = await prisma.athleteAd.update({
       where: { id },
       data: {
-        status: 'active',
+        status: "active",
         published_until: publishedUntil,
       },
       select: { id: true, status: true, published_until: true, updated_at: true },
-    })
+    });
 
     return NextResponse.json(
       { ok: true, item: updated, durationDays },
-      { headers: { 'cache-control': 'no-store' } }
-    )
+      { headers: { "cache-control": "no-store" } }
+    );
   }
 
-  // 3) update (édition)
-  if (action === 'update') {
-    const title = cleanText(body?.title, 80)
+  // 3) update
+  if (action === "update") {
+    const title = cleanText(body?.title, 80);
     if (!title) {
-      return NextResponse.json({ ok: false, error: 'title_required' }, { status: 400 })
+      return NextResponse.json({ ok: false, error: "title_required" }, { status: 400 });
     }
 
-    const goal = cleanText(body?.goal, 600)
-    const sport = cleanText(body?.sport, 80)
+    // ✅ Construit un data "safe" :
+    // - champs non-nullables (goal/sport) -> jamais null
+    // - champs optionnels (country/city/language/budgets/coords) -> null autorisé (prisma String?/Int?/Float?)
+    // - keywords est Json NON-nullable -> jamais null (toujours un array)
+    const data: Prisma.AthleteAdUpdateInput = { title };
 
-    const countryRaw = cleanText(body?.country, 2)
-    const country = countryRaw ? countryRaw.toUpperCase() : null
+    if (hasOwn(body, "goal")) {
+      data.goal = cleanText(body?.goal, 600) ?? ""; // goal est non-nullable dans ton schema
+    }
+    if (hasOwn(body, "sport")) {
+      data.sport = cleanText(body?.sport, 80) ?? ""; // sport est non-nullable dans ton schema
+    }
+    if (hasOwn(body, "keywords")) {
+      // keywords = Json non-nullable -> on stocke toujours un tableau
+      data.keywords = cleanKeywords(body?.keywords) as unknown as Prisma.InputJsonValue;
+    }
 
-    const city = cleanText(body?.city, 80)
+    if (hasOwn(body, "country")) {
+      const countryRaw = cleanText(body?.country, 2);
+      const c = countryRaw ? countryRaw.toUpperCase() : null;
+      data.country = c && /^[A-Z]{2}$/.test(c) ? c : null; // String? => null OK
+    }
+    if (hasOwn(body, "city")) {
+      data.city = cleanText(body?.city, 80); // String? => null OK (clear)
+    }
+    if (hasOwn(body, "language")) {
+      const languageRaw = cleanText(body?.language, 12);
+      data.language = languageRaw ? languageRaw.toLowerCase() : null; // String? => null OK
+    }
 
-    const languageRaw = cleanText(body?.language, 12)
-    const language = languageRaw ? languageRaw.toLowerCase() : null
+    // budgets : seulement si présents dans le body
+    const hasBudgetMin = hasOwn(body, "budget_min");
+    const hasBudgetMax = hasOwn(body, "budget_max");
 
-    const keywords = cleanKeywords(body?.keywords)
+    let budget_min = hasBudgetMin ? clampBudget(body?.budget_min) : undefined;
+    let budget_max = hasBudgetMax ? clampBudget(body?.budget_max) : undefined;
 
-    let budget_min = clampBudget(body?.budget_min)
-    let budget_max = clampBudget(body?.budget_max)
+    // swap si les deux sont présents et valides
     if (budget_min != null && budget_max != null && budget_min > budget_max) {
-      // petit garde-fou
-      ;[budget_min, budget_max] = [budget_max, budget_min]
+      [budget_min, budget_max] = [budget_max, budget_min];
     }
 
-    const coords = clampLatLng(body?.lat, body?.lng)
+    if (hasBudgetMin) data.budget_min = budget_min ?? null; // Int? => null OK
+    if (hasBudgetMax) data.budget_max = budget_max ?? null; // Int? => null OK
+
+    // coords : si lat ou lng est présent, on met à jour les 2 (sinon on n’y touche pas)
+    if (hasOwn(body, "lat") || hasOwn(body, "lng")) {
+      const coords = clampLatLng(body?.lat, body?.lng);
+      data.lat = coords.lat; // Float? => null OK
+      data.lng = coords.lng; // Float? => null OK
+    }
 
     const updated = await prisma.athleteAd.update({
       where: { id },
-      data: {
-        title,
-        goal,
-        sport,
-        keywords: keywords.length ? keywords : null,
-        country: country && /^[A-Z]{2}$/.test(country) ? country : null,
-        city,
-        language,
-        budget_min,
-        budget_max,
-        lat: coords.lat,
-        lng: coords.lng,
-      },
+      data,
       select: {
         id: true,
         title: true,
@@ -204,10 +223,10 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
         published_until: true,
         updated_at: true,
       },
-    })
+    });
 
-    return NextResponse.json({ ok: true, item: updated }, { headers: { 'cache-control': 'no-store' } })
+    return NextResponse.json({ ok: true, item: updated }, { headers: { "cache-control": "no-store" } });
   }
 
-  return NextResponse.json({ ok: false, error: 'bad_request' }, { status: 400 })
+  return NextResponse.json({ ok: false, error: "bad_request" }, { status: 400 });
 }
