@@ -69,10 +69,14 @@ function hasOwn(obj: any, key: string) {
  * Body:
  *  - { action: 'deactivate' }
  *  - { action: 'activate', durationDays?: number }
- *  - { action: 'update', title, goal?, sport?, keywords?, country?, city?, language?, budget_min?, budget_max?, lat?, lng? }
+ *  - {
+ *      action: 'update',
+ *      title,
+ *      goal?, sport?, keywords?, country?, city?, language?,
+ *      budget_min?, budget_max?, lat?, lng?
+ *    }
  */
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
-  // session / user
   const sess: any = await getUserFromSession();
   const userId = getUserIdFromSession(sess);
   if (!userId) return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
@@ -151,56 +155,52 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       return NextResponse.json({ ok: false, error: "title_required" }, { status: 400 });
     }
 
-    // ✅ Construit un data "safe" :
-    // - champs non-nullables (goal/sport) -> jamais null
-    // - champs optionnels (country/city/language/budgets/coords) -> null autorisé (prisma String?/Int?/Float?)
-    // - keywords est Json NON-nullable -> jamais null (toujours un array)
+    // Build Prisma-safe update payload (pas de null sur champs non-nullables)
     const data: Prisma.AthleteAdUpdateInput = { title };
 
-    if (hasOwn(body, "goal")) {
-      data.goal = cleanText(body?.goal, 600) ?? ""; // goal est non-nullable dans ton schema
-    }
-    if (hasOwn(body, "sport")) {
-      data.sport = cleanText(body?.sport, 80) ?? ""; // sport est non-nullable dans ton schema
-    }
+    // goal/sport sont non-nullables dans ton schema => jamais null
+    if (hasOwn(body, "goal")) data.goal = cleanText(body?.goal, 600) ?? "";
+    if (hasOwn(body, "sport")) data.sport = cleanText(body?.sport, 80) ?? "";
+
+    // keywords = Json NON-nullable => jamais null, toujours un tableau (même vide)
     if (hasOwn(body, "keywords")) {
-      // keywords = Json non-nullable -> on stocke toujours un tableau
-      data.keywords = cleanKeywords(body?.keywords) as unknown as Prisma.InputJsonValue;
+      const kw = cleanKeywords(body?.keywords);
+      data.keywords = kw as unknown as Prisma.InputJsonValue;
     }
 
+    // country/city/language sont nullable => null autorisé pour "clear"
     if (hasOwn(body, "country")) {
-      const countryRaw = cleanText(body?.country, 2);
-      const c = countryRaw ? countryRaw.toUpperCase() : null;
-      data.country = c && /^[A-Z]{2}$/.test(c) ? c : null; // String? => null OK
+      const raw = cleanText(body?.country, 2);
+      const c = raw ? raw.toUpperCase() : null;
+      data.country = c && /^[A-Z]{2}$/.test(c) ? c : null;
     }
     if (hasOwn(body, "city")) {
-      data.city = cleanText(body?.city, 80); // String? => null OK (clear)
+      data.city = cleanText(body?.city, 80); // string | null
     }
     if (hasOwn(body, "language")) {
-      const languageRaw = cleanText(body?.language, 12);
-      data.language = languageRaw ? languageRaw.toLowerCase() : null; // String? => null OK
+      const raw = cleanText(body?.language, 12);
+      data.language = raw ? raw.toLowerCase() : null;
     }
 
-    // budgets : seulement si présents dans le body
+    // budgets (nullable)
     const hasBudgetMin = hasOwn(body, "budget_min");
     const hasBudgetMax = hasOwn(body, "budget_max");
 
     let budget_min = hasBudgetMin ? clampBudget(body?.budget_min) : undefined;
     let budget_max = hasBudgetMax ? clampBudget(body?.budget_max) : undefined;
 
-    // swap si les deux sont présents et valides
     if (budget_min != null && budget_max != null && budget_min > budget_max) {
       [budget_min, budget_max] = [budget_max, budget_min];
     }
 
-    if (hasBudgetMin) data.budget_min = budget_min ?? null; // Int? => null OK
-    if (hasBudgetMax) data.budget_max = budget_max ?? null; // Int? => null OK
+    if (hasBudgetMin) data.budget_min = budget_min ?? null;
+    if (hasBudgetMax) data.budget_max = budget_max ?? null;
 
-    // coords : si lat ou lng est présent, on met à jour les 2 (sinon on n’y touche pas)
+    // coords (nullable) : si lat ou lng est présent, on maj les 2
     if (hasOwn(body, "lat") || hasOwn(body, "lng")) {
       const coords = clampLatLng(body?.lat, body?.lng);
-      data.lat = coords.lat; // Float? => null OK
-      data.lng = coords.lng; // Float? => null OK
+      data.lat = coords.lat;
+      data.lng = coords.lng;
     }
 
     const updated = await prisma.athleteAd.update({
