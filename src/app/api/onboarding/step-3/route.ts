@@ -1,5 +1,6 @@
 // src/app/api/onboarding/step-3/route.ts
 import { NextRequest, NextResponse } from "next/server"
+import type { Prisma } from "@prisma/client" // ✅ AJOUT
 import { getUserFromSession } from "@/lib/auth"
 import { prisma } from "@/lib/db"
 import { COACH_KEYWORDS } from "@/data/coachKeywords"
@@ -86,13 +87,15 @@ function addDays(d: Date, days: number) {
  * - Respecte la contrainte anti-overlap (EXCLUDE gist) : on UPDATE si déjà actif.
  * - Ne re-grant pas si l'utilisateur édite son profil après coup.
  */
-async function grantCoachHubMapTrialIfNeeded(tx: typeof prisma, userId: string) {
+async function grantCoachHubMapTrialIfNeeded(
+  tx: Prisma.TransactionClient, // ✅ FIX: tx n'est pas un PrismaClient complet
+  userId: string
+) {
   const now = new Date()
   const trialDays = 30
   const featureKey = "hub.map.listing"
   const trialEnd = addDays(now, trialDays)
 
-  // Si déjà une entitlement active sur cette feature, on évite d'en créer une seconde (overlap).
   const existingActive = await tx.userEntitlement.findFirst({
     where: {
       user_id: userId,
@@ -104,7 +107,6 @@ async function grantCoachHubMapTrialIfNeeded(tx: typeof prisma, userId: string) 
   })
 
   if (existingActive) {
-    // Si c'est une promo déjà en cours, on peut éventuellement prolonger jusqu'à trialEnd.
     if (existingActive.source === "promo") {
       const currentExp = existingActive.expires_at
       if (!currentExp || currentExp < trialEnd) {
@@ -120,7 +122,6 @@ async function grantCoachHubMapTrialIfNeeded(tx: typeof prisma, userId: string) 
     return
   }
 
-  // Sinon, on crée la promo 30j
   await tx.userEntitlement.create({
     data: {
       user_id: userId,
@@ -190,21 +191,6 @@ export async function GET(_req: NextRequest) {
 
 /**
  * POST /api/onboarding/step-3
- * Body = JSON:
- * {
- *   name?: string
- *   age?: number | null
- *   country?: string
- *   language?: string
- *   avatarUrl?: string
- *   bio?: string
- *   keywords?: string[] | string
- *   theme?: "light" | "dark"
- * }
- *
- * → Met à jour le profil User + onboardingStep >= 3
- * → si role=coach et passage réel à step3 : grant hub.map.listing (promo 30j)
- * → next = /hub (destination unique)
  */
 export async function POST(req: NextRequest) {
   const session = await getUserFromSession()
@@ -226,7 +212,6 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  // ✅ Source de vérité DB pour step/role
   const dbUser = await prisma.user.findUnique({
     where: { id: userId },
     select: { onboardingStep: true, role: true },
@@ -238,7 +223,6 @@ export async function POST(req: NextRequest) {
 
   const currentStep = typeof dbUser.onboardingStep === "number" ? dbUser.onboardingStep : 0
 
-  // 🔒 On ne permet pas de sauter les étapes 1 & 2
   if (currentStep < 2) {
     return NextResponse.json(
       {
@@ -264,7 +248,6 @@ export async function POST(req: NextRequest) {
     age = null
   }
 
-  // keywords
   const parsedKeywords = parseKeywords((body as any).keywords)
   const keywords =
     dbUser.role === "coach"
@@ -300,7 +283,6 @@ export async function POST(req: NextRequest) {
       },
     })
 
-    // ✅ Grant promo Hub Map listing (30j) seulement au moment où le coach atteint l'étape 3
     if (isCoach && isCompletingStep3Now) {
       await grantCoachHubMapTrialIfNeeded(tx, userId)
     }
