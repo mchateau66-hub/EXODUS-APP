@@ -56,3 +56,4 @@ playwright-report-*/
 !.env.example
 !.env.*.example
 .e2e.local.env
+e2e.local.env
