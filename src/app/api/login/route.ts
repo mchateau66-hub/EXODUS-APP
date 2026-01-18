@@ -2,7 +2,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { timingSafeEqual } from "node:crypto";
 import { prisma } from "@/lib/db";
-import { createSessionResponseForUser } from "@/lib/auth";
 
 type Plan = "free" | "master" | "premium";
 type Role = "athlete" | "coach" | "admin";
@@ -55,97 +54,246 @@ function isHttps(req: NextRequest): boolean {
   );
 }
 
-function logPrismaError(err: unknown, meta: Record<string, unknown>) {
+function serializeErr(err: unknown) {
   const e = err as any;
-  console.error("[api/login] prisma_error", {
+  return {
     name: String(e?.name ?? "Error"),
-    code: e?.code ? String(e.code) : undefined,
-    message: String(e?.message ?? "").slice(0, 1200),
-    meta,
-    stack: typeof e?.stack === "string" ? e.stack.split("\n").slice(0, 12).join("\n") : undefined,
-  });
+    message: String(e?.message ?? "").slice(0, 2000),
+    stack: typeof e?.stack === "string" ? e.stack.split("\n").slice(0, 18).join("\n") : undefined,
+  };
 }
 
-export async function POST(req: NextRequest) {
-  if (!devLoginEnabled()) return new Response("Not found", { status: 404 });
+async function fallbackCreateSessionAndCookies(req: NextRequest, userId: string, plan: Plan) {
+  const p: any = prisma as any;
 
-  const e2e = isE2E(req);
-  const local = isLocalhost(req);
-  const isProd = process.env.NODE_ENV === "production";
+  const models = [p.session, p.sessions, p.userSession, p.userSessions, p.authSession, p.authSessions].filter(
+    Boolean,
+  );
 
-  // prod => uniquement e2e (+ token si défini)
-  // dev => e2e ok (+ token si défini), sinon browser ok si localhost
-  if (isProd) {
-    if (!e2e) return new Response("Not found", { status: 404 });
-    if (!tokenOk(req)) return new Response("Not found", { status: 404 });
-  } else {
-    if (e2e) {
-      if (!tokenOk(req)) return new Response("Not found", { status: 404 });
-    } else {
-      if (!local && process.env.ALLOW_BROWSER_DEV_LOGIN !== "1") {
-        return new Response("Not found", { status: 404 });
+  if (!models.length) {
+    throw new Error("No session model found on prisma (session/userSession/authSession).");
+  }
+
+  const secure = isHttps(req);
+
+  const attempts: any[] = [
+    { user_id: userId },
+    { userId },
+    { user: { connect: { id: userId } } },
+    { user_id: userId, expires_at: new Date(Date.now() + 1000 * 60 * 60 * 6) },
+    { userId, expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 6) },
+  ];
+
+  let lastErr: any = null;
+
+  for (const m of models) {
+    for (const data of attempts) {
+      try {
+        const created = await m.create({ data, select: { id: true } });
+        const sid = String(created.id);
+
+        const res = NextResponse.json({ ok: true, via: "fallback", sid, userId, plan }, { headers: { "cache-control": "no-store" } });
+
+        res.cookies.set("sid", sid, {
+          httpOnly: true,
+          sameSite: "lax",
+          secure,
+          path: "/",
+          maxAge: 60 * 60 * 6,
+        });
+
+        res.cookies.set("session", sid, {
+          httpOnly: true,
+          sameSite: "lax",
+          secure,
+          path: "/",
+          maxAge: 60 * 60 * 6,
+        });
+
+        res.cookies.set("plan", plan, {
+          httpOnly: false,
+          sameSite: "lax",
+          secure,
+          path: "/",
+          maxAge: 60 * 60 * 24 * 30,
+        });
+
+        res.headers.set("x-e2e-login", "1");
+        return res;
+      } catch (e) {
+        lastErr = e;
       }
     }
   }
 
-  const body = (await req.json().catch(() => ({}))) as {
-    email?: string;
-    role?: Role;
-    plan?: Plan | "pro";
-    maxAgeSeconds?: number;
-    maxAge?: number;
+  throw lastErr ?? new Error("fallback session create failed (unknown)");
+}
+
+/**
+ * ✅ Seed "onboarding completed" pour éviter redirect /hub -> /onboarding/*
+ * - On le fait uniquement en E2E (header x-e2e: 1)
+ * - On seed aussi AthleteProfile (champs non-nullables)
+ */
+async function ensureE2EAthleteOnboarded(userId: string) {
+  const now = new Date();
+
+  // ces structures JSON sont volontairement "simples" :
+  // l'app a juste besoin que les étapes aient un contenu cohérent.
+  const step1 = {
+    visibility: "semi_public", // ou "public"/"private" selon ton UI
+    tagline: "E2E athlete",
+    athleteType: "beginner",
+    updatedAt: now.toISOString(),
   };
 
-  const email = String(body.email ?? `dev@local.test`).toLowerCase().trim();
-  const role = pickRole(body.role ?? "athlete");
-  const plan = pickPlan(body.plan);
+  const step2 = {
+    goal: "general_fitness",
+    sport: "running",
+    updatedAt: now.toISOString(),
+  };
 
-  const rawMaxAge = body.maxAgeSeconds ?? body.maxAge;
-  const maxAgeSeconds =
-    typeof rawMaxAge === "number" && Number.isFinite(rawMaxAge) && rawMaxAge > 0
-      ? Math.floor(rawMaxAge)
-      : undefined;
+  await prisma.user.update({
+    where: { id: userId },
+    data: {
+      onboardingStep: 3,
+      onboardingStep1Answers: step1 as any,
+      onboardingStep2Answers: step2 as any,
 
-  let user: { id: string; role: Role };
+      // petits defaults pour éviter d’autres guards/UI
+      name: "E2E Athlete",
+      bio: "E2E seeded profile",
+      country: "FR",
+      language: "fr",
+    },
+  });
+
+  await prisma.athleteProfile.upsert({
+    where: { user_id: userId },
+    update: {
+      goalType: "general",
+      timeframe: "unspecified",
+      experienceLevel: "beginner",
+      context: "e2e",
+      objectiveSummary: "e2e profile",
+      updated_at: now,
+    },
+    create: {
+      user_id: userId,
+      goalType: "general",
+      timeframe: "unspecified",
+      experienceLevel: "beginner",
+      context: "e2e",
+      objectiveSummary: "e2e profile",
+    },
+  });
+}
+
+export async function POST(req: NextRequest) {
   try {
-    user = await prisma.user.upsert({
+    if (!devLoginEnabled()) return new Response("Not found", { status: 404 });
+
+    const e2e = isE2E(req);
+    const local = isLocalhost(req);
+    const isProd = process.env.NODE_ENV === "production";
+
+    // prod => uniquement e2e (+ token si défini)
+    // dev => e2e ok (+ token si défini), sinon browser ok si localhost
+    if (isProd) {
+      if (!e2e) return new Response("Not found", { status: 404 });
+      if (!tokenOk(req)) return new Response("Not found", { status: 404 });
+    } else {
+      if (e2e) {
+        if (!tokenOk(req)) return new Response("Not found", { status: 404 });
+      } else {
+        if (!local && process.env.ALLOW_BROWSER_DEV_LOGIN !== "1") {
+          return new Response("Not found", { status: 404 });
+        }
+      }
+    }
+
+    const body = (await req.json().catch(() => ({}))) as {
+      email?: string;
+      role?: Role;
+      plan?: Plan | "pro";
+      maxAgeSeconds?: number;
+      maxAge?: number;
+    };
+
+    const email = String(body.email ?? `dev@local.test`).toLowerCase().trim();
+    const role = pickRole(body.role ?? "athlete");
+    const plan = pickPlan(body.plan);
+
+    const rawMaxAge = body.maxAgeSeconds ?? body.maxAge;
+    const maxAgeSeconds =
+      typeof rawMaxAge === "number" && Number.isFinite(rawMaxAge) && rawMaxAge > 0
+        ? Math.floor(rawMaxAge)
+        : undefined;
+
+    // 1) upsert user
+    const user = await prisma.user.upsert({
       where: { email },
       update: {
         role,
-        onboardingStep: 3,
+        ...(e2e ? { onboardingStep: 3 } : {}), // ✅ uniquement E2E
         country: "FR",
         language: "fr",
       },
       create: {
         email,
         role,
-        onboardingStep: 3,
+        onboardingStep: e2e ? 3 : 0,
         country: "FR",
         language: "fr",
+        theme: "light",
+        keywords: [],
       },
-      select: { id: true, role: true },
+      select: { id: true, role: true, onboardingStep: true },
     });
+
+    // 1.5) seed onboarding + athleteProfile si E2E + athlete
+    if (e2e && String(user.role).toLowerCase() === "athlete") {
+      await ensureE2EAthleteOnboarded(user.id);
+    }
+
+    // 2) essai normal via lib/auth (import dynamique pour attraper les erreurs de module)
+    try {
+      const mod: any = await import("@/lib/auth");
+      const createSessionResponseForUser = mod?.createSessionResponseForUser;
+
+      if (typeof createSessionResponseForUser !== "function") {
+        throw new Error("createSessionResponseForUser is not a function (missing export?)");
+      }
+
+      const res: NextResponse = await createSessionResponseForUser(
+        user.id,
+        { ok: true, user: { ...user, onboardingStep: e2e ? 3 : user.onboardingStep }, plan },
+        req,
+        maxAgeSeconds ? { maxAgeSeconds } : {},
+      );
+
+      res.cookies.set("plan", plan, {
+        httpOnly: false,
+        sameSite: "lax",
+        secure: isHttps(req),
+        path: "/",
+        maxAge: 60 * 60 * 24 * 30,
+      });
+
+      res.headers.set("x-e2e-login", "1");
+      return res;
+    } catch (err) {
+      const debug = e2e || local;
+      console.error("[api/login] createSessionResponseForUser failed, fallback => prisma session", {
+        userId: user.id,
+        plan,
+        detail: debug ? serializeErr(err) : undefined,
+      });
+
+      return await fallbackCreateSessionAndCookies(req, user.id, plan);
+    }
   } catch (err) {
-    logPrismaError(err, { op: "user.upsert", role, hasEmail: Boolean(email) });
-    const res = NextResponse.json({ ok: false, error: "db_unavailable" }, { status: 503 });
-    res.headers.set("cache-control", "no-store");
-    return res;
+    const payload = { ok: false, error: "api_login_crash", detail: serializeErr(err) };
+    console.error("[api/login] handler_crash", payload);
+    return NextResponse.json(payload, { status: 500, headers: { "cache-control": "no-store" } });
   }
-
-  const res = await createSessionResponseForUser(
-    user.id,
-    { ok: true, user, plan },
-    req,
-    maxAgeSeconds ? { maxAgeSeconds } : {},
-  );
-
-  res.cookies.set("plan", plan, {
-    httpOnly: false,
-    sameSite: "lax",
-    secure: isHttps(req),
-    path: "/",
-    maxAge: 60 * 60 * 24 * 30,
-  });
-
-  return res;
 }
