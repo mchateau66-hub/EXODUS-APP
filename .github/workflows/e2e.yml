@@ -222,6 +222,21 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
 
+    env:
+      CI: "true"
+      PW_WEB_SERVER: "0"
+
+      # ✅ smoke = pas de storageState, pas de login
+      E2E_DISABLE_STORAGE_STATE: "1"
+      E2E_SKIP_LOGIN: "1"
+
+      E2E_BASE_URL: ${{ needs.cfg.outputs.base }}
+      E2E_SMOKE_PATH: ${{ needs.cfg.outputs.smoke_path }}
+
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/exodus_test?schema=public
+      SAT_JWT_SECRET: ${{ secrets.SAT_JWT_SECRET }}
+      ALLOW_DEV_LOGIN: "1"
+
     services:
       postgres:
         image: postgres:16
@@ -236,17 +251,6 @@ jobs:
           --health-interval=10s
           --health-timeout=5s
           --health-retries=10
-
-    env:
-      CI: "true"
-      PW_WEB_SERVER: "1"
-
-      E2E_BASE_URL: ${{ needs.cfg.outputs.base }}
-      E2E_SMOKE_PATH: ${{ needs.cfg.outputs.smoke_path }}
-
-      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/exodus_test?schema=public
-      SAT_JWT_SECRET: ${{ secrets.SAT_JWT_SECRET }}
-      ALLOW_DEV_LOGIN: "1"
 
     steps:
       - uses: actions/checkout@v4
@@ -356,9 +360,16 @@ jobs:
       CI: "true"
       PW_WEB_SERVER: "0"
 
+      # ✅ smoke = pas de storageState, pas de login
+      E2E_DISABLE_STORAGE_STATE: "1"
+      E2E_SKIP_LOGIN: "1"
+
       E2E_BASE_URL: ${{ needs.cfg.outputs.base }}
       E2E_SMOKE_PATH: ${{ needs.cfg.outputs.smoke_path }}
+
+      # (optionnel en smoke) tu peux le laisser, mais il ne servira pas si skip login
       E2E_DEV_LOGIN_TOKEN: ${{ secrets.E2E_DEV_LOGIN_TOKEN }}
+
       VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
 
     steps:

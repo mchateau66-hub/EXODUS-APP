@@ -38,6 +38,11 @@ function toStringEnv(env: NodeJS.ProcessEnv): Record<string, string> {
   return out;
 }
 
+function envTruthy(name: string) {
+  const v = (process.env[name] ?? "").trim().toLowerCase();
+  return v === "1" || v === "true" || v === "yes";
+}
+
 const rawBaseURL = normalizeBaseUrl(process.env.E2E_BASE_URL || "http://127.0.0.1:3000");
 const local = isLocalBase(rawBaseURL);
 const devPort = getPortFromBaseURL(rawBaseURL);
@@ -69,8 +74,9 @@ if (!local) {
   }
 }
 
-// Optionnel : désactiver storageState si tu veux éviter toute pollution
-const disableStorageState = (process.env.E2E_DISABLE_STORAGE_STATE ?? "").trim() === "1";
+// ✅ Smoke: désactiver storageState (ne pas le charger)
+const disableStorageState =
+  ["1", "true", "yes"].includes((process.env.E2E_DISABLE_STORAGE_STATE ?? "").trim().toLowerCase());
 
 export default defineConfig({
   testDir: "./e2e",
@@ -96,12 +102,14 @@ export default defineConfig({
     locale: "fr-FR",
     timezoneId: "Europe/Paris",
 
-    ...(disableStorageState ? {} : { storageState: ".pw/storageState.json" }),
+    // ✅ Important: en smoke => undefined (ne charge rien)
+    storageState: disableStorageState ? undefined : ".pw/storageState.json",
 
     trace: "on-first-retry",
     screenshot: "only-on-failure",
     video: "on-first-retry",
 
+    // ✅ Remote: bypass/token injectés sur les navigations (page.goto)
     extraHTTPHeaders: extraHeaders,
   },
 
