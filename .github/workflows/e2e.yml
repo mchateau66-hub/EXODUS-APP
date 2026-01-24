@@ -36,7 +36,7 @@ concurrency:
 
 permissions:
   contents: read
-  actions: read
+  actions: write
 
 defaults:
   run:
@@ -239,7 +239,7 @@ jobs:
 
     env:
       CI: "true"
-      PW_WEB_SERVER: "0"
+      PW_WEB_SERVER: "1"
 
       E2E_BASE_URL: ${{ needs.cfg.outputs.base }}
       E2E_SMOKE_PATH: ${{ needs.cfg.outputs.smoke_path }}
@@ -325,7 +325,7 @@ jobs:
           echo "[env] E2E_SMOKE_PATH=$E2E_SMOKE_PATH"
 
       - name: Run Playwright smoke tests
-        run: pnpm exec playwright test e2e/smoke.spec.ts --project=chromium --reporter=github,html
+        run: pnpm exec playwright test e2e/smoke.spec.ts --project=chromium --workers=1
 
       - name: Stop Next server
         if: always()
@@ -421,7 +421,7 @@ jobs:
           echo "[env] E2E_SESSION_COOKIE set? $([ -n "${E2E_SESSION_COOKIE:-}" ] && echo yes || echo no)"
 
       - name: Run Playwright smoke tests
-        run: pnpm exec playwright test e2e/smoke.spec.ts --project=chromium --reporter=github,html
+        run: pnpm exec playwright test e2e/smoke.spec.ts --project=chromium --workers=1
 
       - name: Upload artifacts
         if: always()

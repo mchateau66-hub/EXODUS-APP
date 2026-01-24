@@ -135,17 +135,20 @@ function normalizeLanguage(v: any) {
   return s ? s : 'fr'
 }
 
+function toSafeInt(v: any, def = 0) {
+  const n = Number(v)
+  return Number.isFinite(n) ? n : def
+}
+
 export default async function HubPage() {
   const session = await getUserFromSession()
   if (!session) redirect('/login?next=/hub')
 
-  const userId =
-    (session as any)?.user?.id ??
-    (session as any)?.userId ??
-    (session as any)?.id ??
-    (session as any)?.user?.userId
-
+  const userId = (session as any)?.user?.id
   if (!userId) redirect('/login?next=/hub')
+
+  // ✅ Step vu depuis la session (vient de la DB via getUserFromSession)
+  const sessionStep = toSafeInt((session as any)?.user?.onboardingStep ?? 0, 0)
 
   const user = await prisma.user.findUnique({
     where: { id: userId },
@@ -161,10 +164,20 @@ export default async function HubPage() {
   })
   if (!user) redirect('/login?next=/hub')
 
-  const onboardingStep = user.onboardingStep ?? 0
-  if (onboardingStep < 1) redirect('/onboarding')
-  if (onboardingStep < 2) redirect('/onboarding/step-2')
-  if (onboardingStep < 3) redirect('/onboarding/step-3')
+  // ✅ Step DB + Step session => on prend le max (évite redirs “fantômes”)
+  const dbStep = toSafeInt(user.onboardingStep ?? 0, 0)
+  const effectiveStep = Math.max(dbStep, sessionStep)
+
+  // ✅ Optionnel mais très utile: si la DB est “en retard”, on la remet à jour
+  if (effectiveStep >= 3 && dbStep < 3) {
+    await prisma.user
+      .update({ where: { id: user.id }, data: { onboardingStep: effectiveStep } })
+      .catch(() => null)
+  }
+
+  if (effectiveStep < 1) redirect('/onboarding')
+  if (effectiveStep < 2) redirect('/onboarding/step-2')
+  if (effectiveStep < 3) redirect('/onboarding/step-3')
 
   const role = String(user.role).toLowerCase()
   const isAthlete = role === 'athlete'

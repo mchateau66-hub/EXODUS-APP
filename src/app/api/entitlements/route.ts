@@ -18,7 +18,25 @@ function isEntitlementActive(ent: { starts_at: Date; expires_at: Date | null }, 
   return true;
 }
 
-export async function GET(_req: NextRequest) {
+type PlanKey = "free" | "master" | "premium";
+
+/**
+ * Fallback features par plan (utile en DEV/E2E si DB pas migrée/seedée)
+ * Ajuste si tu as d’autres features.
+ */
+const PLAN_FEATURES: Record<PlanKey, string[]> = {
+  free: [],
+  master: ["messages.unlimited", "contacts.view"],
+  premium: ["messages.unlimited", "contacts.view", "chat.media", "suggestions.unlimited", "whatsapp.handoff", "boosts.buy"],
+};
+
+function normalizePlanKey(v: string | null | undefined): PlanKey | null {
+  const s = String(v || "").toLowerCase().trim();
+  if (s === "free" || s === "master" || s === "premium") return s;
+  return null;
+}
+
+export async function GET(req: NextRequest) {
   const session = await getUserFromSession();
 
   if (!session) {
@@ -33,46 +51,71 @@ export async function GET(_req: NextRequest) {
 
   const now = new Date();
 
-  // 1) Entitlements user
-  const entitlements = await prisma.userEntitlement.findMany({
-    where: { user_id: userId },
-    select: {
-      feature_key: true,
-      starts_at: true,
-      expires_at: true,
-    },
-  });
+  // --- Plan cookie (dev/e2e) ---
+  const planCookie = normalizePlanKey(req.cookies.get("plan")?.value);
+
+  // 1) Entitlements user (direct grants)
+  let entitlements: Array<{ feature_key: string; starts_at: Date; expires_at: Date | null }> = [];
+  try {
+    entitlements = await prisma.userEntitlement.findMany({
+      where: { user_id: userId },
+      select: {
+        feature_key: true,
+        starts_at: true,
+        expires_at: true,
+      },
+    });
+  } catch {
+    // DB pas prête (tables non migrées) => fallback cookie plan
+    entitlements = [];
+  }
 
   const activeEntitlements = entitlements.filter((ent) => isEntitlementActive(ent, now));
-  const features = Array.from(new Set(activeEntitlements.map((e) => String(e.feature_key))));
+  const directFeatures = activeEntitlements.map((e) => String(e.feature_key));
 
-  // 2) Plan courant via subscription active-like
-  const activeSub = await prisma.subscription.findFirst({
-    where: {
-      user_id: userId,
-      status: { in: ["active", "trialing", "past_due"] },
-    },
-    orderBy: { created_at: "desc" },
-    select: { plan_key: true },
-  });
+  // 2) Plan courant via subscription active-like (si DB OK), sinon cookie plan, sinon free
+  let planKey: PlanKey = planCookie ?? "free";
 
-  const planKey = activeSub?.plan_key ?? null;
+  try {
+    const activeSub = await prisma.subscription.findFirst({
+      where: {
+        user_id: userId,
+        status: { in: ["active", "trialing", "past_due"] },
+      },
+      orderBy: { created_at: "desc" },
+      select: { plan_key: true },
+    });
 
-  let planFromDb = planKey
-    ? await prisma.plan.findUnique({ where: { key: planKey }, select: { key: true, name: true, active: true } })
-    : null;
+    const dbPlan = normalizePlanKey(activeSub?.plan_key ?? null);
+    if (dbPlan) planKey = dbPlan;
+  } catch {
+    // ignore, on garde le fallback cookie/free
+  }
 
-  if (!planFromDb) {
+  // 2bis) Résoudre plan (DB si possible, sinon fallback)
+  let planFromDb: { key: string; name: string; active: boolean } | null = null;
+
+  try {
     planFromDb = await prisma.plan.findUnique({
-      where: { key: "free" },
+      where: { key: planKey },
       select: { key: true, name: true, active: true },
     });
+  } catch {
+    planFromDb = null;
   }
 
   const plan =
     planFromDb != null
       ? { key: planFromDb.key, name: planFromDb.name, active: planFromDb.active }
-      : { key: "free", name: "Free", active: true };
+      : planKey === "master"
+        ? { key: "master", name: "Master", active: true }
+        : planKey === "premium"
+          ? { key: "premium", name: "Premium", active: true }
+          : { key: "free", name: "Free", active: true };
+
+  // 2ter) Features finales = direct + features plan fallback
+  const planFeatures = PLAN_FEATURES[planKey] ?? [];
+  const features = Array.from(new Set([...planFeatures, ...directFeatures]));
 
   // 3) Claim
   const iatSec = Math.floor(now.getTime() / 1000);

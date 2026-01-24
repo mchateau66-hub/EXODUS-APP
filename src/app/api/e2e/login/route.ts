@@ -1,100 +1,15 @@
 // src/app/api/e2e/login/route.ts
-import { NextRequest } from "next/server";
-import { prisma } from "@/lib/db";
-import { createSessionResponseForUser } from "@/lib/auth";
-
-type Plan = "free" | "master" | "premium";
-type Role = "athlete" | "coach" | "admin";
-
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
-function devLoginEnabled(): boolean {
-  const v = (process.env.ALLOW_DEV_LOGIN ?? "").trim().toLowerCase();
-  return v === "1" || v === "true";
-}
-
-function isE2E(req: NextRequest): boolean {
-  return (req.headers.get("x-e2e") ?? "").trim() === "1";
-}
-
-function tokenOk(req: NextRequest): boolean {
-  const expected = (process.env.E2E_DEV_LOGIN_TOKEN ?? "").trim();
-  if (!expected) return false;
-
-  const got = (req.headers.get("x-e2e-token") ?? "").trim();
-  return got !== "" && got === expected;
-}
-
-function pickPlan(v: unknown): Plan {
-  const s = String(v ?? "").toLowerCase().trim();
-  if (s === "pro") return "premium";
-  return s === "master" || s === "premium" ? (s as Plan) : "free";
-}
-
-function pickRole(v: unknown): Role {
-  const s = String(v ?? "").toLowerCase().trim();
-  return s === "coach" || s === "admin" ? (s as Role) : "athlete";
-}
-
-function isHttps(req: NextRequest): boolean {
-  return req.headers.get("x-forwarded-proto")?.split(",")[0]?.trim() === "https";
-}
-
-export async function POST(req: NextRequest) {
-  if (!devLoginEnabled()) return new Response("Not found", { status: 404 });
-  if (!isE2E(req)) return new Response("Not found", { status: 404 });
-  if (!tokenOk(req)) return new Response("Not found", { status: 404 });
-
-  const body = (await req.json().catch(() => ({}))) as {
-    email?: string;
-    role?: Role;
-    plan?: Plan | "pro";
-    maxAgeSeconds?: number;
-    maxAge?: number;
-  };
-
-  const email = String(body.email ?? `e2e@exodus.local`).toLowerCase().trim();
-  const role = pickRole(body.role ?? "athlete");
-  const plan = pickPlan(body.plan ?? "free");
-
-  const rawMaxAge =
-    typeof body.maxAgeSeconds === "number"
-      ? body.maxAgeSeconds
-      : typeof body.maxAge === "number"
-        ? body.maxAge
-        : undefined;
-
-  const maxAgeSeconds =
-    typeof rawMaxAge === "number" && Number.isFinite(rawMaxAge) && rawMaxAge > 0
-      ? Math.floor(rawMaxAge)
-      : undefined;
-
-  const user = await prisma.user.upsert({
-    where: { email },
-    update: { role },
-    create: { email, role },
-    select: { id: true, role: true },
-  });
-
-  const res = await createSessionResponseForUser(
-    user.id,
-    { ok: true, user, plan },
-    req,
-    maxAgeSeconds ? { maxAgeSeconds } : {},
-  );
-
-  res.cookies.set("plan", plan, {
-    httpOnly: false,
-    sameSite: "lax",
-    secure: isHttps(req),
-    path: "/",
-    maxAge: 60 * 60 * 24 * 30,
-  });
-
-  res.headers.set("cache-control", "no-store");
-  return res;
-}
+/**
+ * ✅ Alias E2E vers /api/login
+ * - évite d'avoir 2 logiques différentes
+ * - garantit onboardingStep=3 + profils (athlete/coach) + cookies
+ * - élimine les bugs "step=0" quand un script tape /api/e2e/login
+ */
+export { POST } from "../../login/route";
 
 export async function GET() {
   return new Response("Not found", { status: 404 });

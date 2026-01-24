@@ -1,7 +1,13 @@
 // playwright.config.ts
 import { defineConfig, devices } from "@playwright/test";
+import dotenv from "dotenv";
 
-process.env.SAT_JWT_SECRET ??= "test-secret";
+dotenv.config({ path: ".env.local" });
+dotenv.config({ path: ".e2e.local.env" });
+
+if (!process.env.SAT_JWT_SECRET?.trim()) {
+  process.env.SAT_JWT_SECRET = "test-secret";
+}
 
 function normalizeBaseUrl(u: string) {
   return (u || "http://127.0.0.1:3000").trim().replace(/\/+$/, "");
@@ -36,42 +42,35 @@ const rawBaseURL = normalizeBaseUrl(process.env.E2E_BASE_URL || "http://127.0.0.
 const local = isLocalBase(rawBaseURL);
 const devPort = getPortFromBaseURL(rawBaseURL);
 
-// 👉 en local on force 127.0.0.1 (cookies host-only plus stables)
+// 👉 en local on force 127.0.0.1 (cookies host-only stables)
 const localURL = `http://127.0.0.1:${devPort}`;
 const baseURL = local ? localURL : rawBaseURL;
 
 // Aligne aussi l'env pour helpers.ts + global-setup.ts
 if (local) process.env.E2E_BASE_URL = baseURL;
 
-// ⚠️ Le workflow CI démarre déjà Next => on ne le redémarre PAS ici.
-// Si tu veux que Playwright démarre Next en local: PW_WEB_SERVER=1
+// Démarrer Next en local seulement si PW_WEB_SERVER=1
 const startWebServer = local && (process.env.PW_WEB_SERVER ?? "").trim() === "1";
 
-// ✅ Headers globaux (UI + API)
-const extraHeaders: Record<string, string> = { "x-e2e": "1" };
+// ✅ En LOCAL: pas de x-e2e global (ça pollue /api/login et page.request)
+// ✅ En REMOTE: x-e2e + bypass + token
+const extraHeaders: Record<string, string> = {};
 
-const e2eToken = (process.env.E2E_DEV_LOGIN_TOKEN ?? "").trim();
-if (e2eToken) extraHeaders["x-e2e-token"] = e2eToken;
+if (!local) {
+  extraHeaders["x-e2e"] = "1";
 
-const vercelBypass = (process.env.VERCEL_AUTOMATION_BYPASS_SECRET ?? "").trim();
-if (vercelBypass) {
-  extraHeaders["x-vercel-protection-bypass"] = vercelBypass;
-  extraHeaders["x-vercel-set-bypass-cookie"] = "true";
+  const e2eToken = (process.env.E2E_DEV_LOGIN_TOKEN ?? "").trim();
+  if (e2eToken) extraHeaders["x-e2e-token"] = e2eToken;
+
+  const vercelBypass = (process.env.VERCEL_AUTOMATION_BYPASS_SECRET ?? "").trim();
+  if (vercelBypass) {
+    extraHeaders["x-vercel-protection-bypass"] = vercelBypass;
+    extraHeaders["x-vercel-set-bypass-cookie"] = "true";
+  }
 }
 
-if ((process.env.PW_DEBUG_CONFIG ?? "").trim() === "1") {
-  console.log("[pw-config]", {
-    CI: process.env.CI,
-    rawBaseURL,
-    baseURL,
-    local,
-    startWebServer,
-    devPort,
-    E2E_SMOKE_PATH: process.env.E2E_SMOKE_PATH,
-    hasE2EToken: Boolean(e2eToken),
-    hasVercelBypass: Boolean(vercelBypass),
-  });
-}
+// Optionnel : désactiver storageState si tu veux éviter toute pollution
+const disableStorageState = (process.env.E2E_DISABLE_STORAGE_STATE ?? "").trim() === "1";
 
 export default defineConfig({
   testDir: "./e2e",
@@ -93,13 +92,16 @@ export default defineConfig({
 
   use: {
     baseURL,
-    storageState: ".pw/storageState.json",
+
+    locale: "fr-FR",
+    timezoneId: "Europe/Paris",
+
+    ...(disableStorageState ? {} : { storageState: ".pw/storageState.json" }),
 
     trace: "on-first-retry",
     screenshot: "only-on-failure",
-    video: "retain-on-failure",
+    video: "on-first-retry",
 
-    // ✅ E2E + token + bypass Vercel si besoin
     extraHTTPHeaders: extraHeaders,
   },
 

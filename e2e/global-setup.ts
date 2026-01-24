@@ -5,6 +5,7 @@ import { chromium, request, type FullConfig } from "@playwright/test";
 import {
   BASE_URL,
   E2E_SMOKE_PATH,
+  IS_LOCAL_BASE, // ✅ AJOUT
   waitForHealth,
   setSessionCookieFromEnv,
   login,
@@ -84,8 +85,7 @@ export default async function globalSetup(_config: FullConfig) {
   if ((process.env.E2E_SESSION_COOKIE ?? "").trim()) {
     await setSessionCookieFromEnv(context, BASE_URL);
   } else {
-    // b) Sinon, si token backdoor dispo (Preview / staging)
-    if ((process.env.E2E_DEV_LOGIN_TOKEN ?? "").trim()) {
+    if (IS_LOCAL_BASE || (process.env.E2E_DEV_LOGIN_TOKEN ?? "").trim()) {
       await login(page, { plan: "free" });
     }
   }

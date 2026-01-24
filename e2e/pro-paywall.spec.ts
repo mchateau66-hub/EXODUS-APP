@@ -7,24 +7,10 @@ import {
   setSessionCookieFromEnv,
   login,
   readStatus,
+  setPlanCookie,
 } from "./helpers";
 
 const FROM = "/pro";
-
-async function setPlanCookie(context: any, plan: "free" | "master" | "premium") {
-  const u = new URL(BASE_URL);
-  await context.addCookies([
-    {
-      name: "plan",
-      value: plan,
-      url: u.origin,
-      path: "/",
-      httpOnly: false,
-      sameSite: "Lax",
-      secure: u.protocol === "https:",
-    },
-  ]);
-}
 
 test.describe("Paywall /pro (cas détaillés)", () => {
   test.beforeAll(async () => {
@@ -39,7 +25,6 @@ test.describe("Paywall /pro (cas détaillés)", () => {
     await page.context().clearCookies();
 
     const res = await page.goto(FROM, { waitUntil: "domcontentloaded" });
-
     const u = new URL(page.url(), BASE_URL);
 
     if (u.pathname !== "/paywall") {
@@ -63,9 +48,6 @@ test.describe("Paywall /pro (cas détaillés)", () => {
     );
 
     await setPlanCookie(context, "premium");
-
-    // Local: backdoor login pour poser session + plan
-    // Remote: login() s'appuie sur cookie env (et ne touche pas /api/login)
     await login(page, { plan: "premium" });
 
     const r = await page.goto(FROM, { waitUntil: "domcontentloaded" });
