@@ -167,21 +167,24 @@ export function e2eBaseHeaders(baseUrl: string = BASE_URL): Record<string, strin
   const headers: Record<string, string> = {
     origin,
     referer: `${origin}/`,
-    "x-e2e": "1",
   };
 
-  const bypass = (process.env.VERCEL_AUTOMATION_BYPASS_SECRET ?? "").trim();
-  if (bypass) {
-    headers["x-vercel-protection-bypass"] = bypass;
-    headers["x-vercel-set-bypass-cookie"] = "true";
-  }
+  // Remote seulement
+  if (IS_REMOTE_BASE) {
+    headers["x-e2e"] = "1";
 
-  const token = (process.env.E2E_DEV_LOGIN_TOKEN ?? "").trim();
-  if (token) headers["x-e2e-token"] = token;
+    const bypass = (process.env.VERCEL_AUTOMATION_BYPASS_SECRET ?? "").trim();
+    if (bypass) {
+      headers["x-vercel-protection-bypass"] = bypass;
+      headers["x-vercel-set-bypass-cookie"] = "true";
+    }
+
+    const token = (process.env.E2E_DEV_LOGIN_TOKEN ?? "").trim();
+    if (token) headers["x-e2e-token"] = token;
+  }
 
   return headers;
 }
-
 export function originHeaders(baseUrl: string = BASE_URL): Record<string, string> {
   const origin = new URL(baseUrl).origin;
 
@@ -429,13 +432,28 @@ async function tryLoginCandidates(page: Page, candidates: string[], payload: any
   let lastRes: APIResponse | null = null;
   let lastBody = "";
 
+  const headers = originHeaders();
+
   for (const p of candidates) {
     const path = normalizePath(p);
-    const res = await page.request.post(path, { data: payload, headers: originHeaders() });
-    lastRes = res;
 
-    if (res.status() < 400) return res;
-    lastBody = await res.text().catch(() => "");
+    // 1) POST (normal)
+    const resPost = await page.request.post(path, { data: payload, headers });
+    lastRes = resPost;
+
+    if (resPost.status() < 400) return resPost;
+
+    // 2) Si 405 => fallback GET (pratique si /api/dev/login n'exporte que GET)
+    if (resPost.status() === 405) {
+      const resGet = await page.request.get(path, { params: payload, headers });
+      lastRes = resGet;
+
+      if (resGet.status() < 400) return resGet;
+      lastBody = await resGet.text().catch(() => "");
+      continue;
+    }
+
+    lastBody = await resPost.text().catch(() => "");
   }
 
   const status = lastRes?.status() ?? 0;
@@ -457,6 +475,13 @@ export async function login(
   } = {},
 ): Promise<APIResponse> {
   await resetAuthState(page);
+
+  if (envBool("E2E_SKIP_LOGIN", false)) {
+    throw new Error(
+      `[e2e] login() called but E2E_SKIP_LOGIN=1.\n` +
+        `➡️ Smoke doit éviter le login. Retire l'appel à login() (ou désactive globalSetup storageState).`,
+    );
+  }
 
   const plan = normalizePlan(data.plan);
   const role = normalizeRole(data.role);

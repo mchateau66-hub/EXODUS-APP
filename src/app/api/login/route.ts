@@ -10,10 +10,6 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-function devLoginEnabled() {
-  return process.env.NODE_ENV !== "production" || process.env.ALLOW_DEV_LOGIN === "1";
-}
-
 function isE2E(req: NextRequest): boolean {
   return (req.headers.get("x-e2e") ?? "").trim() === "1";
 }
@@ -23,14 +19,23 @@ function isLocalhost(req: NextRequest): boolean {
   return host.startsWith("localhost") || host.startsWith("127.0.0.1");
 }
 
+/**
+ * ✅ Token strict en prod/preview:
+ * - si E2E_DEV_LOGIN_TOKEN n'est PAS défini en prod => login impossible (404)
+ * - si défini => il faut x-e2e-token correct
+ * - en dev/local => on reste permissif comme avant
+ */
 function tokenOk(req: NextRequest): boolean {
   const expected = (process.env.E2E_DEV_LOGIN_TOKEN ?? "").trim();
+  const isProd = process.env.NODE_ENV === "production";
 
-  // ✅ pas de token configuré => pas de contrôle
+  // prod/preview: token DOIT exister
+  if (isProd && !expected) return false;
+
+  // dev: pas de token configuré => pas de contrôle
   if (!expected) return true;
 
-  // ✅ en local/dev => on ne bloque pas sur le token (évite les mismatch env/process)
-  const isProd = process.env.NODE_ENV === "production";
+  // dev/local: ne bloque pas sur token en localhost
   if (!isProd && isLocalhost(req)) return true;
 
   const got = (req.headers.get("x-e2e-token") ?? "").trim();
@@ -40,6 +45,21 @@ function tokenOk(req: NextRequest): boolean {
   const b = Buffer.from(expected);
   if (a.length !== b.length) return false;
   return timingSafeEqual(a, b);
+}
+
+/**
+ * ✅ En prod/preview:
+ * - on autorise uniquement E2E + token
+ * ✅ En dev:
+ * - comportement existant (browser localhost possible)
+ */
+function devLoginEnabled(req: NextRequest) {
+  const isProd = process.env.NODE_ENV === "production";
+  if (!isProd) return true;
+
+  // prod/preview: uniquement E2E + token
+  if (!isE2E(req)) return false;
+  return tokenOk(req);
 }
 
 function pickPlan(v: unknown): Plan {
@@ -192,26 +212,8 @@ async function ensureE2EOnboarding(userId: string, role: Role) {
 
 export async function POST(req: NextRequest) {
   try {
-    if (!devLoginEnabled()) return new Response("Not found", { status: 404 });
-
-    const e2e = isE2E(req);
-    const local = isLocalhost(req);
-    const isProd = process.env.NODE_ENV === "production";
-
-    // prod => uniquement e2e (+ token si défini)
-    // dev  => e2e ok (+ token si défini, MAIS pas bloquant en localhost), sinon browser ok si localhost
-    if (isProd) {
-      if (!e2e) return new Response("Not found", { status: 404 });
-      if (!tokenOk(req)) return new Response("Not found", { status: 404 });
-    } else {
-      if (e2e) {
-        if (!tokenOk(req)) return new Response("Not found", { status: 404 });
-      } else {
-        if (!local && process.env.ALLOW_BROWSER_DEV_LOGIN !== "1") {
-          return new Response("Not found", { status: 404 });
-        }
-      }
-    }
+    // ✅ gate unique
+    if (!devLoginEnabled(req)) return new Response("Not found", { status: 404 });
 
     const body = (await req.json().catch(() => ({}))) as {
       email?: string;
@@ -298,7 +300,7 @@ export async function POST(req: NextRequest) {
       res.headers.set("x-e2e-user-step", String((userForSession as any).onboardingStep ?? ""));
       return res;
     } catch (err) {
-      const debug = e2e || local;
+      const debug = isE2E(req) || isLocalhost(req);
       console.error("[api/login] createSessionResponseForUser failed, fallback => prisma session", {
         userId: userForSession.id,
         plan,
