@@ -234,7 +234,7 @@ jobs:
       E2E_SMOKE_PATH: ${{ needs.cfg.outputs.smoke_path }}
 
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/exodus_test?schema=public
-      SAT_JWT_SECRET: ${{ secrets.SAT_JWT_SECRET }}
+      SAT_JWT_SECRET: "${{ secrets.SAT_JWT_SECRET }}"
       ALLOW_DEV_LOGIN: "1"
 
     services:
