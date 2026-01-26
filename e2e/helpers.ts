@@ -175,8 +175,7 @@ export function e2eBaseHeaders(baseUrl: string = BASE_URL): Record<string, strin
 
     const bypass = (process.env.VERCEL_AUTOMATION_BYPASS_SECRET ?? "").trim();
     if (bypass) {
-      headers["x-vercel-protection-bypass"] = bypass;
-      headers["x-vercel-set-bypass-cookie"] = "true";
+      headers["x-vercel-protection-bypass"] = bypass; 
     }
 
     const token = (process.env.E2E_DEV_LOGIN_TOKEN ?? "").trim();
@@ -205,7 +204,6 @@ export function originHeaders(baseUrl: string = BASE_URL): Record<string, string
     const bypass = (process.env.VERCEL_AUTOMATION_BYPASS_SECRET ?? "").trim();
     if (bypass) {
       headers["x-vercel-protection-bypass"] = bypass;
-      headers["x-vercel-set-bypass-cookie"] = "true";
     }
   }
 
