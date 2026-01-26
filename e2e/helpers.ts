@@ -542,3 +542,5 @@ export async function login(
   await assertSessionCookies(page);
   return res;
 }
+// Compat: certains specs utilisent encore ensureAnon()
+export const ensureAnon = resetAuthState;
