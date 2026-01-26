@@ -2,9 +2,9 @@ name: Quality Gate
 
 on:
   pull_request:
-    branches: [ main, staging ]
+    branches: [main, staging]
   push:
-    branches: [ main, staging ]
+    branches: [main, staging]
   workflow_dispatch: {}
 
 concurrency:
@@ -18,34 +18,24 @@ jobs:
   quality:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
-      - name: Setup Node.js
+      - name: Setup Node.js (with pnpm cache)
         uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
 
       - name: Setup pnpm (from packageManager)
         uses: pnpm/action-setup@v4
         with:
           run_install: false
-
-      - name: Get pnpm store path
-        id: pnpm-store
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
-
-      - name: Cache pnpm store
-        uses: actions/cache@v4
-        with:
-          path: ${{ steps.pnpm-store.outputs.path }}
-          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-pnpm-store-
 
       - name: Install deps
         run: pnpm install --frozen-lockfile
