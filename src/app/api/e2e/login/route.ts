@@ -6,13 +6,10 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-// ✅ POST = alias direct (types OK)
 export async function POST(req: NextRequest) {
   return LoginPOST(req);
 }
 
-// ✅ GET = fallback (si un client appelle en GET)
-// On transforme les query params -> body JSON -> POST /api/login
 export async function GET(req: NextRequest) {
   const url = req.nextUrl;
 
@@ -32,6 +29,13 @@ export async function GET(req: NextRequest) {
   };
 
   const headers = new Headers(req.headers);
+
+  // Important: éviter un content-length incohérent (GET => 0) quand on met un body
+  headers.delete("content-length");
+  headers.delete("transfer-encoding");
+
+  // S’assure que le handler /api/login te considère bien "E2E"
+  headers.set("x-e2e", headers.get("x-e2e") ?? "1");
   headers.set("content-type", "application/json");
 
   const target = new URL("/api/login", url.origin);
