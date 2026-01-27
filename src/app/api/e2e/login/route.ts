@@ -6,7 +6,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-type Payload = {
+type LoginPayload = {
   email?: string;
   plan?: string;
   role?: string;
@@ -14,67 +14,78 @@ type Payload = {
   maxAgeSeconds?: number;
 };
 
-function num(url: URL, key: string) {
-  const v = url.searchParams.get(key);
-  if (!v) return undefined;
-  const n = Number(v);
-  return Number.isFinite(n) ? n : undefined;
+function cookieKV(name: string, value: string, maxAgeSeconds = 60 * 60 * 24) {
+  // Cookies lisibles côté serveur (HttpOnly ok), sécurisés, pour HTTPS Vercel
+  return `${name}=${encodeURIComponent(value)}; Path=/; Max-Age=${maxAgeSeconds}; HttpOnly; Secure; SameSite=Lax`;
 }
 
-function cookieAttrs(reqUrl: URL) {
-  const secure = reqUrl.protocol === "https:";
-  // HttpOnly + SameSite=Lax suffisent pour l’e2e
-  return `Path=/; HttpOnly; SameSite=Lax${secure ? "; Secure" : ""}`;
-}
+function withE2ECookies(res: Response, payload: LoginPayload) {
+  const plan = (payload.plan ?? "").trim();
+  const role = (payload.role ?? "").trim();
 
-function appendCookie(headers: Headers, name: string, value: string, reqUrl: URL) {
-  headers.append("set-cookie", `${name}=${encodeURIComponent(value)}; ${cookieAttrs(reqUrl)}`);
-}
+  // si pas de plan/role, on ne touche pas
+  if (!plan || !role) return res;
 
-function withE2ECookies(res: Response, req: NextRequest, payload: Payload) {
   const headers = new Headers(res.headers);
 
-  // Pose plan/role uniquement si fournis
-  if (payload.plan) appendCookie(headers, "e2e_plan", payload.plan, new URL(req.url));
-  if (payload.role) appendCookie(headers, "e2e_role", payload.role, new URL(req.url));
+  // cookies E2E pour /api/sat (fallback)
+  headers.append("set-cookie", cookieKV("e2e_plan", plan));
+  headers.append("set-cookie", cookieKV("e2e_role", role));
 
-  return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
+  // optionnel : si tu veux aussi exposer onboardingStep, décommente
+  // if (typeof payload.onboardingStep === "number") {
+  //   headers.append("set-cookie", cookieKV("e2e_onboardingStep", String(payload.onboardingStep)));
+  // }
+
+  return new Response(res.body, {
+    status: res.status,
+    statusText: res.statusText,
+    headers,
+  });
 }
 
 export async function POST(req: NextRequest) {
-  // On clone pour pouvoir lire le body sans “consommer” la request originale
-  const clone = req.clone();
-  let payload: Payload = {};
+  // On lit le body via clone() pour ne pas consommer le stream original
+  const cloned = req.clone();
+  let payload: LoginPayload = {};
   try {
-    payload = (await clone.json()) as Payload;
+    payload = (await cloned.json()) as LoginPayload;
   } catch {
     payload = {};
   }
 
   const res = await LoginPOST(req);
-  return withE2ECookies(res, req, payload);
+  return withE2ECookies(res, payload);
 }
 
 export async function GET(req: NextRequest) {
-  const url = new URL(req.url);
+  const url = req.nextUrl;
 
-  const payload: Payload = {
+  const num = (key: string) => {
+    const v = url.searchParams.get(key);
+    if (!v) return undefined;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : undefined;
+  };
+
+  const payload: LoginPayload = {
     email: url.searchParams.get("email") ?? undefined,
     plan: url.searchParams.get("plan") ?? undefined,
     role: url.searchParams.get("role") ?? undefined,
-    onboardingStep: num(url, "onboardingStep"),
-    maxAgeSeconds: num(url, "maxAgeSeconds"),
+    onboardingStep: num("onboardingStep"),
+    maxAgeSeconds: num("maxAgeSeconds"),
   };
 
   const headers = new Headers(req.headers);
   headers.delete("content-length");
   headers.delete("transfer-encoding");
 
+  // S’assure que /api/login te considère bien "E2E"
   headers.set("x-e2e", headers.get("x-e2e") ?? "1");
   headers.set("content-type", "application/json");
-  headers.set("accept", "application/json");
 
   const target = new URL("/api/login", url.origin);
+
   const proxyReq = new NextRequest(target, {
     method: "POST",
     headers,
@@ -82,5 +93,5 @@ export async function GET(req: NextRequest) {
   });
 
   const res = await LoginPOST(proxyReq);
-  return withE2ECookies(res, req, payload);
+  return withE2ECookies(res, payload);
 }
