@@ -16,26 +16,18 @@ function json(body: any, init: ResponseInit = {}) {
   return new Response(JSON.stringify(body), { ...init, headers: h });
 }
 
+function noStore(headers?: HeadersInit) {
+  const h = new Headers(headers);
+  h.set("cache-control", "no-store");
+  return h;
+}
+
 function makeDefaultSatResponse() {
   return {
     pro: false,
     status: "NONE",
     planKey: null as string | null,
     planName: null as string | null,
-    expiresAt: null as Date | string | null,
-    trialEndAt: null as Date | string | null,
-  };
-}
-
-function makeSatResponseFromPlan(planKey: string | null) {
-  if (!planKey) return makeDefaultSatResponse();
-  const k = planKey.trim();
-  const isPro = k.includes("premium") || k === "premium" || k === "pro";
-  return {
-    pro: isPro,
-    status: isPro ? "active" : "NONE",
-    planKey: isPro ? k : null,
-    planName: isPro ? "Premium" : null,
     expiresAt: null as Date | string | null,
     trialEndAt: null as Date | string | null,
   };
@@ -51,16 +43,13 @@ function isHttpMethod(m: string) {
   return ["GET", "POST", "PUT", "PATCH", "DELETE"].includes(m);
 }
 
-function isEntitlementActive(ent: { starts_at: Date; expires_at: Date | null }, now: Date) {
+function isEntitlementActive(
+  ent: { starts_at: Date; expires_at: Date | null },
+  now: Date,
+) {
   if (ent.starts_at > now) return false;
   if (ent.expires_at && ent.expires_at <= now) return false;
   return true;
-}
-
-function noStore(headers?: HeadersInit) {
-  const h = new Headers(headers);
-  h.set("cache-control", "no-store");
-  return h;
 }
 
 function envBool(name: string) {
@@ -68,52 +57,101 @@ function envBool(name: string) {
   return v === "1" || v === "true" || v === "yes" || v === "on";
 }
 
-function requireE2ETokenIfE2E(req: NextRequest) {
-  const isE2E = req.headers.get("x-e2e") === "1";
-  if (!isE2E) return { isE2E: false as const, ok: true as const };
+function isE2E(req: NextRequest) {
+  return req.headers.get("x-e2e") === "1";
+}
 
-  const provided = (req.headers.get("x-e2e-token") ?? "").trim();
+/**
+ * En E2E, on exige un token (x-e2e-token) qui doit matcher E2E_DEV_LOGIN_TOKEN.
+ * (c’est ce que tu utilises déjà côté tests/curl)
+ */
+function requireE2ETokenIfE2E(req: NextRequest): { ok: true } | { ok: false; res: Response } {
+  if (!isE2E(req)) return { ok: true };
+
   const expected = (process.env.E2E_DEV_LOGIN_TOKEN ?? "").trim();
-
-  if (!expected || provided !== expected) {
+  if (!expected) {
     return {
-      isE2E: true as const,
-      ok: false as const,
-      res: json({ ok: false, error: "invalid_e2e_token" }, { status: 401, headers: noStore() }),
+      ok: false,
+      res: json(
+        { ok: false, error: "missing_E2E_DEV_LOGIN_TOKEN" },
+        { status: 500, headers: noStore() },
+      ),
     };
   }
 
-  return { isE2E: true as const, ok: true as const };
+  const got = (req.headers.get("x-e2e-token") ?? "").trim();
+  if (!got || got !== expected) {
+    return {
+      ok: false,
+      res: json({ ok: false, error: "forbidden" }, { status: 403, headers: noStore() }),
+    };
+  }
+
+  return { ok: true };
 }
 
-function derivePlanKey(rawPlan: string | null, rawRole: string | null) {
-  if (!rawPlan) return null;
-  const plan = rawPlan.trim();
-  const role = (rawRole ?? "").trim();
+function computePlanKey(planRaw: string, roleRaw: string): string | null {
+  const plan = planRaw.toLowerCase();
+  const role = roleRaw.toLowerCase();
 
-  // si on a "premium" + role => "athlete_premium"/"coach_premium"
-  if (plan === "premium" && (role === "athlete" || role === "coach")) return `${role}_premium`;
+  // adapte si tu as d’autres combos
+  if (plan === "premium") {
+    if (role === "athlete") return "athlete_premium";
+    if (role === "coach") return "coach_premium";
+    return "premium";
+  }
 
-  return plan;
+  if (plan === "free") {
+    if (role === "athlete") return "athlete_free";
+    if (role === "coach") return "coach_free";
+    return "free";
+  }
+
+  return null;
+}
+
+function isPaidPlan(planRaw: string) {
+  const p = planRaw.toLowerCase();
+  return p === "premium" || p === "pro" || p === "paid";
 }
 
 export async function GET(req: NextRequest) {
   try {
-    // 🔐 Si E2E => token obligatoire
-    const e2e = requireE2ETokenIfE2E(req);
-    if (!e2e.ok) return e2e.res;
-
     const { searchParams } = new URL(req.url);
 
-    // On récupère la session une fois (utile pour userId + plan/role fallback)
-    const sessionCtx = await getUserFromSession().catch(() => null);
-    const sessionUser = (sessionCtx as any)?.user;
+    // ✅ E2E override: /api/sat?plan=premium&role=athlete (+ headers x-e2e + x-e2e-token)
+    if (isE2E(req)) {
+      const e2e = requireE2ETokenIfE2E(req);
+      if (!e2e.ok) return e2e.res;
+
+      const plan = normStr(searchParams.get("plan"));
+      const role = normStr(searchParams.get("role"));
+
+      const planKey = computePlanKey(plan, role);
+      if (planKey) {
+        return json(
+          {
+            pro: isPaidPlan(plan),
+            status: "active",
+            planKey,
+            planName: plan ? plan[0].toUpperCase() + plan.slice(1).toLowerCase() : null,
+            expiresAt: null,
+            trialEndAt: null,
+          },
+          { status: 200, headers: noStore() },
+        );
+      }
+      // sinon on retombe sur le chemin "normal" DB/session ci-dessous
+    }
 
     let userId = searchParams.get("userId");
-    if (!userId && sessionUser?.id) userId = String(sessionUser.id);
 
     if (!userId) {
-      // même en E2E, si pas de user => réponse par défaut
+      const sessionCtx = await getUserFromSession().catch(() => null);
+      if ((sessionCtx as any)?.user?.id) userId = (sessionCtx as any).user.id;
+    }
+
+    if (!userId) {
       return json(makeDefaultSatResponse(), { status: 200, headers: noStore() });
     }
 
@@ -123,54 +161,23 @@ export async function GET(req: NextRequest) {
       orderBy: { created_at: "desc" },
     });
 
-    // ✅ Cas normal (DB OK)
-    if (entitlement?.subscription) {
-      const sub = entitlement.subscription;
-      return json(
-        {
-          pro: sub.status === "active",
-          status: sub.status,
-          planKey: sub.plan_key,
-          planName: sub.plan?.name ?? null,
-          expiresAt: sub.expires_at ?? null,
-          trialEndAt: sub.trial_end_at ?? null,
-        },
-        { status: 200, headers: noStore() }
-      );
+    if (!entitlement || !entitlement.subscription) {
+      return json(makeDefaultSatResponse(), { status: 200, headers: noStore() });
     }
 
-    // ✅ Nouveau : fallback E2E (pas d'entitlements en DB)
-    if (e2e.isE2E) {
-      const qpPlan = searchParams.get("planKey") ?? searchParams.get("plan");
-      const qpRole = searchParams.get("role");
+    const sub = entitlement.subscription;
 
-      const cookiePlan =
-        req.cookies.get("planKey")?.value ??
-        req.cookies.get("plan")?.value ??
-        req.cookies.get("plan_key")?.value ??
-        null;
-
-      const cookieRole = req.cookies.get("role")?.value ?? null;
-
-      const sessionPlan =
-        (sessionCtx as any)?.planKey ??
-        (sessionUser as any)?.planKey ??
-        (sessionUser as any)?.plan ??
-        (sessionCtx as any)?.plan ??
-        null;
-
-      const sessionRole = (sessionUser as any)?.role ?? null;
-
-      const rawPlan = qpPlan ?? cookiePlan ?? sessionPlan;
-      const rawRole = qpRole ?? cookieRole ?? sessionRole;
-
-      const planKey = derivePlanKey(rawPlan, rawRole);
-
-      return json(makeSatResponseFromPlan(planKey), { status: 200, headers: noStore() });
-    }
-
-    // ❌ hors E2E => réponse par défaut
-    return json(makeDefaultSatResponse(), { status: 200, headers: noStore() });
+    return json(
+      {
+        pro: sub.status === "active",
+        status: sub.status,
+        planKey: sub.plan_key,
+        planName: sub.plan?.name ?? null,
+        expiresAt: sub.expires_at ?? null,
+        trialEndAt: sub.trial_end_at ?? null,
+      },
+      { status: 200, headers: noStore() },
+    );
   } catch (error) {
     console.error("Error in GET /api/sat", error);
     return json({ error: "Internal server error" }, { status: 500, headers: noStore() });
@@ -178,13 +185,14 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  // CSRF / JSON checks
   const csrf = requireSameOrigin(req);
   if (csrf) return new Response(csrf.body, { status: csrf.status, headers: noStore(csrf.headers) }) as any;
 
   const jsonOnly = requireJson(req);
   if (jsonOnly) return new Response(jsonOnly.body, { status: jsonOnly.status, headers: noStore(jsonOnly.headers) }) as any;
 
-  // 🔐 Si E2E => token obligatoire
+  // ✅ Si E2E => token obligatoire
   const e2e = requireE2ETokenIfE2E(req);
   if (!e2e.ok) return e2e.res;
 
@@ -198,10 +206,10 @@ export async function POST(req: NextRequest) {
   const isProd = process.env.NODE_ENV === "production";
   const forceRateLimit = envBool("E2E_FORCE_SAT_RATELIMIT");
   const inCI = envBool("CI");
-  const isE2E = req.headers.get("x-e2e") === "1";
 
-  // ✅ Rate-limit ON en prod/CI/force/e2e
-  const enableRateLimit = isProd || inCI || forceRateLimit || isE2E;
+  // ✅ E2E auto => rate-limit ON
+  const isE2EReq = isE2E(req);
+  const enableRateLimit = isProd || inCI || forceRateLimit || isE2EReq;
 
   let body: SatIssueBody = {};
   try {
@@ -242,7 +250,7 @@ export async function POST(req: NextRequest) {
   const premiumGated = new Set(["contacts.view", "whatsapp.handoff", "chat.media"]);
 
   // ✅ En prod on enforce les entitlements, MAIS on bypass en E2E
-  const enforceEntitlements = isProd && premiumGated.has(feature) && !isE2E;
+  const enforceEntitlements = isProd && premiumGated.has(feature) && !isE2EReq;
 
   if (enforceEntitlements) {
     const now = new Date();
