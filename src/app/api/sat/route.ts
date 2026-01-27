@@ -27,6 +27,20 @@ function makeDefaultSatResponse() {
   };
 }
 
+function makeSatResponseFromPlan(planKey: string | null) {
+  if (!planKey) return makeDefaultSatResponse();
+  const k = planKey.trim();
+  const isPro = k.includes("premium") || k === "premium" || k === "pro";
+  return {
+    pro: isPro,
+    status: isPro ? "active" : "NONE",
+    planKey: isPro ? k : null,
+    planName: isPro ? "Premium" : null,
+    expiresAt: null as Date | string | null,
+    trialEndAt: null as Date | string | null,
+  };
+}
+
 type SatIssueBody = { feature?: unknown; method?: unknown; path?: unknown };
 
 function normStr(x: unknown) {
@@ -54,17 +68,52 @@ function envBool(name: string) {
   return v === "1" || v === "true" || v === "yes" || v === "on";
 }
 
+function requireE2ETokenIfE2E(req: NextRequest) {
+  const isE2E = req.headers.get("x-e2e") === "1";
+  if (!isE2E) return { isE2E: false as const, ok: true as const };
+
+  const provided = (req.headers.get("x-e2e-token") ?? "").trim();
+  const expected = (process.env.E2E_DEV_LOGIN_TOKEN ?? "").trim();
+
+  if (!expected || provided !== expected) {
+    return {
+      isE2E: true as const,
+      ok: false as const,
+      res: json({ ok: false, error: "invalid_e2e_token" }, { status: 401, headers: noStore() }),
+    };
+  }
+
+  return { isE2E: true as const, ok: true as const };
+}
+
+function derivePlanKey(rawPlan: string | null, rawRole: string | null) {
+  if (!rawPlan) return null;
+  const plan = rawPlan.trim();
+  const role = (rawRole ?? "").trim();
+
+  // si on a "premium" + role => "athlete_premium"/"coach_premium"
+  if (plan === "premium" && (role === "athlete" || role === "coach")) return `${role}_premium`;
+
+  return plan;
+}
+
 export async function GET(req: NextRequest) {
   try {
+    // 🔐 Si E2E => token obligatoire
+    const e2e = requireE2ETokenIfE2E(req);
+    if (!e2e.ok) return e2e.res;
+
     const { searchParams } = new URL(req.url);
+
+    // On récupère la session une fois (utile pour userId + plan/role fallback)
+    const sessionCtx = await getUserFromSession().catch(() => null);
+    const sessionUser = (sessionCtx as any)?.user;
+
     let userId = searchParams.get("userId");
+    if (!userId && sessionUser?.id) userId = String(sessionUser.id);
 
     if (!userId) {
-      const sessionCtx = await getUserFromSession().catch(() => null);
-      if ((sessionCtx as any)?.user?.id) userId = (sessionCtx as any).user.id;
-    }
-
-    if (!userId) {
+      // même en E2E, si pas de user => réponse par défaut
       return json(makeDefaultSatResponse(), { status: 200, headers: noStore() });
     }
 
@@ -74,23 +123,54 @@ export async function GET(req: NextRequest) {
       orderBy: { created_at: "desc" },
     });
 
-    if (!entitlement || !entitlement.subscription) {
-      return json(makeDefaultSatResponse(), { status: 200, headers: noStore() });
+    // ✅ Cas normal (DB OK)
+    if (entitlement?.subscription) {
+      const sub = entitlement.subscription;
+      return json(
+        {
+          pro: sub.status === "active",
+          status: sub.status,
+          planKey: sub.plan_key,
+          planName: sub.plan?.name ?? null,
+          expiresAt: sub.expires_at ?? null,
+          trialEndAt: sub.trial_end_at ?? null,
+        },
+        { status: 200, headers: noStore() }
+      );
     }
 
-    const sub = entitlement.subscription;
+    // ✅ Nouveau : fallback E2E (pas d'entitlements en DB)
+    if (e2e.isE2E) {
+      const qpPlan = searchParams.get("planKey") ?? searchParams.get("plan");
+      const qpRole = searchParams.get("role");
 
-    return json(
-      {
-        pro: sub.status === "active",
-        status: sub.status,
-        planKey: sub.plan_key,
-        planName: sub.plan?.name ?? null,
-        expiresAt: sub.expires_at ?? null,
-        trialEndAt: sub.trial_end_at ?? null,
-      },
-      { status: 200, headers: noStore() },
-    );
+      const cookiePlan =
+        req.cookies.get("planKey")?.value ??
+        req.cookies.get("plan")?.value ??
+        req.cookies.get("plan_key")?.value ??
+        null;
+
+      const cookieRole = req.cookies.get("role")?.value ?? null;
+
+      const sessionPlan =
+        (sessionCtx as any)?.planKey ??
+        (sessionUser as any)?.planKey ??
+        (sessionUser as any)?.plan ??
+        (sessionCtx as any)?.plan ??
+        null;
+
+      const sessionRole = (sessionUser as any)?.role ?? null;
+
+      const rawPlan = qpPlan ?? cookiePlan ?? sessionPlan;
+      const rawRole = qpRole ?? cookieRole ?? sessionRole;
+
+      const planKey = derivePlanKey(rawPlan, rawRole);
+
+      return json(makeSatResponseFromPlan(planKey), { status: 200, headers: noStore() });
+    }
+
+    // ❌ hors E2E => réponse par défaut
+    return json(makeDefaultSatResponse(), { status: 200, headers: noStore() });
   } catch (error) {
     console.error("Error in GET /api/sat", error);
     return json({ error: "Internal server error" }, { status: 500, headers: noStore() });
@@ -104,6 +184,10 @@ export async function POST(req: NextRequest) {
   const jsonOnly = requireJson(req);
   if (jsonOnly) return new Response(jsonOnly.body, { status: jsonOnly.status, headers: noStore(jsonOnly.headers) }) as any;
 
+  // 🔐 Si E2E => token obligatoire
+  const e2e = requireE2ETokenIfE2E(req);
+  if (!e2e.ok) return e2e.res;
+
   const session = await getUserFromSession().catch(() => null);
   const user = (session as any)?.user;
 
@@ -114,10 +198,9 @@ export async function POST(req: NextRequest) {
   const isProd = process.env.NODE_ENV === "production";
   const forceRateLimit = envBool("E2E_FORCE_SAT_RATELIMIT");
   const inCI = envBool("CI");
-
-  // ✅ Nouveau: E2E auto (Playwright / tests) => rate-limit ON
   const isE2E = req.headers.get("x-e2e") === "1";
 
+  // ✅ Rate-limit ON en prod/CI/force/e2e
   const enableRateLimit = isProd || inCI || forceRateLimit || isE2E;
 
   let body: SatIssueBody = {};
@@ -157,7 +240,11 @@ export async function POST(req: NextRequest) {
   }
 
   const premiumGated = new Set(["contacts.view", "whatsapp.handoff", "chat.media"]);
-  if (isProd && premiumGated.has(feature)) {
+
+  // ✅ En prod on enforce les entitlements, MAIS on bypass en E2E
+  const enforceEntitlements = isProd && premiumGated.has(feature) && !isE2E;
+
+  if (enforceEntitlements) {
     const now = new Date();
     const entitlements = await prisma.userEntitlement.findMany({
       where: { user_id: String(user.id) },
