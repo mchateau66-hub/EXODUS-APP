@@ -16,12 +16,6 @@ function json(body: any, init: ResponseInit = {}) {
   return new Response(JSON.stringify(body), { ...init, headers: h });
 }
 
-function noStore(headers?: HeadersInit) {
-  const h = new Headers(headers);
-  h.set("cache-control", "no-store");
-  return h;
-}
-
 function makeDefaultSatResponse() {
   return {
     pro: false,
@@ -43,13 +37,16 @@ function isHttpMethod(m: string) {
   return ["GET", "POST", "PUT", "PATCH", "DELETE"].includes(m);
 }
 
-function isEntitlementActive(
-  ent: { starts_at: Date; expires_at: Date | null },
-  now: Date,
-) {
+function isEntitlementActive(ent: { starts_at: Date; expires_at: Date | null }, now: Date) {
   if (ent.starts_at > now) return false;
   if (ent.expires_at && ent.expires_at <= now) return false;
   return true;
+}
+
+function noStore(headers?: HeadersInit) {
+  const h = new Headers(headers);
+  h.set("cache-control", "no-store");
+  return h;
 }
 
 function envBool(name: string) {
@@ -57,75 +54,67 @@ function envBool(name: string) {
   return v === "1" || v === "true" || v === "yes" || v === "on";
 }
 
+/** ✅ manquait chez toi -> d’où l’erreur */
 function isE2E(req: NextRequest) {
   return req.headers.get("x-e2e") === "1";
 }
 
-/**
- * En E2E, on exige un token (x-e2e-token) qui doit matcher E2E_DEV_LOGIN_TOKEN.
- * (c’est ce que tu utilises déjà côté tests/curl)
- */
-function requireE2ETokenIfE2E(req: NextRequest): { ok: true } | { ok: false; res: Response } {
-  if (!isE2E(req)) return { ok: true };
+/** ✅ vérifie le token E2E uniquement quand x-e2e: 1 */
+function requireE2ETokenIfE2E(req: NextRequest) {
+  if (!isE2E(req)) return { ok: true as const };
 
+  const token = (req.headers.get("x-e2e-token") ?? "").trim();
   const expected = (process.env.E2E_DEV_LOGIN_TOKEN ?? "").trim();
+
   if (!expected) {
     return {
-      ok: false,
-      res: json(
-        { ok: false, error: "missing_E2E_DEV_LOGIN_TOKEN" },
-        { status: 500, headers: noStore() },
-      ),
+      ok: false as const,
+      res: json({ ok: false, error: "missing_server_e2e_token_env" }, { status: 500, headers: noStore() }),
     };
   }
-
-  const got = (req.headers.get("x-e2e-token") ?? "").trim();
-  if (!got || got !== expected) {
+  if (!token || token !== expected) {
     return {
-      ok: false,
-      res: json({ ok: false, error: "forbidden" }, { status: 403, headers: noStore() }),
+      ok: false as const,
+      res: json({ ok: false, error: "unauthorized_e2e" }, { status: 401, headers: noStore() }),
     };
   }
-
-  return { ok: true };
+  return { ok: true as const };
 }
 
-function computePlanKey(planRaw: string, roleRaw: string): string | null {
-  const plan = planRaw.toLowerCase();
-  const role = roleRaw.toLowerCase();
-
-  // adapte si tu as d’autres combos
-  if (plan === "premium") {
-    if (role === "athlete") return "athlete_premium";
-    if (role === "coach") return "coach_premium";
-    return "premium";
-  }
-
-  if (plan === "free") {
-    if (role === "athlete") return "athlete_free";
-    if (role === "coach") return "coach_free";
-    return "free";
-  }
-
-  return null;
+function isPaidPlan(plan: string) {
+  const p = plan.toLowerCase();
+  return p !== "" && p !== "free";
 }
 
-function isPaidPlan(planRaw: string) {
-  const p = planRaw.toLowerCase();
-  return p === "premium" || p === "pro" || p === "paid";
+function planNameFromPlan(plan: string) {
+  const p = plan.toLowerCase();
+  if (p === "premium") return "Premium";
+  if (p === "master") return "Master";
+  if (p === "free") return "Free";
+  return plan || null;
+}
+
+function computePlanKey(plan: string, role: string) {
+  const p = plan.toLowerCase();
+  const r = role.toLowerCase();
+  if (!p || !r) return null;
+  return `${r}_${p}`;
 }
 
 export async function GET(req: NextRequest) {
   try {
-    const { searchParams } = new URL(req.url);
+    const url = new URL(req.url);
+    const { searchParams } = url;
 
-    // ✅ E2E override: /api/sat?plan=premium&role=athlete (+ headers x-e2e + x-e2e-token)
+    // ✅ E2E override: /api/sat?plan=premium&role=athlete (ou cookies e2e_plan/e2e_role)
     if (isE2E(req)) {
-      const e2e = requireE2ETokenIfE2E(req);
-      if (!e2e.ok) return e2e.res;
+      const gate = requireE2ETokenIfE2E(req);
+      if (!gate.ok) return gate.res;
 
-      const plan = normStr(searchParams.get("plan"));
-      const role = normStr(searchParams.get("role"));
+      const plan =
+        normStr(searchParams.get("plan")) || normStr(req.cookies.get("e2e_plan")?.value);
+      const role =
+        normStr(searchParams.get("role")) || normStr(req.cookies.get("e2e_role")?.value);
 
       const planKey = computePlanKey(plan, role);
       if (planKey) {
@@ -134,16 +123,17 @@ export async function GET(req: NextRequest) {
             pro: isPaidPlan(plan),
             status: "active",
             planKey,
-            planName: plan ? plan[0].toUpperCase() + plan.slice(1).toLowerCase() : null,
+            planName: planNameFromPlan(plan),
             expiresAt: null,
             trialEndAt: null,
           },
           { status: 200, headers: noStore() },
         );
       }
-      // sinon on retombe sur le chemin "normal" DB/session ci-dessous
+      // si pas de plan/role -> on continue en mode "normal"
     }
 
+    // --- Mode normal (prod / user session)
     let userId = searchParams.get("userId");
 
     if (!userId) {
@@ -185,16 +175,11 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  // CSRF / JSON checks
   const csrf = requireSameOrigin(req);
   if (csrf) return new Response(csrf.body, { status: csrf.status, headers: noStore(csrf.headers) }) as any;
 
   const jsonOnly = requireJson(req);
   if (jsonOnly) return new Response(jsonOnly.body, { status: jsonOnly.status, headers: noStore(jsonOnly.headers) }) as any;
-
-  // ✅ Si E2E => token obligatoire
-  const e2e = requireE2ETokenIfE2E(req);
-  if (!e2e.ok) return e2e.res;
 
   const session = await getUserFromSession().catch(() => null);
   const user = (session as any)?.user;
@@ -206,10 +191,10 @@ export async function POST(req: NextRequest) {
   const isProd = process.env.NODE_ENV === "production";
   const forceRateLimit = envBool("E2E_FORCE_SAT_RATELIMIT");
   const inCI = envBool("CI");
+  const e2e = isE2E(req);
 
-  // ✅ E2E auto => rate-limit ON
-  const isE2EReq = isE2E(req);
-  const enableRateLimit = isProd || inCI || forceRateLimit || isE2EReq;
+  // ✅ rate-limit ON en prod/CI/force + E2E
+  const enableRateLimit = isProd || inCI || forceRateLimit || e2e;
 
   let body: SatIssueBody = {};
   try {
@@ -249,8 +234,8 @@ export async function POST(req: NextRequest) {
 
   const premiumGated = new Set(["contacts.view", "whatsapp.handoff", "chat.media"]);
 
-  // ✅ En prod on enforce les entitlements, MAIS on bypass en E2E
-  const enforceEntitlements = isProd && premiumGated.has(feature) && !isE2EReq;
+  // ✅ En prod: entitlements ON, mais en E2E: on bypass
+  const enforceEntitlements = isProd && premiumGated.has(feature) && !e2e;
 
   if (enforceEntitlements) {
     const now = new Date();
