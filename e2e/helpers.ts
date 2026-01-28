@@ -17,6 +17,37 @@ function log(...args: any[]) {
 // ------------------------------
 // Base URL / env helpers
 // ------------------------------
+
+function isPWResponse(res: unknown): res is PWResponse {
+  return !!res && typeof (res as any).request === "function" && typeof (res as any).url === "function";
+}
+
+/**
+ * Retourne la réponse du 1er hop (la première réponse "redirect")
+ * si la navigation a été redirigée, sinon null.
+ */
+export async function firstRedirectResponse(res: ResLike | null | undefined): Promise<PWResponse | null> {
+  if (!res) return null;
+
+  // Si c’est déjà une réponse redirect (rare avec page.goto car il suit), on renvoie telle quelle
+  const st = readStatus(res);
+  if ([301, 302, 303, 307, 308].includes(st) && isPWResponse(res)) return res;
+
+  if (!isPWResponse(res)) return null;
+
+  let req = res.request();
+  if (!req || typeof req.redirectedFrom !== "function") return null;
+
+  // Pas de redirect chain
+  if (!req.redirectedFrom()) return null;
+
+  // Remonte jusqu’au tout premier request (celui qui a déclenché les redirects)
+  while (req.redirectedFrom()) req = req.redirectedFrom()!;
+
+  const first = await req.response();
+  return (first as PWResponse) ?? null;
+}
+
 function normalizeBaseUrl(raw: string) {
   const base = (raw || "").trim().replace(/\/+$/, "");
   let u: URL;
@@ -175,7 +206,7 @@ export function e2eBaseHeaders(baseUrl: string = BASE_URL): Record<string, strin
 
     const bypass = (process.env.VERCEL_AUTOMATION_BYPASS_SECRET ?? "").trim();
     if (bypass) {
-      headers["x-vercel-protection-bypass"] = bypass; 
+      headers["x-vercel-protection-bypass"] = bypass;
     }
 
     const token = (process.env.E2E_DEV_LOGIN_TOKEN ?? "").trim();
@@ -484,8 +515,7 @@ export async function login(
   const plan = normalizePlan(data.plan);
   const role = normalizeRole(data.role);
 
-  const email =
-    (data.email ?? process.env.E2E_TEST_EMAIL ?? `e2e+${randomUUID()}@exodus.local`).trim();
+  const email = (data.email ?? process.env.E2E_TEST_EMAIL ?? `e2e+${randomUUID()}@exodus.local`).trim();
 
   const onboardingStep =
     typeof data.onboardingStep === "number" && Number.isFinite(data.onboardingStep)
@@ -510,11 +540,7 @@ export async function login(
 
     const token = (process.env.E2E_DEV_LOGIN_TOKEN ?? "").trim();
     if (token) {
-      const candidates = [
-        process.env.E2E_DEV_LOGIN_PATH ?? "/api/login",
-        "/api/e2e/login",
-        "/api/dev/login",
-      ];
+      const candidates = [process.env.E2E_DEV_LOGIN_PATH ?? "/api/login", "/api/e2e/login", "/api/dev/login"];
       const res = await tryLoginCandidates(page, candidates, payload);
       await assertSessionCookies(page);
       return res;
@@ -530,15 +556,12 @@ export async function login(
   }
 
   // Local
-  const candidates = [
-    process.env.E2E_DEV_LOGIN_PATH ?? "/api/login",
-    "/api/e2e/login",
-    "/api/dev/login",
-  ];
+  const candidates = [process.env.E2E_DEV_LOGIN_PATH ?? "/api/login", "/api/e2e/login", "/api/dev/login"];
 
   const res = await tryLoginCandidates(page, candidates, payload);
   await assertSessionCookies(page);
   return res;
 }
+
 // Compat: certains specs utilisent encore ensureAnon()
 export const ensureAnon = resetAuthState;
