@@ -188,7 +188,30 @@ export async function gotoOk(
   expectOk(res, { allowRedirects: opts?.allowRedirects, hint: `goto(${pathOrUrl})` });
   return res;
 }
+// ------------------------------
+// Paywall redirect assertions
+// ------------------------------
+export function expectRedirectToPaywall(res: ResLike, fromPath: string) {
+  const st = readStatus(res);
 
+  // On accepte uniquement les redirects
+  expect([301, 302, 303, 307, 308]).toContain(st);
+
+  const loc = getHeader(res, "location") ?? "";
+  expect(loc, "Missing Location header on redirect").toBeTruthy();
+
+  // Location peut être relative ("/paywall?...") ou absolute ("https://.../paywall?...").
+  const url = new URL(loc, ORIGIN);
+
+  expect(url.pathname).toBe("/paywall");
+
+  const from = url.searchParams.get("from");
+  expect(from, "Missing from= in /paywall redirect").toBeTruthy();
+
+  if (fromPath) {
+    expect(from ?? "").toContain(fromPath);
+  }  
+}
 // ------------------------------
 // Headers
 // ------------------------------
@@ -207,6 +230,7 @@ export function e2eBaseHeaders(baseUrl: string = BASE_URL): Record<string, strin
     const bypass = (process.env.VERCEL_AUTOMATION_BYPASS_SECRET ?? "").trim();
     if (bypass) {
       headers["x-vercel-protection-bypass"] = bypass;
+      headers["x-vercel-set-bypass-cookie"] = "true";
     }
 
     const token = (process.env.E2E_DEV_LOGIN_TOKEN ?? "").trim();
@@ -235,6 +259,7 @@ export function originHeaders(baseUrl: string = BASE_URL): Record<string, string
     const bypass = (process.env.VERCEL_AUTOMATION_BYPASS_SECRET ?? "").trim();
     if (bypass) {
       headers["x-vercel-protection-bypass"] = bypass;
+      headers["x-vercel-set-bypass-cookie"] = "true";
     }
   }
 
@@ -562,6 +587,35 @@ export async function login(
   await assertSessionCookies(page);
   return res;
 }
+// ------------------------------
+// Paywall helpers
+// ------------------------------
+// ------------------------------
+// Paywall helpers
+// ------------------------------
+export async function isPaywallVisible(page: Page): Promise<boolean> {
+  // petit buffer pour hydration
+  await page.waitForLoadState("domcontentloaded").catch(() => {});
+  await page.waitForTimeout(150).catch(() => {});
 
+  // 1) ✅ testids (fix propre)
+  if (await page.locator('[data-testid="paywall"]').first().isVisible().catch(() => false)) return true;
+  if (await page.locator('[data-testid="paywall-cta"]').first().isVisible().catch(() => false)) return true;
+
+  // 2) URL = /paywall
+  try {
+    const u = new URL(page.url());
+    if (u.pathname === "/paywall") return true;
+  } catch {}
+
+  // 3) Paywall en dialog (si tu en as un)
+  if (await page.getByRole("dialog").first().isVisible().catch(() => false)) return true;
+
+  // 4) Fallback texte (au cas où)
+  if (await page.getByText(/limite atteinte|offre premium|débloquer/i).first().isVisible().catch(() => false))
+    return true;
+
+  return false;
+}
 // Compat: certains specs utilisent encore ensureAnon()
 export const ensureAnon = resetAuthState;
