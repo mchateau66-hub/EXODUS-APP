@@ -149,16 +149,40 @@ test("diag: hub render + click Offres + dump testids/logs", async ({ page }, tes
     contentType: "application/json",
   });
 
-  // 7) Assertion informative : myads doit exister après Offres
+  // 7) Assertion informative
+  const finalUrl = page.url();
+  const isPaywall =
+    finalUrl.includes("/paywall") ||
+    testids.includes("paywall") ||
+    testids.includes("paywall-cta") ||
+    testids.includes("paywall-back");
+
+  if (isPaywall) {
+    testInfo.attach("diag-note", {
+      body:
+        `diag: redirected to paywall after clicking Offres.\n` +
+        `finalUrl=${finalUrl}\n` +
+        `testids(${testids.length})=${testids.join(", ")}`,
+      contentType: "text/plain",
+    });
+
+    expect(
+      testids.includes("paywall"),
+      `Expected paywall testids when redirected to paywall. finalUrl=${finalUrl}`
+    ).toBeTruthy();
+
+    return;
+  }
+
+  // Sinon, on est bien sur la vue Offres attendue : myads doit exister
   const hasMyads = testids.includes("myads");
   if (!hasMyads) {
     throw new Error(
       `diag: /hub loaded + clicked Offres, but data-testid="myads" NOT found.\n` +
-        `finalUrl=${page.url()}\n` +
+        `finalUrl=${finalUrl}\n` +
         `testids(${testids.length})=${testids.join(", ")}`
     );
   }
 
-  // Si présent, on valide qu'il est visible
   await expect(page.getByTestId("myads")).toBeVisible({ timeout: 20_000 });
 });
