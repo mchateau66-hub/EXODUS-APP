@@ -37,6 +37,8 @@
     "@upstash/ratelimit": "^2.0.7",
     "@upstash/redis": "^1.35.8",
     "@vercel/blob": "^2.0.0",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
     "jose": "6.1.2",
     "jsonwebtoken": "9.0.2",
     "leaflet": "^1.9.4",
@@ -46,7 +48,8 @@
     "react-dom": "19.1.0",
     "react-leaflet": "^5.0.0",
     "resend": "^6.6.0",
-    "stripe": "^20.0.0"
+    "stripe": "^20.0.0",
+    "tailwind-merge": "^3.4.0"
   },
   "devDependencies": {
     "@dotenvx/dotenvx": "^1.51.4",

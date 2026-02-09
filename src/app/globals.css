@@ -1,8 +1,66 @@
 /* src/app/globals.css */
-
 @import "tailwindcss";
 
-/* Tu peux mettre ton CSS global classique ici */
+/* ----------------------------
+   Design tokens (light/dark)
+----------------------------- */
+:root {
+  /* iOS-ish neutral white (moins agressif que #fff) */
+  --bg: #f7f8fa;
+  --fg: #0b1220;
+
+  --card: #ffffff;
+  --card-fg: #0b1220;
+
+  --muted: #eef1f5;
+  --muted-fg: #53606f;
+
+  --border: rgba(15, 23, 42, 0.10);
+
+  /* Accent sobre (tu peux le matcher à ta brand) */
+  --primary: #0b5fff;
+  --primary-fg: #ffffff;
+
+  /* Focus ring discret */
+  --ring: rgba(11, 95, 255, 0.30);
+
+  /* Cursor */
+  --cursor-default: default;
+  --cursor-pointer: pointer;
+  --cursor-text: text;
+  --cursor-disabled: not-allowed;
+
+  color-scheme: light;
+}
+
+html[data-theme="dark"] {
+  --bg: #0b0f14;
+  --fg: #e7edf5;
+
+  --card: #0f1620;
+  --card-fg: #e7edf5;
+
+  --muted: #121a24;
+  --muted-fg: #9aa7b5;
+
+  --border: rgba(231, 237, 245, 0.12);
+
+  --primary: #4f8cff;
+  --primary-fg: #0b0f14;
+
+  --ring: rgba(79, 140, 255, 0.35);
+
+  color-scheme: dark;
+}
+
+/* ----------------------------
+   Base reset
+----------------------------- */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
 
 html,
 body {
@@ -12,8 +70,112 @@ body {
 }
 
 body {
-  background-color: #f1f5f9; /* gris clair type slate-100 */
-  color: #020617;            /* texte foncé */
+  background: var(--bg);
+  color: var(--fg);
   font-family: system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text",
     "SF Pro Display", sans-serif;
+
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+
+  /* iOS / mobile polish */
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Sélection de texte */
+::selection {
+  background: rgba(11, 95, 255, 0.18);
+}
+
+/* Focus visible (sobre) */
+:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--ring);
+  border-radius: 10px;
+}
+
+/* ----------------------------
+   Cursor (global)
+   -> C’est ICI que tu modifies le curseur
+----------------------------- */
+body {
+  cursor: var(--cursor-default);
+}
+
+/* éléments cliquables */
+a,
+button,
+[role="button"],
+input[type="button"],
+input[type="submit"],
+summary,
+label[for] {
+  cursor: var(--cursor-pointer);
+}
+
+/* champs texte */
+input,
+textarea,
+[contenteditable="true"] {
+  cursor: var(--cursor-text);
+}
+
+/* disabled */
+:disabled,
+[aria-disabled="true"] {
+  cursor: var(--cursor-disabled);
+}
+
+/* Sur mobile (pointer coarse), ne force pas trop le cursor */
+@media (pointer: coarse) {
+  body {
+    cursor: auto;
+  }
+}
+
+/* ----------------------------
+   Scrollbar discrète (desktop)
+----------------------------- */
+@media (pointer: fine) {
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgba(148, 163, 184, 0.35);
+    border-radius: 999px;
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+  html[data-theme="dark"] ::-webkit-scrollbar-thumb {
+    background: rgba(148, 163, 184, 0.25);
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+}
+
+/* ----------------------------
+   Animations (tes bulles)
+----------------------------- */
+.message-enter {
+  animation: message-enter 0.18s ease-out both;
+}
+
+@keyframes message-enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Respect “reduce motion” */
+@media (prefers-reduced-motion: reduce) {
+  .message-enter {
+    animation: none;
+  }
 }
