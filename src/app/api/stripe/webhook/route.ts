@@ -4,83 +4,74 @@ import { headers } from 'next/headers'
 import Stripe from 'stripe'
 import { stripe } from '@/lib/stripe'
 import { prisma } from '@/lib/db'
+import { BillingPeriod } from '@prisma/client'
 
 export const runtime = 'nodejs'
 
-// helper: map statut Stripe → SubStatus Prisma
-function mapStripeStatus(
-  status: Stripe.Subscription.Status,
-):
+type SubStatus =
   | 'incomplete'
   | 'trialing'
   | 'active'
   | 'past_due'
   | 'canceled'
-  | 'unpaid' {
+  | 'unpaid'
+
+function mapStripeStatus(status: Stripe.Subscription.Status): SubStatus {
   switch (status) {
     case 'active':
-      return 'active'
     case 'trialing':
-      return 'trialing'
     case 'past_due':
-      return 'past_due'
     case 'canceled':
-      return 'canceled'
     case 'unpaid':
-      return 'unpaid'
+      return status
     default:
       return 'incomplete'
   }
 }
 
-function fromUnixSeconds(
-  value: number | null | undefined,
-): Date | null {
-  if (!value) return null
-  return new Date(value * 1000)
+function fromUnixSeconds(v: number | null | undefined): Date | null {
+  if (!v) return null
+  return new Date(v * 1000)
 }
 
-/**
- * Sync d'une subscription Stripe → Subscription + UserEntitlement en DB
- */
-async function upsertSubscriptionAndEntitlements(
-  sub: Stripe.Subscription,
-) {
-  const customerId = sub.customer as string
-  const stripeSubId = sub.id
-  const status = mapStripeStatus(sub.status)
+function isActiveLike(s: SubStatus | null | undefined) {
+  return s === 'active' || s === 'trialing'
+}
 
-  // Certains champs ne sont pas exposés typés dans le SDK → cast any
-  const currentPeriodStart = fromUnixSeconds(
-    (sub as any).current_period_start,
-  )
-  const currentPeriodEnd = fromUnixSeconds(
-    (sub as any).current_period_end,
-  )
+function nonEmptyString(v: unknown): string | null {
+  return typeof v === 'string' && v.trim().length > 0 ? v.trim() : null
+}
 
-  const expiresAt =
-    status === 'active' || status === 'trialing'
-      ? null
-      : currentPeriodEnd
+function toBillingPeriod(v: unknown): BillingPeriod | null {
+  if (v === 'monthly') return BillingPeriod.monthly
+  if (v === 'yearly') return BillingPeriod.yearly
+  return null
+}
 
-  // 1) Récupérer le user via stripe_customer_id
-  const user = await prisma.user.findUnique({
-    where: { stripe_customer_id: customerId },
+function billingFromStripe(sub: Stripe.Subscription): BillingPeriod | null {
+  const interval = sub.items.data[0]?.price?.recurring?.interval
+  if (interval === 'month') return BillingPeriod.monthly
+  if (interval === 'year') return BillingPeriod.yearly
+  return null
+}
+
+async function audit(action: string, userId: string | null, meta: Record<string, any>) {
+  await prisma.auditLog.create({
+    data: {
+      user_id: userId,
+      action,
+      meta,
+    },
   })
+}
 
-  if (!user) {
-    console.warn('Webhook: user not found for customer', {
-      customerId,
-    })
-    return
-  }
+async function resolvePlanKeyAndBilling(sub: Stripe.Subscription) {
+  const priceId = sub.items.data[0]?.price?.id ?? null
 
-  // 2) Déterminer plan_key (metadata.planKey ou lookup via price_id)
-  const lineItem = sub.items.data[0]
-  const priceId = lineItem?.price?.id ?? null
-
-  let planKey: string | null =
-    (sub.metadata as any)?.planKey ?? null
+  let planKey: string | null = (sub.metadata as any)?.planKey ?? null
+  let billing: BillingPeriod | null =
+    toBillingPeriod((sub.metadata as any)?.billingPeriod ?? null) ??
+    billingFromStripe(sub)
 
   if (!planKey && priceId) {
     const plan = await prisma.plan.findFirst({
@@ -90,149 +81,350 @@ async function upsertSubscriptionAndEntitlements(
           { stripe_price_id_yearly: priceId },
         ],
       },
+      select: {
+        key: true,
+        stripe_price_id_monthly: true,
+        stripe_price_id_yearly: true,
+      },
     })
+
     planKey = plan?.key ?? null
+
+    if (!billing && plan && priceId) {
+      if (plan.stripe_price_id_yearly === priceId) billing = BillingPeriod.yearly
+      else if (plan.stripe_price_id_monthly === priceId) billing = BillingPeriod.monthly
+    }
   }
 
+  return { planKey, priceId, billing }
+}
+
+type SyncSummary = {
+  userId: string
+  role: 'coach' | 'athlete' | 'admin' | null
+  customerId: string
+  stripeSubId: string
+  planKey: string
+  prevStatus: SubStatus | null
+  nextStatus: SubStatus
+  prevCancelAtPeriodEnd: boolean | null
+  nextCancelAtPeriodEnd: boolean
+  analyticsSessionId: string | null
+  currentPeriodEndUnix: number | null
+  cancelAtUnix: number | null
+}
+
+async function upsertSubscriptionAndEntitlements(
+  sub: Stripe.Subscription,
+  userIdHint?: string,
+): Promise<SyncSummary | null> {
+  const customerId = sub.customer as string
+  const stripeSubId = sub.id
+  const nextStatus = mapStripeStatus(sub.status)
+
+  const currentPeriodStart = fromUnixSeconds((sub as any).current_period_start)
+  const currentPeriodEnd = fromUnixSeconds((sub as any).current_period_end)
+  const trialEndAt = fromUnixSeconds((sub as any).trial_end)
+  const canceledAt = fromUnixSeconds((sub as any).canceled_at)
+
+  const nextCancelAtPeriodEnd = !!sub.cancel_at_period_end
+
+  const isEntitled = nextStatus === 'active' || nextStatus === 'trialing'
+  const expiresAt = isEntitled ? null : (currentPeriodEnd ?? new Date())
+
+  const { planKey, priceId, billing } = await resolvePlanKeyAndBilling(sub)
   if (!planKey) {
-    console.warn('Webhook: planKey not resolved', {
-      stripeSubId,
-      priceId,
-    })
-    return
+    console.warn('Webhook: planKey not resolved', { stripeSubId, priceId })
+    return null
   }
 
-  // 3) Upsert Subscription
-  const subscription = await prisma.subscription.upsert({
-    where: { stripe_subscription_id: stripeSubId },
-    update: {
-      status,
-      current_period_start: currentPeriodStart,
-      current_period_end: currentPeriodEnd,
-      cancel_at_period_end: sub.cancel_at_period_end ?? false,
-      canceled_at: (sub as any).canceled_at
-        ? fromUnixSeconds((sub as any).canceled_at)
-        : null,
-      plan_key: planKey,
-      updated_at: new Date(),
-    },
-    create: {
-      user_id: user.id,
-      plan_key: planKey,
-      stripe_customer_id: customerId,
-      stripe_subscription_id: stripeSubId,
-      status,
-      current_period_start: currentPeriodStart,
-      current_period_end: currentPeriodEnd,
-      cancel_at_period_end: sub.cancel_at_period_end ?? false,
-      canceled_at: (sub as any).canceled_at
-        ? fromUnixSeconds((sub as any).canceled_at)
-        : null,
-    },
-  })
+  const analyticsSessionId = nonEmptyString((sub.metadata as any)?.analytics_session_id)
 
-  // 4) Nettoyer les anciens entitlements de ce plan / subscription
-  await prisma.userEntitlement.deleteMany({
-    where: {
-      user_id: user.id,
-      source: 'plan',
-      subscription_id: subscription.id,
-    },
-  })
+  const user =
+    (userIdHint
+      ? await prisma.user.findUnique({
+          where: { id: userIdHint },
+          select: { id: true, role: true, stripe_customer_id: true },
+        })
+      : null) ??
+    (await prisma.user.findUnique({
+      where: { stripe_customer_id: customerId },
+      select: { id: true, role: true, stripe_customer_id: true },
+    }))
 
-  // 5) Récupérer les features du plan
-  const planFeatures = await prisma.planFeature.findMany({
-    where: { plan_key: planKey },
-    include: { feature: true },
-  })
-
-  if (planFeatures.length === 0) {
-    console.warn('Webhook: no PlanFeature for planKey', {
-      planKey,
-      stripeSubId,
-    })
-    return
+  if (!user) {
+    console.warn('Webhook: user not found', { userIdHint, customerId, stripeSubId })
+    return null
   }
 
-  const now = new Date()
-  const entitlementsExpiresAt = expiresAt
+  const result = await prisma.$transaction(async (tx) => {
+    const prev = await tx.subscription.findUnique({
+      where: { stripe_subscription_id: stripeSubId },
+      select: { status: true, cancel_at_period_end: true, id: true },
+    })
 
-  // 6) Créer les entitlements à partir des PlanFeature
-  await prisma.userEntitlement.createMany({
-    data: planFeatures.map((pf) => ({
-      user_id: user.id,
-      feature_key: pf.feature_key,
-      source: 'plan',
-      subscription_id: subscription.id,
-      starts_at: now,
-      expires_at: entitlementsExpiresAt,
-      meta: {},
-    })),
+    const subscription = await tx.subscription.upsert({
+      where: { stripe_subscription_id: stripeSubId },
+      update: {
+        user_id: user.id,
+        plan_key: planKey,
+        stripe_customer_id: customerId,
+        status: nextStatus as any,
+        current_period_start: currentPeriodStart,
+        current_period_end: currentPeriodEnd,
+        cancel_at_period_end: nextCancelAtPeriodEnd,
+        canceled_at: canceledAt,
+        trial_end_at: trialEndAt,
+        expires_at: expiresAt,
+        updated_at: new Date(),
+        billing, // ✅ BillingPeriod | null (plus de as any)
+      },
+      create: {
+        user_id: user.id,
+        plan_key: planKey,
+        stripe_customer_id: customerId,
+        stripe_subscription_id: stripeSubId,
+        status: nextStatus as any,
+        current_period_start: currentPeriodStart,
+        current_period_end: currentPeriodEnd,
+        cancel_at_period_end: nextCancelAtPeriodEnd,
+        canceled_at: canceledAt,
+        trial_end_at: trialEndAt,
+        expires_at: expiresAt,
+        billing,
+      },
+      select: { id: true, status: true, cancel_at_period_end: true },
+    })
+
+    await tx.userEntitlement.deleteMany({
+      where: {
+        user_id: user.id,
+        source: 'plan',
+        subscription_id: subscription.id,
+      },
+    })
+
+    const planFeatures = await tx.planFeature.findMany({
+      where: { plan_key: planKey },
+      select: { feature_key: true },
+    })
+
+    if (planFeatures.length > 0) {
+      const now = new Date()
+      await tx.userEntitlement.createMany({
+        data: planFeatures.map((pf) => ({
+          user_id: user.id,
+          feature_key: pf.feature_key,
+          source: 'plan',
+          subscription_id: subscription.id,
+          starts_at: now,
+          expires_at: expiresAt,
+          meta: { plan_key: planKey },
+        })),
+        skipDuplicates: true,
+      })
+    } else {
+      console.warn('Webhook: no PlanFeature for planKey', { planKey, stripeSubId })
+    }
+
+    return {
+      prevStatus: (prev?.status as SubStatus | null) ?? null,
+      prevCancelAtPeriodEnd: prev?.cancel_at_period_end ?? null,
+      nextStatus: subscription.status as unknown as SubStatus,
+      nextCancelAtPeriodEnd: subscription.cancel_at_period_end,
+    }
   })
+
+  const currentPeriodEndUnix =
+    typeof (sub as any).current_period_end === 'number' ? (sub as any).current_period_end : null
+  const cancelAtUnix =
+    typeof (sub as any).cancel_at === 'number' ? (sub as any).cancel_at : null
 
   console.log(
-    '[Stripe] Entitlements synced for user=%s plan=%s sub=%s features=%s',
+    '[Stripe] synced user=%s plan=%s sub=%s status=%s cancel_at_period_end=%s billing=%s',
     user.id,
     planKey,
     stripeSubId,
-    planFeatures.map((pf) => pf.feature_key).join(','),
+    nextStatus,
+    nextCancelAtPeriodEnd,
+    billing ?? 'null',
   )
+
+  return {
+    userId: user.id,
+    role: (user.role as any) ?? null,
+    customerId,
+    stripeSubId,
+    planKey,
+    prevStatus: result.prevStatus,
+    nextStatus: result.nextStatus,
+    prevCancelAtPeriodEnd: result.prevCancelAtPeriodEnd,
+    nextCancelAtPeriodEnd: result.nextCancelAtPeriodEnd,
+    analyticsSessionId,
+    currentPeriodEndUnix,
+    cancelAtUnix,
+  }
 }
 
 export async function POST(req: NextRequest) {
-  // Next 15 : headers() est async
   const headersList = await headers()
-  const sig = headersList.get('stripe-signature') ?? ''
-  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET
+  const sig = headersList.get('stripe-signature')
+  if (!sig) return new Response('Missing stripe-signature', { status: 400 })
 
-  if (!webhookSecret) {
-    console.error('STRIPE_WEBHOOK_SECRET not set')
-    return new Response('Webhook config error', { status: 500 })
-  }
+  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET
+  if (!webhookSecret) return new Response('Webhook config error', { status: 500 })
 
   const rawBody = await req.text()
 
   let event: Stripe.Event
-
   try {
-    event = stripe.webhooks.constructEvent(
-      rawBody,
-      sig,
-      webhookSecret,
-    )
+    event = stripe.webhooks.constructEvent(rawBody, sig, webhookSecret)
   } catch (err: any) {
     console.error('Stripe webhook signature error', err)
-    return new Response(`Webhook Error: ${err.message}`, {
-      status: 400,
+    return new Response(`Webhook Error: ${err.message}`, { status: 400 })
+  }
+
+  // ✅ Idempotence (ignore retries)
+  try {
+    await prisma.stripeEvent.create({
+      data: {
+        id: event.id,
+        type: event.type,
+        created: event.created,
+        livemode: event.livemode,
+      },
     })
+  } catch {
+    return new Response('ok', { status: 200 })
   }
 
   try {
     switch (event.type) {
       case 'checkout.session.completed': {
         const session = event.data.object as Stripe.Checkout.Session
-        if (session.subscription) {
-          const sub = await stripe.subscriptions.retrieve(
-            session.subscription as string,
-          )
-          await upsertSubscriptionAndEntitlements(
-            sub as Stripe.Subscription,
-          )
+
+        const userIdHint = nonEmptyString(session.metadata?.user_id) ?? undefined
+        const analyticsSessionId = nonEmptyString(session.metadata?.analytics_session_id)
+        const planKey = nonEmptyString(session.metadata?.planKey) ?? null
+        const billingPeriod = nonEmptyString(session.metadata?.billingPeriod) ?? null
+
+        // ✅ analytics: checkout_success
+        if (analyticsSessionId) {
+          await audit('checkout_success', userIdHint ?? null, {
+            session_id: analyticsSessionId,
+            offer: planKey,
+            billing: billingPeriod,
+            stripe_session_id: session.id,
+            stripe_customer_id: typeof session.customer === 'string' ? session.customer : null,
+            stripe_subscription_id:
+              typeof session.subscription === 'string' ? session.subscription : null,
+          })
         }
+
+        // ✅ sync subscription + entitlements (also sets billing)
+        if (typeof session.subscription === 'string') {
+          const sub = await stripe.subscriptions.retrieve(session.subscription, {
+            expand: ['items.data.price'],
+          })
+          await upsertSubscriptionAndEntitlements(sub as Stripe.Subscription, userIdHint)
+        }
+
         break
       }
 
       case 'customer.subscription.created':
       case 'customer.subscription.updated':
       case 'customer.subscription.deleted': {
-        const sub = event.data.object as Stripe.Subscription
-        await upsertSubscriptionAndEntitlements(sub)
+        const subLite = event.data.object as Stripe.Subscription
+        const sub = await stripe.subscriptions.retrieve(subLite.id, {
+          expand: ['items.data.price'],
+        })
+
+        const sync = await upsertSubscriptionAndEntitlements(sub as Stripe.Subscription)
+
+        if (sync) {
+          const becameActive = !isActiveLike(sync.prevStatus) && isActiveLike(sync.nextStatus)
+          const becameCanceled = sync.nextStatus === 'canceled' || sync.nextStatus === 'unpaid'
+          const becameCancelScheduled =
+            sync.prevCancelAtPeriodEnd === false && sync.nextCancelAtPeriodEnd === true
+          const becameReactivated =
+            sync.prevCancelAtPeriodEnd === true && sync.nextCancelAtPeriodEnd === false
+
+          if (becameActive) {
+            await audit('subscription_active', sync.userId, {
+              session_id: sync.analyticsSessionId ?? `stripe:${sync.stripeSubId}`,
+              role: sync.role,
+              offer: sync.planKey,
+              stripe_subscription_id: sync.stripeSubId,
+              stripe_customer_id: sync.customerId,
+              prev_status: sync.prevStatus,
+              next_status: sync.nextStatus,
+            })
+          }
+
+          if (becameCancelScheduled) {
+            await audit('subscription_cancel_scheduled', sync.userId, {
+              session_id: sync.analyticsSessionId ?? `stripe:${sync.stripeSubId}`,
+              role: sync.role,
+              offer: sync.planKey,
+              stripe_subscription_id: sync.stripeSubId,
+              stripe_customer_id: sync.customerId,
+              cancel_at_period_end: true,
+              cancel_at_unix: sync.cancelAtUnix,
+              current_period_end_unix: sync.currentPeriodEndUnix,
+              prev_cancel_at_period_end: sync.prevCancelAtPeriodEnd,
+              next_cancel_at_period_end: sync.nextCancelAtPeriodEnd,
+            })
+          }
+
+          if (becameReactivated) {
+            await audit('subscription_reactivated', sync.userId, {
+              session_id: sync.analyticsSessionId ?? `stripe:${sync.stripeSubId}`,
+              role: sync.role,
+              offer: sync.planKey,
+              stripe_subscription_id: sync.stripeSubId,
+              stripe_customer_id: sync.customerId,
+              cancel_at_period_end: false,
+              prev_cancel_at_period_end: sync.prevCancelAtPeriodEnd,
+              next_cancel_at_period_end: sync.nextCancelAtPeriodEnd,
+            })
+          }
+
+          if (becameCanceled) {
+            await audit('subscription_canceled', sync.userId, {
+              session_id: sync.analyticsSessionId ?? `stripe:${sync.stripeSubId}`,
+              role: sync.role,
+              offer: sync.planKey,
+              stripe_subscription_id: sync.stripeSubId,
+              stripe_customer_id: sync.customerId,
+              prev_status: sync.prevStatus,
+              next_status: sync.nextStatus,
+            })
+          }
+        }
+
         break
       }
 
-      default: {
-        console.log('Unhandled Stripe event type', event.type)
+      case 'invoice.payment_failed': {
+        const invoice = event.data.object as Stripe.Invoice
+
+        const stripeSubId =
+          typeof (invoice as any).subscription === 'string'
+            ? (invoice as any).subscription
+            : null
+
+        if (stripeSubId) {
+          await prisma.subscription.updateMany({
+            where: { stripe_subscription_id: stripeSubId },
+            data: { status: 'past_due' as any, updated_at: new Date() },
+          })
+        }
+        break
       }
+
+      default:
+        console.log('Unhandled Stripe event type', event.type)
     }
 
     return new Response('ok', { status: 200 })

@@ -2,20 +2,20 @@
   "cookies": [
     {
       "name": "sid",
-      "value": "0632a7fb-bdd9-4c45-9e2b-b5aa4fffc982",
+      "value": "b342668e-0ee8-4f73-b0d9-6bc55921e6a5",
       "domain": "127.0.0.1",
       "path": "/",
-      "expires": 1771829958.152,
+      "expires": 1772312870.377,
       "httpOnly": true,
       "secure": false,
       "sameSite": "Lax"
     },
     {
       "name": "session",
-      "value": "0632a7fb-bdd9-4c45-9e2b-b5aa4fffc982",
+      "value": "b342668e-0ee8-4f73-b0d9-6bc55921e6a5",
       "domain": "127.0.0.1",
       "path": "/",
-      "expires": 1771829958.152,
+      "expires": 1772312870.377,
       "httpOnly": true,
       "secure": false,
       "sameSite": "Lax"
@@ -25,7 +25,7 @@
       "value": "free",
       "domain": "127.0.0.1",
       "path": "/",
-      "expires": 1771829958.152,
+      "expires": 1772312870.377,
       "httpOnly": false,
       "secure": false,
       "sameSite": "Lax"

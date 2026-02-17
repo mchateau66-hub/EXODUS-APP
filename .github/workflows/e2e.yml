@@ -237,6 +237,14 @@ jobs:
       SAT_JWT_SECRET: "${{ secrets.SAT_JWT_SECRET }}"
       ALLOW_DEV_LOGIN: "1"
 
+      # ✅ Monetization/security smokes (optional)
+      # Mets le vrai endpoint premium quand tu l'as
+      E2E_PREMIUM_ENDPOINT: "/api/xxx/premium"
+      # E2E_SAT_MINT_ENDPOINT: "/api/dev/sat"
+      E2E_SAT_HEADER_NAME: "authorization"
+      E2E_SAT_HEADER_PREFIX: "Bearer "
+      # STRIPE_WEBHOOK_SECRET: "${{ secrets.STRIPE_WEBHOOK_SECRET }}"
+
     services:
       postgres:
         image: postgres:16
@@ -295,6 +303,9 @@ jobs:
           pnpm exec prisma generate
           pnpm exec prisma migrate deploy
           pnpm exec prisma db seed || true
+
+      - name: DB integrity (billing must not be null)
+        run: pnpm run check:billing
 
       - name: Start Next server
         run: |
