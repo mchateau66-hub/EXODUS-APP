@@ -17,6 +17,8 @@ permissions:
 env:
   NODE_VERSION: "20"
   PNPM_VERSION: "9.15.9"
+  NEXT_TELEMETRY_DISABLED: "1"
+  NODE_ENV: test
 
 jobs:
   next15-audit:
@@ -26,25 +28,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
-          node-version: 20
-          cache: pnpm
+          node-version: ${{ env.NODE_VERSION }}
 
       - name: Enable corepack (pnpm from packageManager)
         run: |
-         corepack enable
-         pnpm --version
-
+          set -euo pipefail
+          corepack enable
+          corepack prepare pnpm@${PNPM_VERSION} --activate
+          pnpm --version
 
       - name: Get pnpm store path
         id: pnpm-store
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/cache@v4
+      - name: Cache pnpm store
+        uses: actions/cache@v4
         with:
           path: ${{ steps.pnpm-store.outputs.path }}
           key: ${{ runner.os }}-pnpm-store-${{ hashFiles('pnpm-lock.yaml') }}

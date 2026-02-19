@@ -36,7 +36,6 @@ concurrency:
 
 permissions:
   contents: read
-  actions: write
 
 defaults:
   run:
@@ -234,16 +233,22 @@ jobs:
       E2E_SMOKE_PATH: ${{ needs.cfg.outputs.smoke_path }}
 
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/exodus_test?schema=public
-      # ✅ FIX PRISMA: si schema.prisma a directUrl = env("DIRECT_URL")
       DIRECT_URL: postgresql://postgres:postgres@localhost:5432/exodus_test?schema=public
 
       SAT_JWT_SECRET: "${{ secrets.SAT_JWT_SECRET }}"
       ALLOW_DEV_LOGIN: "1"
 
-      # ✅ Monetization/security smokes (optional)
-      E2E_PREMIUM_ENDPOINT: "/api/xxx/premium"
-      E2E_SAT_HEADER_NAME: "authorization"
-      E2E_SAT_HEADER_PREFIX: "Bearer "
+      # ✅ Monetization/security smokes
+      # IMPORTANT: endpoint doit exister en local CI, sinon 404 => fail
+      E2E_PREMIUM_ENDPOINT: "/api/messages"
+
+      # Header SAT par défaut (recommandé):
+      E2E_SAT_HEADER_NAME: "x-sat"
+      E2E_SAT_HEADER_PREFIX: ""
+
+      # Si ton backend utilise Authorization Bearer, remplace par:
+      # E2E_SAT_HEADER_NAME: "authorization"
+      # E2E_SAT_HEADER_PREFIX: "Bearer "
 
     services:
       postgres:
@@ -263,15 +268,29 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: ${{ env.NODE_VERSION }}
 
-      # ✅ FIX PNPM: installe pnpm (version exacte) => plus de "pnpm not found"
-      - uses: pnpm/action-setup@v4
+      - name: Enable corepack (pnpm from packageManager)
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare pnpm@${PNPM_VERSION} --activate
+          pnpm --version
+
+      - name: Get pnpm store path
+        id: pnpm-store
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
         with:
-          version: 9.15.9
-          run_install: false
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: ${{ runner.os }}-pnpm-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-
 
       - name: Install deps
         run: pnpm install --frozen-lockfile
@@ -320,6 +339,9 @@ jobs:
         run: |
           echo "[env] E2E_BASE_URL=$E2E_BASE_URL"
           echo "[env] E2E_SMOKE_PATH=$E2E_SMOKE_PATH"
+          echo "[env] E2E_PREMIUM_ENDPOINT=$E2E_PREMIUM_ENDPOINT"
+          echo "[env] E2E_SAT_HEADER_NAME=$E2E_SAT_HEADER_NAME"
+          echo "[env] E2E_SAT_HEADER_PREFIX=$E2E_SAT_HEADER_PREFIX"
 
       - name: Run Playwright smoke tests
         run: pnpm exec playwright test e2e/smoke.spec.ts --project=chromium --workers=1
@@ -353,7 +375,6 @@ jobs:
       CI: "true"
       PW_WEB_SERVER: "0"
 
-      # ✅ smoke = pas de storageState, pas de login
       E2E_DISABLE_STORAGE_STATE: "1"
       E2E_SKIP_LOGIN: "1"
 
@@ -363,17 +384,37 @@ jobs:
       E2E_DEV_LOGIN_TOKEN: ${{ secrets.E2E_DEV_LOGIN_TOKEN }}
       VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
 
+      # Keep same defaults as local unless overridden in your tests
+      E2E_PREMIUM_ENDPOINT: "/api/messages"
+      E2E_SAT_HEADER_NAME: "x-sat"
+      E2E_SAT_HEADER_PREFIX: ""
+
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: ${{ env.NODE_VERSION }}
 
-      - uses: pnpm/action-setup@v4
+      - name: Enable corepack (pnpm from packageManager)
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare pnpm@${PNPM_VERSION} --activate
+          pnpm --version
+
+      - name: Get pnpm store path
+        id: pnpm-store
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
         with:
-          version: 9.15.9
-          run_install: false
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: ${{ runner.os }}-pnpm-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-
 
       - name: Install deps
         run: pnpm install --frozen-lockfile
@@ -438,17 +479,36 @@ jobs:
       E2E_DEV_LOGIN_TOKEN: ${{ secrets.E2E_DEV_LOGIN_TOKEN }}
       VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
 
+      E2E_PREMIUM_ENDPOINT: "/api/messages"
+      E2E_SAT_HEADER_NAME: "x-sat"
+      E2E_SAT_HEADER_PREFIX: ""
+
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: ${{ env.NODE_VERSION }}
 
-      - uses: pnpm/action-setup@v4
+      - name: Enable corepack (pnpm from packageManager)
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare pnpm@${PNPM_VERSION} --activate
+          pnpm --version
+
+      - name: Get pnpm store path
+        id: pnpm-store
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
         with:
-          version: 9.15.9
-          run_install: false
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: ${{ runner.os }}-pnpm-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-
 
       - name: Install deps
         run: pnpm install --frozen-lockfile
@@ -514,14 +574,29 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: ${{ env.NODE_VERSION }}
 
-      - uses: pnpm/action-setup@v4
+      - name: Enable corepack (pnpm from packageManager)
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare pnpm@${PNPM_VERSION} --activate
+          pnpm --version
+
+      - name: Get pnpm store path
+        id: pnpm-store
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
         with:
-          version: 9.15.9
-          run_install: false
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: ${{ runner.os }}-pnpm-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-
 
       - name: Install deps (for playwright CLI)
         run: pnpm install --frozen-lockfile
