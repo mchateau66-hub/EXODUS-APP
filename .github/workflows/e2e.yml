@@ -36,7 +36,7 @@ concurrency:
 
 permissions:
   contents: read
-  actions: read
+  actions: write
 
 defaults:
   run:
@@ -222,6 +222,29 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
 
+    env:
+      CI: "true"
+      PW_WEB_SERVER: "0"
+
+      # ✅ smoke = pas de storageState, pas de login
+      E2E_DISABLE_STORAGE_STATE: "1"
+      E2E_SKIP_LOGIN: "1"
+
+      E2E_BASE_URL: ${{ needs.cfg.outputs.base }}
+      E2E_SMOKE_PATH: ${{ needs.cfg.outputs.smoke_path }}
+
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/exodus_test?schema=public
+      # ✅ FIX PRISMA: si schema.prisma a directUrl = env("DIRECT_URL")
+      DIRECT_URL: postgresql://postgres:postgres@localhost:5432/exodus_test?schema=public
+
+      SAT_JWT_SECRET: "${{ secrets.SAT_JWT_SECRET }}"
+      ALLOW_DEV_LOGIN: "1"
+
+      # ✅ Monetization/security smokes (optional)
+      E2E_PREMIUM_ENDPOINT: "/api/xxx/premium"
+      E2E_SAT_HEADER_NAME: "authorization"
+      E2E_SAT_HEADER_PREFIX: "Bearer "
+
     services:
       postgres:
         image: postgres:16
@@ -237,47 +260,18 @@ jobs:
           --health-timeout=5s
           --health-retries=10
 
-    env:
-      CI: "true"
-      PW_WEB_SERVER: "0"
-
-      E2E_BASE_URL: ${{ needs.cfg.outputs.base }}
-      E2E_SMOKE_PATH: ${{ needs.cfg.outputs.smoke_path }}
-
-      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/exodus_test?schema=public
-      SAT_JWT_SECRET: ${{ secrets.SAT_JWT_SECRET }}
-      ALLOW_DEV_LOGIN: "1"
-
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version: 20
 
-      - name: Enable Corepack + pin pnpm
-        run: |
-          corepack enable
-          corepack prepare pnpm@${{ env.PNPM_VERSION }} --activate
-          pnpm -v
-
-      - name: Get pnpm store path
-        id: pnpm-store
-        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
-
-      - uses: actions/cache@v4
+      # ✅ FIX PNPM: installe pnpm (version exacte) => plus de "pnpm not found"
+      - uses: pnpm/action-setup@v4
         with:
-          path: ${{ steps.pnpm-store.outputs.path }}
-          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-pnpm-store-
-
-      - uses: actions/cache@v4
-        with:
-          path: ~/.cache/ms-playwright
-          key: ${{ runner.os }}-playwright-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-playwright-
+          version: 9.15.9
+          run_install: false
 
       - name: Install deps
         run: pnpm install --frozen-lockfile
@@ -291,6 +285,9 @@ jobs:
           pnpm exec prisma generate
           pnpm exec prisma migrate deploy
           pnpm exec prisma db seed || true
+
+      - name: DB integrity (billing must not be null)
+        run: pnpm run check:billing
 
       - name: Start Next server
         run: |
@@ -325,7 +322,7 @@ jobs:
           echo "[env] E2E_SMOKE_PATH=$E2E_SMOKE_PATH"
 
       - name: Run Playwright smoke tests
-        run: pnpm exec playwright test e2e/smoke.spec.ts --project=chromium --reporter=github,html
+        run: pnpm exec playwright test e2e/smoke.spec.ts --project=chromium --workers=1
 
       - name: Stop Next server
         if: always()
@@ -356,8 +353,13 @@ jobs:
       CI: "true"
       PW_WEB_SERVER: "0"
 
+      # ✅ smoke = pas de storageState, pas de login
+      E2E_DISABLE_STORAGE_STATE: "1"
+      E2E_SKIP_LOGIN: "1"
+
       E2E_BASE_URL: ${{ needs.cfg.outputs.base }}
       E2E_SMOKE_PATH: ${{ needs.cfg.outputs.smoke_path }}
+
       E2E_DEV_LOGIN_TOKEN: ${{ secrets.E2E_DEV_LOGIN_TOKEN }}
       VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
 
@@ -366,31 +368,12 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version: 20
 
-      - name: Enable Corepack + pin pnpm
-        run: |
-          corepack enable
-          corepack prepare pnpm@${{ env.PNPM_VERSION }} --activate
-          pnpm -v
-
-      - name: Get pnpm store path
-        id: pnpm-store
-        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
-
-      - uses: actions/cache@v4
+      - uses: pnpm/action-setup@v4
         with:
-          path: ${{ steps.pnpm-store.outputs.path }}
-          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-pnpm-store-
-
-      - uses: actions/cache@v4
-        with:
-          path: ~/.cache/ms-playwright
-          key: ${{ runner.os }}-playwright-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-playwright-
+          version: 9.15.9
+          run_install: false
 
       - name: Install deps
         run: pnpm install --frozen-lockfile
@@ -421,7 +404,7 @@ jobs:
           echo "[env] E2E_SESSION_COOKIE set? $([ -n "${E2E_SESSION_COOKIE:-}" ] && echo yes || echo no)"
 
       - name: Run Playwright smoke tests
-        run: pnpm exec playwright test e2e/smoke.spec.ts --project=chromium --reporter=github,html
+        run: pnpm exec playwright test e2e/smoke.spec.ts --project=chromium --workers=1
 
       - name: Upload artifacts
         if: always()
@@ -460,31 +443,12 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version: 20
 
-      - name: Enable Corepack + pin pnpm
-        run: |
-          corepack enable
-          corepack prepare pnpm@${{ env.PNPM_VERSION }} --activate
-          pnpm -v
-
-      - name: Get pnpm store path
-        id: pnpm-store
-        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
-
-      - uses: actions/cache@v4
+      - uses: pnpm/action-setup@v4
         with:
-          path: ${{ steps.pnpm-store.outputs.path }}
-          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-pnpm-store-
-
-      - uses: actions/cache@v4
-        with:
-          path: ~/.cache/ms-playwright
-          key: ${{ runner.os }}-playwright-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-playwright-
+          version: 9.15.9
+          run_install: false
 
       - name: Install deps
         run: pnpm install --frozen-lockfile
@@ -552,24 +516,12 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version: 20
 
-      - name: Enable Corepack + pin pnpm
-        run: |
-          corepack enable
-          corepack prepare pnpm@${{ env.PNPM_VERSION }} --activate
-          pnpm -v
-
-      - name: Get pnpm store path
-        id: pnpm-store
-        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
-
-      - uses: actions/cache@v4
+      - uses: pnpm/action-setup@v4
         with:
-          path: ${{ steps.pnpm-store.outputs.path }}
-          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-pnpm-store-
+          version: 9.15.9
+          run_install: false
 
       - name: Install deps (for playwright CLI)
         run: pnpm install --frozen-lockfile

@@ -56,7 +56,7 @@ e2e/
 - **API health** : `GET /api/health` → `200 OK`
 - **API login** : `POST /api/login`  
   Pose un cookie `session`. Body optionnel : `{"maxAge": 600}` (secondes).
-- **API logout** : `POST /api/logout` → `204 No Content` (invalide la session)
+- **API logout** : `POST /api/logout` → `204 No Content`
 - **Middleware paywall** : protège **`/pro/:path*`**
   - passe si **cookie `session`** ou **`Authorization: Bearer <token>`**
   - sinon → **`307`** vers **`/paywall?paywall=1&from=<path>`** + header **`x-paywall: 1`**
@@ -70,21 +70,14 @@ e2e/
 
 ```bash
 pnpm i
-
-# (recommandé) installe les navigateurs Playwright si tu fais des E2E
 pnpm exec playwright install --with-deps
-
-# utiliser un port libre pour éviter les surprises
 PORT=3005 pnpm dev
-# ➜ Ready on http://localhost:3005
 ```
 
 ---
 
 <a id="tests-e2e-playwright"></a>
 ## 🧪 Tests E2E (Playwright)
-
-> Objectif : enchaîner les validations sans flaky (run “1 spec = 1 objectif”, `--workers=1`, attente réseau corrélée, dumps auto sur fail).
 
 ### Nettoyer avant un run
 ```bash
@@ -96,79 +89,46 @@ rm -rf test-results playwright-report
 pnpm exec playwright test
 ```
 
-### Lancer un seul spec (recommandé pour debug / anti-flaky)
+### Lancer un seul spec
 ```bash
 pnpm exec playwright test e2e/hub-myads.spec.ts --project=chromium --workers=1
-pnpm exec playwright test e2e/hub-map.spec.ts  --project=chromium --workers=1
+pnpm exec playwright test e2e/hub-map.spec.ts --project=chromium --workers=1
 ```
 
-### Lancer avec serveur Next automatiquement (local)
-Dans `playwright.config.ts`, le `webServer` n’est démarré **que si** `PW_WEB_SERVER=1`.
+### Lancer avec serveur Next auto
 ```bash
-rm -rf test-results playwright-report && \
 PW_WEB_SERVER=1 pnpm exec playwright test e2e/hub-myads.spec.ts e2e/hub-map.spec.ts --project=chromium --workers=1
 ```
 
-### Anti-flaky : répéter 10 fois (stabilité)
-```bash
-pnpm exec playwright test e2e/hub-myads.spec.ts --project=chromium --workers=1 --repeat-each=10
-```
-
-### Mode strict (Hub Map)
-Par défaut, le test map est **smoke** (non-bloquant si `/api/hub/ads` n’est pas observé, ex: couche athlète placeholder).  
-Pour rendre l’assert réseau **obligatoire** :
+### Mode strict Hub Map
 ```bash
 E2E_STRICT_HUB_ADS=1 pnpm exec playwright test e2e/hub-map.spec.ts --project=chromium --workers=1 --retries=1
 ```
 
-### Ouvrir le report HTML
+### Ouvrir le report
 ```bash
 pnpm exec playwright show-report
 ```
 
-### Traces / Vidéos / Screenshots
-La config Playwright est déjà réglée pour :
-- `trace: on-first-retry`
-- `video: retain-on-failure`
-- `screenshot: only-on-failure`
-
-Artifacts (local & CI) :
-- `test-results/**/trace.zip`
-- `test-results/**/video.webm`
-- `test-results/**/failed-*.{txt,html,png}`
-
-Ouvrir une trace :
+### Traces
 ```bash
 pnpm exec playwright show-trace test-results/**/trace.zip
 ```
 
-### Variables d’environnement utiles
-- `E2E_BASE_URL=http://127.0.0.1:3005` : cible l’URL de l’app (local/remote)
-- `PW_WEB_SERVER=1` : démarre Next automatiquement via Playwright (local)
-- `E2E_DISABLE_STORAGE_STATE=1` : désactive `storageState` si tu veux éviter toute pollution de session
-- `E2E_STRICT_HUB_ADS=1` : rend le test hub-map strict sur `/api/hub/ads`
-
 ---
 
 <a id="contrat-paywall-rappel"></a>
-## 🔒 Contrat Paywall (rappel)
+## 🔒 Contrat Paywall
 
 ### Middleware
 - Protège `GET /pro/:path*`
-- Si **non authentifié** :
-  - redirige `307` → `/paywall?paywall=1&from=<path>`
-  - ajoute `x-paywall: 1`
-- Si authentifié :
-  - laisse passer (cookie `session` ou header `Authorization: Bearer <token>`)
+- Non authentifié → redirection 307 vers `/paywall`
+- Header ajouté : `x-paywall: 1`
 
 ### API
 - `POST /api/login`
-  - pose `Set-Cookie: session=...`
-  - body optionnel : `{"maxAge": 600}`
 - `POST /api/logout`
-  - renvoie `204` et invalide la session
 - `GET /api/health`
-  - renvoie `200`
 
 ---
 
@@ -181,7 +141,6 @@ pnpm build && pnpm start
 pnpm lint
 pnpm tsc --noEmit
 pnpm exec playwright test
-pnpm exec playwright test -g paywall
 pnpm exec playwright show-report
 ```
 
@@ -190,20 +149,17 @@ pnpm exec playwright show-report
 <a id="ci"></a>
 ## 🤖 CI
 
-Workflows principaux :
-- **CI – Lint & Typecheck** : lint + TS
-- **E2E Playwright** : lance les tests Playwright + upload du report HTML + traces (artifacts)
+Workflows :
+- CI – Lint & Typecheck
+- E2E Playwright (artifacts + traces)
 
-Recommandations :
-- Garder les E2E **déterministes** : pas de `networkidle`, préférer `waitForRequest/Response` corrélés.
-- En CI : privilégier `--workers` contrôlé + `retries` (déjà géré dans la config).
+Recommandation : éviter `networkidle`, préférer `waitForRequest/Response`.
 
 ---
 
 <a id="eslint-ignores-flat-config"></a>
-## ESLint ignores (flat config)
+## ESLint ignores
 
-À ignorer (au minimum) :
 - `.next/`
 - `node_modules/`
 - `playwright-report/`
@@ -214,33 +170,26 @@ Recommandations :
 <a id="depannage"></a>
 ## 🧯 Dépannage
 
-### 1) Login E2E fail / 404 sur `/api/login`
-- Assure-toi que **le bon serveur** tourne sur le bon port
-- Si tu ne veux pas lancer Next à la main : utilise `PW_WEB_SERVER=1`
-
+### Login E2E fail
 ```bash
 PW_WEB_SERVER=1 pnpm exec playwright test e2e/hub-myads.spec.ts --project=chromium --workers=1
 ```
 
-### 2) Port déjà pris
+### Port déjà pris
 ```bash
 lsof -i :3000 -sTCP:LISTEN
 ```
 
-### 3) Leaflet / tiles qui cassent la page
-Les specs hub stubbent les tiles OSM (1x1 PNG) via `e2e/utils/leaflet.ts` pour éviter le flaky.
-
-### 4) Où trouver les attachments/debug
+### Debug artifacts
 ```bash
-find test-results -type f \( -iname "*failed*" -o -iname "*trace.zip" -o -iname "*video.webm" -o -iname "step-*" \)
+find test-results -type f \( -iname "*failed*" -o -iname "*trace.zip" -o -iname "*video.webm" \)
 ```
 
 ---
 
 <a id="roadmap-courte"></a>
-## 🗺️ Roadmap (courte)
+## 🗺️ Roadmap
 
-- Stabiliser le pack E2E hub (map + mes annonces) + garder la base util (`e2e/utils/*`)
-- Renforcer la CI : checks obligatoires + artifacts (report + traces)
-- Ajouter des specs “smoke” par page critique (login, hub, paywall, pro/…)
-
+- Stabiliser pack E2E hub
+- Renforcer CI (checks obligatoires)
+- Ajouter specs smoke pages critiques

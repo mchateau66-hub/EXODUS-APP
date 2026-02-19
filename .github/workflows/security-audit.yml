@@ -25,8 +25,6 @@ permissions:
 env:
   # Repo/Org variables (Settings → Variables)
   STAGING_BASE_URL: ${{ vars.STAGING_BASE_URL }}
-  # Optional secret for rate-limit test (Settings → Secrets)
-  STAGING_SESSION_COOKIE: ${{ secrets.STAGING_SESSION_COOKIE }}
 
 jobs:
   security-audit:
@@ -40,16 +38,27 @@ jobs:
       - name: Resolve base URL
         id: url
         shell: bash
+        env:
+          INPUT_BASE: ${{ github.event.inputs.base_url || '' }}
+          VAR_BASE: ${{ vars.STAGING_BASE_URL || '' }}
         run: |
           set -euo pipefail
-          BASE="${{ github.event.inputs.base_url }}"
-          if [ -z "${BASE:-}" ]; then BASE="${STAGING_BASE_URL:-}"; fi
-          if [ -z "${BASE:-}" ]; then
+          BASE="${INPUT_BASE:-}"
+          if [ -z "${BASE}" ]; then BASE="${VAR_BASE:-}"; fi
+
+          BASE="$(echo "${BASE}" | tr -d '[:space:]')"
+          BASE="${BASE%/}"
+
+          if [ -z "${BASE}" ]; then
             echo "::error::Missing base URL. Set vars.STAGING_BASE_URL or run workflow_dispatch with base_url."
             exit 1
           fi
-          # normalize trailing slash
-          BASE="${BASE%/}"
+
+          if ! echo "$BASE" | grep -Eq '^https?://'; then
+            echo "::error::Invalid base URL (must start with http(s)://): $BASE"
+            exit 1
+          fi
+
           echo "base=$BASE" >> "$GITHUB_OUTPUT"
 
       - name: Ensure tools
@@ -64,23 +73,26 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
           if [ -f "./audit-sec.sh" ]; then
-            echo "path=./audit-sec.sh" >> "$GITHUB_OUTPUT"
+            P="./audit-sec.sh"
           elif [ -f "./audit_sec.sh" ]; then
-            echo "path=./audit_sec.sh" >> "$GITHUB_OUTPUT"
+            P="./audit_sec.sh"
           else
             echo "::error::Audit script not found at repo root (expected ./audit-sec.sh or ./audit_sec.sh)"
             exit 1
           fi
-          chmod +x "${{ steps.script.outputs.path }}"
+
+          chmod +x "$P"
+          echo "path=$P" >> "$GITHUB_OUTPUT"
 
       - name: Run security audit script
         id: run
         shell: bash
         env:
           BASE: ${{ steps.url.outputs.base }}
-          WANT_COOKIE: ${{ github.event.inputs.use_session_cookie }}
-          COOKIE: ${{ env.STAGING_SESSION_COOKIE }}
+          WANT_COOKIE: ${{ github.event.inputs.use_session_cookie || 'false' }}
+          COOKIE: ${{ secrets.STAGING_SESSION_COOKIE }}
         run: |
           set -euo pipefail
           SCRIPT="${{ steps.script.outputs.path }}"
@@ -88,6 +100,9 @@ jobs:
           if [ "${WANT_COOKIE:-false}" = "true" ] && [ -n "${COOKIE:-}" ]; then
             "$SCRIPT" "$BASE" --cookie "$COOKIE" | tee audit-report.txt
           else
+            if [ "${WANT_COOKIE:-false}" = "true" ] && [ -z "${COOKIE:-}" ]; then
+              echo "::warning::use_session_cookie=true but secrets.STAGING_SESSION_COOKIE is empty; running without cookie."
+            fi
             "$SCRIPT" "$BASE" | tee audit-report.txt
           fi
 
@@ -97,6 +112,7 @@ jobs:
         with:
           name: security-audit-report
           path: audit-report.txt
+          if-no-files-found: warn
           retention-days: 14
 
       - name: Publish Job Summary
@@ -108,7 +124,6 @@ jobs:
           echo "" >> "$GITHUB_STEP_SUMMARY"
           if [ -f audit-report.txt ]; then
             echo '```' >> "$GITHUB_STEP_SUMMARY"
-            # strip ANSI colors if present
             sed -E 's/\x1b\[[0-9;]*m//g' audit-report.txt >> "$GITHUB_STEP_SUMMARY" || cat audit-report.txt >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
           else

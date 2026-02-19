@@ -188,10 +188,8 @@ export async function POST(req: NextRequest) {
       id: true,
       title: true,
       sport: true,
-      goal: true,
-      keywords: true,
-      country: true,
       city: true,
+      country: true,
       language: true,
       lat: true,
       lng: true,
@@ -199,7 +197,8 @@ export async function POST(req: NextRequest) {
       published_until: true,
       created_at: true,
       updated_at: true,
-    },    
+      keywords: true,
+    },             
   })
 
   return NextResponse.json({ ok: true, item: created }, { headers: { "cache-control": "no-store" } })

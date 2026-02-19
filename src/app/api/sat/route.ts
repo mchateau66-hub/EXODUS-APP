@@ -54,9 +54,86 @@ function envBool(name: string) {
   return v === "1" || v === "true" || v === "yes" || v === "on";
 }
 
+/** ✅ manquait chez toi -> d’où l’erreur */
+function isE2E(req: NextRequest) {
+  return req.headers.get("x-e2e") === "1";
+}
+
+/** ✅ vérifie le token E2E uniquement quand x-e2e: 1 */
+function requireE2ETokenIfE2E(req: NextRequest) {
+  if (!isE2E(req)) return { ok: true as const };
+
+  const token = (req.headers.get("x-e2e-token") ?? "").trim();
+  const expected = (process.env.E2E_DEV_LOGIN_TOKEN ?? "").trim();
+
+  if (!expected) {
+    return {
+      ok: false as const,
+      res: json({ ok: false, error: "missing_server_e2e_token_env" }, { status: 500, headers: noStore() }),
+    };
+  }
+  if (!token || token !== expected) {
+    return {
+      ok: false as const,
+      res: json({ ok: false, error: "unauthorized_e2e" }, { status: 401, headers: noStore() }),
+    };
+  }
+  return { ok: true as const };
+}
+
+function isPaidPlan(plan: string) {
+  const p = plan.toLowerCase();
+  return p !== "" && p !== "free";
+}
+
+function planNameFromPlan(plan: string) {
+  const p = plan.toLowerCase();
+  if (p === "premium") return "Premium";
+  if (p === "master") return "Master";
+  if (p === "free") return "Free";
+  return plan || null;
+}
+
+function computePlanKey(plan: string, role: string) {
+  const p = plan.toLowerCase();
+  const r = role.toLowerCase();
+  if (!p || !r) return null;
+  return `${r}_${p}`;
+}
+
 export async function GET(req: NextRequest) {
   try {
-    const { searchParams } = new URL(req.url);
+    const url = new URL(req.url);
+    const { searchParams } = url;
+
+    // ✅ E2E override: /api/sat?plan=premium&role=athlete (ou cookies e2e_plan/e2e_role)
+    if (isE2E(req)) {
+      const gate = requireE2ETokenIfE2E(req);
+      if (!gate.ok) return gate.res;
+
+      const plan =
+        normStr(searchParams.get("plan")) || normStr(req.cookies.get("e2e_plan")?.value);
+      const role =
+        normStr(searchParams.get("role")) || normStr(req.cookies.get("e2e_role")?.value);
+
+      const planKey = computePlanKey(plan, role);
+      if (planKey) {
+        return json(
+          {
+            pro: isPaidPlan(plan),
+            status: "active",
+            planKey,
+            planName: planNameFromPlan(plan),
+            expiresAt: null,
+            trialEndAt: null,
+          },
+          { status: 200, headers: noStore() },
+        );
+      }
+      // si pas de plan/role -> on continue en mode "normal"
+    }
+
+    // --- Mode normal (prod / user session)
     let userId = searchParams.get("userId");
 
     if (!userId) {
@@ -114,11 +191,10 @@ export async function POST(req: NextRequest) {
   const isProd = process.env.NODE_ENV === "production";
   const forceRateLimit = envBool("E2E_FORCE_SAT_RATELIMIT");
   const inCI = envBool("CI");
+  const e2e = isE2E(req);
 
-  // ✅ Nouveau: E2E auto (Playwright / tests) => rate-limit ON
-  const isE2E = req.headers.get("x-e2e") === "1";
-
-  const enableRateLimit = isProd || inCI || forceRateLimit || isE2E;
+  // ✅ rate-limit ON en prod/CI/force + E2E
+  const enableRateLimit = isProd || inCI || forceRateLimit || e2e;
 
   let body: SatIssueBody = {};
   try {
@@ -157,7 +233,11 @@ export async function POST(req: NextRequest) {
   }
 
   const premiumGated = new Set(["contacts.view", "whatsapp.handoff", "chat.media"]);
-  if (isProd && premiumGated.has(feature)) {
+
+  // ✅ En prod: entitlements ON, mais en E2E: on bypass
+  const enforceEntitlements = isProd && premiumGated.has(feature) && !e2e;
+
+  if (enforceEntitlements) {
     const now = new Date();
     const entitlements = await prisma.userEntitlement.findMany({
       where: { user_id: String(user.id) },

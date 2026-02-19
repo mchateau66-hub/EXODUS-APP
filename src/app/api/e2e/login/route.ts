@@ -1,101 +1,97 @@
 // src/app/api/e2e/login/route.ts
 import { NextRequest } from "next/server";
-import { prisma } from "@/lib/db";
-import { createSessionResponseForUser } from "@/lib/auth";
-
-type Plan = "free" | "master" | "premium";
-type Role = "athlete" | "coach" | "admin";
+import { POST as LoginPOST } from "../../login/route";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
-function devLoginEnabled(): boolean {
-  const v = (process.env.ALLOW_DEV_LOGIN ?? "").trim().toLowerCase();
-  return v === "1" || v === "true";
+type LoginPayload = {
+  email?: string;
+  plan?: string;
+  role?: string;
+  onboardingStep?: number;
+  maxAgeSeconds?: number;
+};
+
+function cookieKV(name: string, value: string, maxAgeSeconds = 60 * 60 * 24) {
+  // Cookies lisibles côté serveur (HttpOnly ok), sécurisés, pour HTTPS Vercel
+  return `${name}=${encodeURIComponent(value)}; Path=/; Max-Age=${maxAgeSeconds}; HttpOnly; Secure; SameSite=Lax`;
 }
 
-function isE2E(req: NextRequest): boolean {
-  return (req.headers.get("x-e2e") ?? "").trim() === "1";
-}
+function withE2ECookies(res: Response, payload: LoginPayload) {
+  const plan = (payload.plan ?? "").trim();
+  const role = (payload.role ?? "").trim();
 
-function tokenOk(req: NextRequest): boolean {
-  const expected = (process.env.E2E_DEV_LOGIN_TOKEN ?? "").trim();
-  if (!expected) return false;
+  // si pas de plan/role, on ne touche pas
+  if (!plan || !role) return res;
 
-  const got = (req.headers.get("x-e2e-token") ?? "").trim();
-  return got !== "" && got === expected;
-}
+  const headers = new Headers(res.headers);
 
-function pickPlan(v: unknown): Plan {
-  const s = String(v ?? "").toLowerCase().trim();
-  if (s === "pro") return "premium";
-  return s === "master" || s === "premium" ? (s as Plan) : "free";
-}
+  // cookies E2E pour /api/sat (fallback)
+  headers.append("set-cookie", cookieKV("e2e_plan", plan));
+  headers.append("set-cookie", cookieKV("e2e_role", role));
 
-function pickRole(v: unknown): Role {
-  const s = String(v ?? "").toLowerCase().trim();
-  return s === "coach" || s === "admin" ? (s as Role) : "athlete";
-}
+  // optionnel : si tu veux aussi exposer onboardingStep, décommente
+  // if (typeof payload.onboardingStep === "number") {
+  //   headers.append("set-cookie", cookieKV("e2e_onboardingStep", String(payload.onboardingStep)));
+  // }
 
-function isHttps(req: NextRequest): boolean {
-  return req.headers.get("x-forwarded-proto")?.split(",")[0]?.trim() === "https";
+  return new Response(res.body, {
+    status: res.status,
+    statusText: res.statusText,
+    headers,
+  });
 }
 
 export async function POST(req: NextRequest) {
-  if (!devLoginEnabled()) return new Response("Not found", { status: 404 });
-  if (!isE2E(req)) return new Response("Not found", { status: 404 });
-  if (!tokenOk(req)) return new Response("Not found", { status: 404 });
+  // On lit le body via clone() pour ne pas consommer le stream original
+  const cloned = req.clone();
+  let payload: LoginPayload = {};
+  try {
+    payload = (await cloned.json()) as LoginPayload;
+  } catch {
+    payload = {};
+  }
 
-  const body = (await req.json().catch(() => ({}))) as {
-    email?: string;
-    role?: Role;
-    plan?: Plan | "pro";
-    maxAgeSeconds?: number;
-    maxAge?: number;
-  };
-
-  const email = String(body.email ?? `e2e@exodus.local`).toLowerCase().trim();
-  const role = pickRole(body.role ?? "athlete");
-  const plan = pickPlan(body.plan ?? "free");
-
-  const rawMaxAge =
-    typeof body.maxAgeSeconds === "number"
-      ? body.maxAgeSeconds
-      : typeof body.maxAge === "number"
-        ? body.maxAge
-        : undefined;
-
-  const maxAgeSeconds =
-    typeof rawMaxAge === "number" && Number.isFinite(rawMaxAge) && rawMaxAge > 0
-      ? Math.floor(rawMaxAge)
-      : undefined;
-
-  const user = await prisma.user.upsert({
-    where: { email },
-    update: { role },
-    create: { email, role },
-    select: { id: true, role: true },
-  });
-
-  const res = await createSessionResponseForUser(
-    user.id,
-    { ok: true, user, plan },
-    req,
-    maxAgeSeconds ? { maxAgeSeconds } : {},
-  );
-
-  res.cookies.set("plan", plan, {
-    httpOnly: false,
-    sameSite: "lax",
-    secure: isHttps(req),
-    path: "/",
-    maxAge: 60 * 60 * 24 * 30,
-  });
-
-  res.headers.set("cache-control", "no-store");
-  return res;
+  const res = await LoginPOST(req);
+  return withE2ECookies(res, payload);
 }
 
-export async function GET() {
-  return new Response("Not found", { status: 404 });
+export async function GET(req: NextRequest) {
+  const url = req.nextUrl;
+
+  const num = (key: string) => {
+    const v = url.searchParams.get(key);
+    if (!v) return undefined;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : undefined;
+  };
+
+  const payload: LoginPayload = {
+    email: url.searchParams.get("email") ?? undefined,
+    plan: url.searchParams.get("plan") ?? undefined,
+    role: url.searchParams.get("role") ?? undefined,
+    onboardingStep: num("onboardingStep"),
+    maxAgeSeconds: num("maxAgeSeconds"),
+  };
+
+  const headers = new Headers(req.headers);
+  headers.delete("content-length");
+  headers.delete("transfer-encoding");
+
+  // S’assure que /api/login te considère bien "E2E"
+  headers.set("x-e2e", headers.get("x-e2e") ?? "1");
+  headers.set("content-type", "application/json");
+
+  const target = new URL("/api/login", url.origin);
+
+  const proxyReq = new NextRequest(target, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(payload),
+  });
+
+  const res = await LoginPOST(proxyReq);
+  return withE2ECookies(res, payload);
 }

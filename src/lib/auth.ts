@@ -49,7 +49,7 @@ async function createSessionRow(sessionModel: any, data: any) {
  * Crée une session DB + pose le cookie session.
  * Robustesse:
  * - pose la session sur TOUS les noms candidats (sid + session + ...)
- *   => évite invalid_session si une partie de l'app lit un autre nom.
+ * - tente plusieurs shapes Prisma pour relier l'user (user_id / userId / connect)
  */
 export async function createSessionResponseForUser<T extends Record<string, any>>(
   userId: string,
@@ -66,8 +66,28 @@ export async function createSessionResponseForUser<T extends Record<string, any>
 
   const sid = randomUUID();
 
+  const attempts = [
+    { id: sid, user_id: userId },
+    { id: sid, userId },
+    { id: sid, user: { connect: { id: userId } } },
+  ];
+
   try {
-    await createSessionRow(session, { id: sid, user_id: userId });
+    let created: any = null;
+    let lastErr: any = null;
+
+    for (const data of attempts) {
+      try {
+        created = await createSessionRow(session, data);
+        break;
+      } catch (e) {
+        lastErr = e;
+      }
+    }
+
+    if (!created) {
+      throw lastErr ?? new Error("Unable to create session row (all attempts failed).");
+    }
   } catch (err) {
     console.error("[auth] createSessionRow_failed", {
       name: (err as any)?.name,
@@ -79,7 +99,6 @@ export async function createSessionResponseForUser<T extends Record<string, any>
     return res;
   }
 
-  // ✅ sid dans le JSON (utile E2E), sans PII
   const res = NextResponse.json({ ...payload, sid }, { status: 200 });
   res.headers.set("cache-control", "no-store");
 
@@ -87,7 +106,6 @@ export async function createSessionResponseForUser<T extends Record<string, any>
   const maxAge = opts.maxAgeSeconds ?? 60 * 60 * 24 * 30;
 
   const names = SESSION_COOKIE_CANDIDATES.length ? SESSION_COOKIE_CANDIDATES : [DEFAULT_COOKIE_NAME];
-
   for (const name of names) {
     res.cookies.set(name, sid, {
       httpOnly: true,
@@ -107,11 +125,55 @@ export async function deleteSessionBySid(sid: string) {
   await session.delete({ where: { id: sid } }).catch(() => null);
 }
 
+async function findSessionWithUser(sessionModel: any, sid: string) {
+  try {
+    // Si la relation s'appelle "user" (cas le plus fréquent)
+    return await sessionModel.findUnique({
+      where: { id: sid },
+      include: { user: true },
+    });
+  } catch {
+    return null;
+  }
+}
+
+async function findSessionByUserIdField(sessionModel: any, sid: string, field: "user_id" | "userId") {
+  try {
+    // Important: ne sélectionner qu'UN champ qui existe vraiment
+    return await sessionModel.findUnique({
+      where: { id: sid },
+      select: { id: true, [field]: true } as any,
+    });
+  } catch {
+    return null;
+  }
+}
+
+async function bumpLastSeen(sessionModel: any, sid: string) {
+  try {
+    if (typeof sessionModel?.update !== "function") return;
+    await sessionModel.update({
+      where: { id: sid },
+      data: { last_seen_at: new Date() },
+    });
+  } catch {
+    // best-effort only
+  }
+}
+
+/**
+ * Récupère l'utilisateur à partir du cookie de session.
+ *
+ * ✅ Robustesse Prisma:
+ * - on tente include user
+ * - sinon on tente user_id
+ * - sinon userId
+ * - puis on refetch prisma.user (onboardingStep fiable)
+ */
 export async function getUserFromSession() {
   const store = await Promise.resolve(nextCookies() as any);
 
   let sid: string | null = null;
-
   const names = SESSION_COOKIE_CANDIDATES.length ? SESSION_COOKIE_CANDIDATES : [DEFAULT_COOKIE_NAME];
 
   for (const name of names) {
@@ -128,17 +190,86 @@ export async function getUserFromSession() {
   const { session } = prismaModels(prisma as any);
   if (!session?.findUnique) return null;
 
-  const s = await session
-    .findUnique({ where: { id: sid }, include: { user: true } })
-    .catch(() => null);
+  // 1) Essai relation session.user
+  const s1 = await findSessionWithUser(session, sid);
+  const directUser = (s1 as any)?.user ?? null;
 
-  if (!s?.user) return null;
+  if (directUser?.id) {
+    // refetch user pour être sûr d'avoir onboardingStep à jour + champ set complet
+    const user = await prisma.user
+      .findUnique({
+        where: { id: String(directUser.id) },
+        select: {
+          id: true,
+          email: true,
+          name: true,
+          role: true,
+          onboardingStep: true,
+          country: true,
+          language: true,
+          status: true,
+        },
+      })
+      .catch(() => null);
 
-  if (session.update) {
-    session.update({ where: { id: sid }, data: { last_seen_at: new Date() } }).catch(() => null);
+    if (!user) return null;
+    void bumpLastSeen(session, sid);
+    return { user, sid };
   }
 
-  return { user: s.user, sid };
+  // 2) Essai champ user_id
+  const s2 = await findSessionByUserIdField(session, sid, "user_id");
+  const uid2 = (s2 as any)?.user_id ? String((s2 as any).user_id) : null;
+
+  if (uid2) {
+    const user = await prisma.user
+      .findUnique({
+        where: { id: uid2 },
+        select: {
+          id: true,
+          email: true,
+          name: true,
+          role: true,
+          onboardingStep: true,
+          country: true,
+          language: true,
+          status: true,
+        },
+      })
+      .catch(() => null);
+
+    if (!user) return null;
+    void bumpLastSeen(session, sid);
+    return { user, sid };
+  }
+
+  // 3) Essai champ userId
+  const s3 = await findSessionByUserIdField(session, sid, "userId");
+  const uid3 = (s3 as any)?.userId ? String((s3 as any).userId) : null;
+
+  if (uid3) {
+    const user = await prisma.user
+      .findUnique({
+        where: { id: uid3 },
+        select: {
+          id: true,
+          email: true,
+          name: true,
+          role: true,
+          onboardingStep: true,
+          country: true,
+          language: true,
+          status: true,
+        },
+      })
+      .catch(() => null);
+
+    if (!user) return null;
+    void bumpLastSeen(session, sid);
+    return { user, sid };
+  }
+
+  return null;
 }
 
 function expireCookie(

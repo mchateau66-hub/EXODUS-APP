@@ -8,6 +8,7 @@ import {
   login,
   gotoOk,
   setSessionCookieFromEnv,
+  setPlanCookie,
 } from "./helpers";
 
 // Email classique
@@ -15,28 +16,6 @@ const EMAIL_RE = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i;
 // Tel FR simple +33/0
 const PHONE_RE = /(\+33|0)\s?[1-9](?:[\s.-]?\d{2}){4}\b/i;
 
-async function setPlanCookie(context: any, plan: "free" | "master" | "premium") {
-  const u = new URL(BASE_URL);
-  const secure = u.protocol === "https:";
-  await context.addCookies([
-    {
-      name: "plan",
-      value: plan,
-      url: u.origin, // host-only friendly
-      path: "/",
-      httpOnly: false,
-      sameSite: "Lax",
-      secure,
-    },
-  ]);
-}
-
-/**
- * IMPORTANT:
- * - Local: login backdoor possible => email unique par run pour éviter quota/état.
- * - Remote: backdoor /api/login désactivé => on s'appuie sur E2E_SESSION_COOKIE (si présent),
- *   et on force le cookie "plan=free" pour que le front se comporte comme Free.
- */
 async function ensureAuthForPii(page: Page, plan: "free" | "master" | "premium" = "free") {
   if (IS_REMOTE_BASE) {
     await setPlanCookie(page.context(), plan);
@@ -75,19 +54,17 @@ test.describe("PII-Guard (client)", () => {
       const req = route.request();
       const raw = req.postData() || "";
 
-      // Check brut
+      // brut
       expect(raw).not.toMatch(EMAIL_RE);
       expect(raw).not.toMatch(PHONE_RE);
 
-      // Check ciblé JSON
+      // JSON ciblé
       try {
         const parsed = JSON.parse(raw) as any;
         const content = extractLikelyContent(parsed);
         expect(content).not.toMatch(EMAIL_RE);
         expect(content).not.toMatch(PHONE_RE);
-      } catch {
-        // non-JSON => déjà couvert
-      }
+      } catch {}
 
       const nowIso = new Date().toISOString();
       await route.fulfill({
@@ -126,7 +103,6 @@ test.describe("PII-Guard (client)", () => {
     await expect(sendBtn).toBeEnabled({ timeout: 10_000 });
 
     await sendBtn.click();
-
     await expect.soft(input).toHaveValue("");
   });
 });

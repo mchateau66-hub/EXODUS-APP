@@ -12,10 +12,11 @@ type MyAd = {
   language?: string | null
   lat?: number | null
   lng?: number | null
-  status?: string | null
+  status?: 'active' | 'inactive' | string | null
   published_until?: string | null
   created_at?: string | null
   updated_at?: string | null
+  keywords?: string[] | null
 }
 
 type SortMode = 'smart' | 'urgent' | 'visible' | 'recent'
@@ -23,7 +24,6 @@ type SortMode = 'smart' | 'urgent' | 'visible' | 'recent'
 const EXPIRY_SOON_DAYS = 7
 const EXPIRY_URGENT_DAYS = 2
 
-// ✅ LocalStorage prefs
 const PREFS_KEY = 'myads:prefs:v1'
 const ALLOWED_SORT: SortMode[] = ['smart', 'urgent', 'visible', 'recent']
 
@@ -43,10 +43,6 @@ function formatUntil(published_until?: string | null) {
   }
 }
 
-function isCoordsOK(ad: MyAd) {
-  return typeof ad.lat === 'number' && typeof ad.lng === 'number'
-}
-
 function daysLeft(published_until?: string | null): number | null {
   const t = parseTime(published_until)
   if (t == null) return null
@@ -61,36 +57,42 @@ function isExpired(published_until?: string | null) {
   return t <= Date.now()
 }
 
-function badgeStatus(ad: MyAd) {
-  const status = String(ad.status ?? 'active')
-  const expired = isExpired(ad.published_until)
-  if (status === 'inactive') return { label: 'Désactivée', cls: 'bg-white/10 text-white/80' }
-  if (expired) return { label: 'Expirée', cls: 'bg-orange-500/15 text-orange-100' }
-  return { label: 'Active', cls: 'bg-emerald-500/15 text-emerald-100' }
+function coordsInfo(ad: MyAd) {
+  // Important: si l’API ne renvoie pas lat/lng, ils seront "undefined" (propriété absente)
+  const hasLat = Object.prototype.hasOwnProperty.call(ad, 'lat')
+  const hasLng = Object.prototype.hasOwnProperty.call(ad, 'lng')
+
+  if (!hasLat || !hasLng) return { ok: false, reason: 'coordonnées non chargées (API)', missingFromApi: true }
+
+  const ok = typeof ad.lat === 'number' && typeof ad.lng === 'number'
+  return { ok, reason: ok ? null : 'coordonnées manquantes', missingFromApi: false }
 }
 
 function getVisibility(ad: MyAd) {
   const status = String(ad.status ?? 'active')
   const expired = isExpired(ad.published_until)
-  const coordsOK = isCoordsOK(ad)
-
-  const visible = status === 'active' && !expired && coordsOK
+  const coords = coordsInfo(ad)
+  const visible = status === 'active' && !expired && coords.ok
 
   let reason: string | null = null
   if (!visible) {
     if (status !== 'active') reason = 'désactivée'
     else if (expired) reason = 'expirée'
-    else if (!coordsOK) reason = 'coordonnées manquantes'
+    else if (!coords.ok) reason = coords.reason
     else reason = 'non visible'
   }
 
-  return { visible, reason, status, expired, coordsOK }
+  return { visible, reason, status, expired, coords }
 }
 
-/**
- * Badge "Expire dans X jours" (même si inactive)
- * Rouge si <= 2 jours.
- */
+function badgeStatus(ad: MyAd) {
+  const status = String(ad.status ?? 'active')
+  const expired = isExpired(ad.published_until)
+  if (status === 'inactive') return { label: 'Désactivée', cls: 'bg-slate-100 text-slate-700 border-slate-200' }
+  if (expired) return { label: 'Expirée', cls: 'bg-amber-100 text-amber-900 border-amber-200' }
+  return { label: 'Active', cls: 'bg-emerald-100 text-emerald-900 border-emerald-200' }
+}
+
 function expiryBadge(ad: MyAd): { label: string; cls: string; title?: string } | null {
   const d = daysLeft(ad.published_until)
   if (d == null) return null
@@ -104,14 +106,14 @@ function expiryBadge(ad: MyAd): { label: string; cls: string; title?: string } |
   if (d <= EXPIRY_URGENT_DAYS) {
     return {
       label: `⚠️ Expire dans ${d}j`,
-      cls: `bg-red-500/15 text-red-100${opacity}`,
+      cls: `bg-red-100 text-red-900 border-red-200${opacity}`,
       title: `Expire bientôt${inactiveHint}`,
     }
   }
 
   return {
     label: `Expire dans ${d}j`,
-    cls: `bg-amber-500/15 text-amber-100${opacity}`,
+    cls: `bg-amber-100 text-amber-900 border-amber-200${opacity}`,
     title: `Expire bientôt${inactiveHint}`,
   }
 }
@@ -120,7 +122,6 @@ function safeCreatedAt(ad: MyAd) {
   return parseTime(ad.created_at) ?? 0
 }
 
-/** published_until optimiste (même logique que l’API: base = max(now, currentUntil)) */
 function computePublishedUntilOptimistic(currentUntil?: string | null, durationDays = 30) {
   const now = Date.now()
   const cur = parseTime(currentUntil) ?? 0
@@ -137,7 +138,7 @@ function matchesQuery(ad: MyAd, q: string) {
   const query = norm(q)
   if (!query) return true
 
-  const hay = [ad.title, ad.sport, ad.city, ad.country, ad.language]
+  const hay = [ad.title, ad.sport, ad.city, ad.country, ad.language, (ad.keywords ?? []).join(' ')]
     .map(norm)
     .filter(Boolean)
     .join(' • ')
@@ -188,12 +189,10 @@ export default function MyAdsClient() {
   const [err, setErr] = useState<string | null>(null)
   const [pending, setPending] = useState<Record<string, boolean>>({})
 
-  // ✅ Search + filtre + tri (persistés)
   const [q, setQ] = useState('')
   const [hideNonVisible, setHideNonVisible] = useState(false)
   const [sortMode, setSortMode] = useState<SortMode>('smart')
 
-  // ✅ load prefs on mount
   useEffect(() => {
     const p = readPrefs()
     if (typeof p.q === 'string') setQ(p.q)
@@ -201,7 +200,6 @@ export default function MyAdsClient() {
     if (p.sortMode) setSortMode(p.sortMode)
   }, [])
 
-  // ✅ save prefs on change
   useEffect(() => {
     writePrefs({ q, hideNonVisible, sortMode })
   }, [q, hideNonVisible, sortMode])
@@ -250,14 +248,17 @@ export default function MyAdsClient() {
 
   const visibleCount = useMemo(() => enriched.filter((x) => x.vis.visible).length, [enriched])
 
-  // ✅ Filtre search
+  const hasCoordsMissingFromApi = useMemo(
+    () => enriched.some((x) => x.vis.coords.missingFromApi),
+    [enriched]
+  )
+
   const filtered = useMemo(() => {
     const query = q.trim()
     if (!query) return enriched
     return enriched.filter((x) => matchesQuery(x.ad, query))
   }, [enriched, q])
 
-  // ✅ Comparateurs de tri
   const cmpSmart = useCallback((a: any, b: any) => {
     if (a.isUrgent !== b.isUrgent) return a.isUrgent ? -1 : 1
     if (a.vis.expired !== b.vis.expired) return a.vis.expired ? -1 : 1
@@ -298,16 +299,13 @@ export default function MyAdsClient() {
     return arr
   }, [filtered, sortMode, cmpSmart, cmpUrgent, cmpVisible, cmpRecent])
 
-  // ✅ "À relancer" : urgent OU expirée (toujours visible, même si hideNonVisible)
   const urgentList = useMemo(() => sorted.filter((x) => x.isUrgent || x.vis.expired), [sorted])
 
-  // ✅ Le reste (sans doublons)
   const restBase = useMemo(() => {
     const urgentIds = new Set(urgentList.map((x) => x.ad.id))
     return sorted.filter((x) => !urgentIds.has(x.ad.id))
   }, [sorted, urgentList])
 
-  // ✅ toggle "masquer non visibles" (n'affecte pas "À relancer")
   const restList = useMemo(() => {
     if (!hideNonVisible) return restBase
     return restBase.filter((x) => x.vis.visible)
@@ -320,7 +318,6 @@ export default function MyAdsClient() {
     return ids.size
   }, [urgentList, restList])
 
-  // ✅ auto-scroll vers la 1ère urgente après refresh (only smart + no search)
   useEffect(() => {
     if (loading) return
     if (didAutoScrollRef.current) return
@@ -338,7 +335,6 @@ export default function MyAdsClient() {
     }
   }, [loading, urgentList, q, sortMode])
 
-  // ✅ PATCH optimiste + merge réponse
   const patch = useCallback(
     async (id: string, action: 'deactivate' | 'activate', durationDays?: number) => {
       setErr(null)
@@ -391,15 +387,14 @@ export default function MyAdsClient() {
     children: ReactNode
     onClick?: () => void
     disabled?: boolean
-    variant?: 'default' | 'urgent'
+    variant?: 'default' | 'danger'
     title?: string
   }) => {
-    const base =
-      'rounded-2xl border px-3 py-2 text-sm font-semibold text-white transition disabled:opacity-60'
+    const base = 'inline-flex items-center justify-center rounded-2xl border px-3 py-2 text-sm font-semibold transition disabled:opacity-60'
     const cls =
-      variant === 'urgent'
-        ? 'border-red-300/40 bg-red-500/20 hover:bg-red-500/25'
-        : 'border-white/15 bg-white/10 hover:bg-white/15'
+      variant === 'danger'
+        ? 'border-red-300 bg-red-50 text-red-900 hover:bg-red-100'
+        : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-900'
     return (
       <button type="button" title={title} disabled={disabled} onClick={onClick} className={`${base} ${cls}`}>
         {children}
@@ -415,22 +410,21 @@ export default function MyAdsClient() {
     const canActivate = vis.status !== 'active' || vis.expired
 
     const isPending = !!pending[ad.id]
-    const relaunchVariant: 'default' | 'urgent' = isUrgent || vis.expired ? 'urgent' : 'default'
-    const relaunchLabelCls = isUrgent || vis.expired ? 'text-red-200' : 'text-white/60'
+    const relaunchVariant: 'default' | 'danger' = isUrgent || vis.expired ? 'danger' : 'default'
 
     return (
-      <div id={`ad-${ad.id}`} key={ad.id} className="rounded-2xl border border-white/10 bg-white/5 p-3">
+      <div id={`ad-${ad.id}`} key={ad.id} className="rounded-2xl border border-slate-200 bg-white p-4">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <div className="text-sm font-semibold text-white">{ad.title}</div>
+              <div className="text-sm font-semibold text-slate-900">{ad.title}</div>
 
               {vis.visible ? (
-                <span className="rounded-full bg-emerald-500/15 px-2 py-1 text-[11px] font-semibold text-emerald-100">
+                <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-900">
                   Visible sur la map coach
                 </span>
               ) : (
-                <span className="rounded-full bg-white/10 px-2 py-1 text-[11px] font-semibold text-white/80">
+                <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-semibold text-slate-700">
                   Non visible ({vis.reason})
                 </span>
               )}
@@ -438,32 +432,32 @@ export default function MyAdsClient() {
               {expBadge ? (
                 <span
                   title={expBadge.title}
-                  className={`rounded-full px-2 py-1 text-[11px] font-semibold ${expBadge.cls}`}
+                  className={`rounded-full border px-2 py-1 text-[11px] font-semibold ${expBadge.cls}`}
                 >
                   {expBadge.label}
                 </span>
               ) : null}
 
               {dleft != null && dleft > 0 && dleft <= EXPIRY_SOON_DAYS ? (
-                <span className="rounded-full bg-white/10 px-2 py-1 text-[11px] font-semibold text-white/70">
+                <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-semibold text-slate-700">
                   J-{dleft}
                 </span>
               ) : null}
             </div>
 
-            <div className="mt-1 text-xs text-white/70">
+            <div className="mt-1 text-xs text-slate-600">
               {ad.sport ? `Sport: ${ad.sport}` : 'Sport: —'}
               {ad.city ? ` • ${ad.city}` : ''}
               {ad.country ? ` • ${ad.country}` : ''}
               {ad.language ? ` • ${String(ad.language).toUpperCase()}` : ''}
             </div>
 
-            <div className="mt-1 text-[11px] text-white/55">
-              coords: {vis.coordsOK ? 'OK' : 'manquantes'} • jusqu’au: {formatUntil(ad.published_until)}
+            <div className="mt-1 text-[11px] text-slate-500">
+              coords: {vis.coords.ok ? 'OK' : vis.coords.reason} • jusqu’au: {formatUntil(ad.published_until)}
             </div>
           </div>
 
-          <span className={`shrink-0 rounded-full px-2 py-1 text-[11px] font-semibold ${b.cls}`}>
+          <span className={`shrink-0 rounded-full border px-2 py-1 text-[11px] font-semibold ${b.cls}`}>
             {b.label}
           </span>
         </div>
@@ -471,7 +465,7 @@ export default function MyAdsClient() {
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <Link
             href={`/ads/${ad.id}/edit`}
-            className="rounded-2xl border border-white/15 bg-white/10 px-3 py-2 text-sm font-semibold text-white hover:bg-white/15"
+            className="inline-flex items-center justify-center rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-900 hover:bg-slate-50"
           >
             Modifier
           </Link>
@@ -488,7 +482,7 @@ export default function MyAdsClient() {
           ) : null}
 
           <div className="flex flex-wrap items-center gap-2">
-            <span className={`text-[11px] font-semibold ${relaunchLabelCls}`}>
+            <span className={`text-[11px] font-semibold ${isUrgent || vis.expired ? 'text-red-700' : 'text-slate-500'}`}>
               {canActivate ? 'Relancer' : 'Prolonger'}
               {isUrgent || vis.expired ? ' (urgent)' : ''}
             </span>
@@ -507,8 +501,8 @@ export default function MyAdsClient() {
           </div>
         </div>
 
-        {!vis.coordsOK ? (
-          <div className="mt-3 rounded-2xl border border-white/10 bg-white/5 p-2 text-xs text-white/70">
+        {!vis.coords.ok ? (
+          <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700">
             ⚠️ Pour apparaître sur la map coach,{' '}
             <Link href={`/ads/${ad.id}/edit`} className="font-semibold underline">
               édite l’annonce
@@ -523,46 +517,43 @@ export default function MyAdsClient() {
   const isDirty = q.trim() !== '' || hideNonVisible || sortMode !== 'smart'
 
   return (
-    <div className="rounded-3xl border border-white/10 bg-white/5 p-4">
-      {/* Header + controls */}
+    <section className="rounded-2xl border bg-white p-5 shadow-sm">
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div>
-          <div className="text-sm font-semibold text-white">Mes annonces</div>
-          <div className="mt-1 text-xs text-white/70">
+          <div className="text-base font-semibold text-slate-900">Mes annonces</div>
+          <div className="mt-1 text-sm text-slate-600">
             {loading ? 'Chargement…' : `${items.length} annonce(s) • visibles map coach: ${visibleCount}`}
             {isDirty ? <span> • affichées: {filteredCount}</span> : null}
-            {err ? <span className="text-red-200"> • {err}</span> : null}
+            {err ? <span className="text-red-700"> • {err}</span> : null}
           </div>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          {/* Search */}
-          <div className="flex items-center gap-2 rounded-2xl border border-white/15 bg-white/5 px-3 py-2">
-            <span className="text-xs font-semibold text-white/70">Recherche</span>
+          <div className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2">
+            <span className="text-xs font-semibold text-slate-600">Recherche</span>
             <input
               value={q}
               onChange={(e) => setQ(e.target.value)}
               placeholder="titre, sport, ville…"
-              className="w-56 max-w-[55vw] bg-transparent text-sm text-white outline-none placeholder:text-white/35"
+              className="w-56 max-w-[55vw] bg-transparent text-sm text-slate-900 outline-none placeholder:text-slate-400"
             />
             {q.trim() ? (
               <button
                 type="button"
                 onClick={() => setQ('')}
-                className="rounded-full border border-white/15 bg-white/5 px-2 py-0.5 text-[11px] text-white/70 hover:bg-white/10"
+                className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[11px] text-slate-700 hover:bg-slate-50"
               >
                 Clear
               </button>
             ) : null}
           </div>
 
-          {/* Sort */}
-          <div className="flex items-center gap-2 rounded-2xl border border-white/15 bg-white/5 px-3 py-2">
-            <span className="text-xs font-semibold text-white/70">Trier</span>
+          <div className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2">
+            <span className="text-xs font-semibold text-slate-600">Trier</span>
             <select
               value={sortMode}
               onChange={(e) => setSortMode(e.target.value as SortMode)}
-              className="bg-transparent text-sm text-white outline-none"
+              className="bg-transparent text-sm text-slate-900 outline-none"
             >
               <option value="smart">Intelligent</option>
               <option value="urgent">Urgent</option>
@@ -571,8 +562,7 @@ export default function MyAdsClient() {
             </select>
           </div>
 
-          {/* Toggle */}
-          <label className="flex items-center gap-2 rounded-2xl border border-white/15 bg-white/5 px-3 py-2 text-sm text-white/80">
+          <label className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
             <input
               type="checkbox"
               checked={hideNonVisible}
@@ -581,7 +571,6 @@ export default function MyAdsClient() {
             Masquer non visibles
           </label>
 
-          {/* Reset */}
           {isDirty ? (
             <button
               type="button"
@@ -591,7 +580,7 @@ export default function MyAdsClient() {
                 setSortMode('smart')
                 clearPrefs()
               }}
-              className="rounded-2xl border border-white/15 bg-white/10 px-3 py-2 text-sm font-semibold text-white hover:bg-white/15"
+              className="rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-900 hover:bg-slate-50"
             >
               Réinitialiser
             </button>
@@ -600,41 +589,46 @@ export default function MyAdsClient() {
           <button
             type="button"
             onClick={refresh}
-            className="rounded-2xl border border-white/15 bg-white/10 px-3 py-2 text-sm font-semibold text-white hover:bg-white/15"
+            className="rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-900 hover:bg-slate-50"
           >
             Rafraîchir
           </button>
 
           <Link
             href="/ads/new"
-            className="rounded-2xl border border-white/15 bg-white/10 px-3 py-2 text-sm font-semibold text-white hover:bg-white/15"
+            className="rounded-2xl bg-slate-900 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800"
           >
             Créer
           </Link>
         </div>
       </div>
 
-      <div className="mt-2 text-[11px] text-white/55">
-        ℹ️ “Masquer non visibles” n’affecte pas <b>À relancer</b> (pour ne pas cacher l’actionnable).<br />
+      <div className="mt-3 text-xs text-slate-600">
+        ℹ️ “Masquer non visibles” n’affecte pas <b>À relancer</b>.<br />
         ✅ Les filtres/tri sont sauvegardés automatiquement (localStorage).
       </div>
 
-      {/* Lists */}
+      {hasCoordsMissingFromApi ? (
+        <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+          ⚠️ Ton <code className="font-mono">GET /api/ads</code> ne renvoie pas encore <code className="font-mono">lat/lng</code>.
+          Ajoute-les dans le <code className="font-mono">select</code> pour que “Visible sur la map coach” fonctionne.
+        </div>
+      ) : null}
+
       <div className="mt-4 space-y-3">
         {items.length === 0 && !loading ? (
-          <div className="rounded-2xl border border-white/10 bg-white/5 p-3 text-sm text-white/70">
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
             Tu n’as aucune annonce pour l’instant. Clique sur <b>Créer</b>.
           </div>
         ) : null}
 
-        {/* ✅ Section À relancer */}
         {urgentList.length ? (
-          <div className="rounded-2xl border border-red-300/20 bg-red-500/5 p-3">
+          <div className="rounded-2xl border border-red-200 bg-red-50 p-4">
             <div className="mb-2 flex items-center justify-between gap-2">
-              <div className="text-xs font-semibold uppercase tracking-[0.18em] text-red-200/90">
+              <div className="text-xs font-semibold uppercase tracking-[0.18em] text-red-800">
                 À relancer
               </div>
-              <div className="text-[11px] text-white/70">
+              <div className="text-[12px] text-red-800/80">
                 {urgentList.length} annonce(s) (≤{EXPIRY_URGENT_DAYS}j ou expirée)
               </div>
             </div>
@@ -642,23 +636,21 @@ export default function MyAdsClient() {
           </div>
         ) : null}
 
-        {/* ✅ Le reste */}
         {restList.length ? (
           <div className="space-y-2">
-            <div className="px-1 text-xs font-semibold uppercase tracking-[0.18em] text-white/55">
+            <div className="px-1 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
               Toutes les annonces
             </div>
             {restList.map(renderCard)}
           </div>
         ) : null}
 
-        {/* ✅ empty state after filters */}
         {items.length > 0 && urgentList.length === 0 && restList.length === 0 && !loading ? (
-          <div className="rounded-2xl border border-white/10 bg-white/5 p-3 text-sm text-white/70">
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
             Aucun résultat avec ces filtres.
           </div>
         ) : null}
       </div>
-    </div>
+    </section>
   )
 }

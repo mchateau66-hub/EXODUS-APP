@@ -3,6 +3,8 @@ import Image from 'next/image'
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { getUserFromSession } from '@/lib/auth'
+import { ThemeToggle } from "@/components/ui/theme-toggle"
+import { ThemeToggleFloating } from "@/components/ui/theme-toggle-floating"
 
 const LOGO_SRC = '/logo.svg' // mets ton logo dans /public/logo.svg (ou change ce chemin)
 
@@ -14,6 +16,7 @@ export default async function HomePage() {
 
   return (
     <main className="relative min-h-[100dvh] overflow-hidden bg-slate-950 text-white">
+      <ThemeToggleFloating />
       {/* Fond (dégradés) */}
       <div className="absolute inset-0 bg-[radial-gradient(1200px_600px_at_50%_30%,rgba(56,189,248,0.18),transparent_60%),radial-gradient(900px_500px_at_20%_80%,rgba(168,85,247,0.14),transparent_60%)]" />
 

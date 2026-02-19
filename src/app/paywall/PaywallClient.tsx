@@ -1,3 +1,4 @@
+// src/app/paywall/PaywallClient.tsx
 "use client";
 
 import Link from "next/link";
@@ -73,8 +74,14 @@ export default function PaywallClient() {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-slate-100 px-4 py-8">
-      <section className="w-full max-w-xl rounded-3xl border border-slate-200 bg-white p-6 shadow-[0_24px_60px_rgba(15,23,42,0.18)] sm:p-8">
+    <main
+      className="flex min-h-screen items-center justify-center bg-slate-100 px-4 py-8"
+      aria-busy={loading ? "true" : "false"}
+    >
+      <section
+        data-testid="paywall"
+        className="w-full max-w-xl rounded-3xl border border-slate-200 bg-white p-6 shadow-[0_24px_60px_rgba(15,23,42,0.18)] sm:p-8"
+      >
         <p className="mb-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-400">
           Messagerie · Limite atteinte
         </p>
@@ -126,13 +133,18 @@ export default function PaywallClient() {
         </div>
 
         {error && (
-          <div className="mb-3 rounded-2xl border border-red-300 bg-red-50 px-4 py-2 text-[11px] text-red-700">
+          <div
+            data-testid="paywall-error"
+            role="alert"
+            className="mb-3 rounded-2xl border border-red-300 bg-red-50 px-4 py-2 text-[11px] text-red-700"
+          >
             {error}
           </div>
         )}
 
         <div className="mb-4 space-y-3">
           <button
+            data-testid="paywall-cta"
             type="button"
             onClick={handleStartCheckout}
             disabled={loading}
@@ -142,6 +154,7 @@ export default function PaywallClient() {
           </button>
 
           <Link
+            data-testid="paywall-back"
             href={safeNext}
             className="inline-flex w-full items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
           >
