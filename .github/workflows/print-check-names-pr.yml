@@ -1,0 +1,125 @@
+name: Print Check Names (PR)
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "Pull Request number (ex: 123)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+  pull-requests: read
+
+jobs:
+  print:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve PR -> head_sha
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.event.repository.name }}
+          PR: ${{ github.event.inputs.pr_number }}
+        run: |
+          set -euo pipefail
+
+          pr_json="$(curl -fsS \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${OWNER}/${REPO}/pulls/${PR}")"
+
+          head_sha="$(echo "$pr_json" | jq -r '.head.sha')"
+          head_ref="$(echo "$pr_json" | jq -r '.head.ref')"
+          base_ref="$(echo "$pr_json" | jq -r '.base.ref')"
+          state="$(echo "$pr_json" | jq -r '.state')"
+
+          if [ -z "${head_sha:-}" ] || [ "${head_sha}" = "null" ]; then
+            echo "::error::Unable to resolve head SHA for PR #${PR}"
+            exit 1
+          fi
+
+          echo "head_sha=$head_sha" >> "$GITHUB_OUTPUT"
+          echo "head_ref=$head_ref" >> "$GITHUB_OUTPUT"
+          echo "base_ref=$base_ref" >> "$GITHUB_OUTPUT"
+          echo "state=$state" >> "$GITHUB_OUTPUT"
+
+          echo "### PR #${PR}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- head_ref: \`${head_ref}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- base_ref: \`${base_ref}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- head_sha: \`${head_sha}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- state: \`${state}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Find check-runs for PR head SHA (most reliable)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.event.repository.name }}
+          HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
+        run: |
+          set -euo pipefail
+
+          # 1) Liste les check-runs GitHub (statuts) associés au SHA
+          #    => correspond exactement à ce que branch protection voit
+          curl -fsS \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${OWNER}/${REPO}/commits/${HEAD_SHA}/check-runs?per_page=100" \
+            | jq -r '.check_runs[] | .name' \
+            | sort -u \
+            | tee required-check-names.txt
+
+          echo "## Required-check names (from check-runs API)" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "> Copie/colle ces noms dans Branch protection → Required status checks." >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          cat required-check-names.txt >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: (Optional) Map check-runs to workflow jobs (human friendly)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.event.repository.name }}
+          HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
+        run: |
+          set -euo pipefail
+
+          # 2) Trouve les workflow runs liés au SHA, puis liste les jobs (workflow_name / job_name)
+          run_ids="$(curl -fsS \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${OWNER}/${REPO}/actions/runs?event=pull_request&per_page=50" \
+            | jq -r --arg sha "${HEAD_SHA}" '.workflow_runs[] | select(.head_sha == $sha) | .id')"
+
+          if [ -z "${run_ids:-}" ]; then
+            echo "::warning::No pull_request workflow runs found for head_sha=${HEAD_SHA} (maybe still running or filtered)."
+            exit 0
+          fi
+
+          : > workflow-job-names.txt
+          for rid in $run_ids; do
+            curl -fsS \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${OWNER}/${REPO}/actions/runs/${rid}/jobs?per_page=100" \
+              | jq -r '.jobs[] | "\(.workflow_name) / \(.name)"' >> workflow-job-names.txt
+          done
+
+          sort -u workflow-job-names.txt -o workflow-job-names.txt
+
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "## Workflow job names (workflow_name / job_name)" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          cat workflow-job-names.txt >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"

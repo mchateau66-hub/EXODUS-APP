@@ -1,0 +1,205 @@
+name: Sync Branch Protection (Allowlist)
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "Pull Request number (ex: 123)"
+        required: true
+        type: string
+      branches:
+        description: "Comma-separated branches to protect"
+        required: false
+        default: "main,staging"
+      include_security_audit_on_staging:
+        description: "Also require Security Audit (Staging) / audit on staging"
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ensure jq
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y jq
+
+      - name: Resolve PR -> head SHA
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.event.repository.name }}
+          PR: ${{ github.event.inputs.pr_number }}
+        run: |
+          set -euo pipefail
+          pr_json="$(curl -fsS \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${OWNER}/${REPO}/pulls/${PR}")"
+
+          head_sha="$(echo "$pr_json" | jq -r '.head.sha')"
+          head_ref="$(echo "$pr_json" | jq -r '.head.ref')"
+          base_ref="$(echo "$pr_json" | jq -r '.base.ref')"
+
+          if [ -z "${head_sha:-}" ] || [ "${head_sha}" = "null" ]; then
+            echo "::error::Unable to resolve head SHA for PR #${PR}"
+            exit 1
+          fi
+
+          echo "head_sha=$head_sha" >> "$GITHUB_OUTPUT"
+          echo "head_ref=$head_ref" >> "$GITHUB_OUTPUT"
+          echo "base_ref=$base_ref" >> "$GITHUB_OUTPUT"
+
+          echo "### Sync source PR #${PR}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- head_ref: \`${head_ref}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- base_ref: \`${base_ref}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- head_sha: \`${head_sha}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Fetch check-runs for PR head SHA
+        id: checks
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.event.repository.name }}
+          HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
+        run: |
+          set -euo pipefail
+
+          curl -fsS \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${OWNER}/${REPO}/commits/${HEAD_SHA}/check-runs?per_page=100" \
+            | jq -r '.check_runs[] | .name' \
+            | sort -u > all-checks.txt
+
+          if [ ! -s all-checks.txt ]; then
+            echo "::error::No check-runs found for head_sha=${HEAD_SHA}. Ensure CI ran on this PR."
+            exit 1
+          fi
+
+          echo "## All check-runs detected" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          cat all-checks.txt >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Filter required checks (allowlist)
+        id: filter
+        run: |
+          set -euo pipefail
+
+          # ✅ Allowlist = les seuls checks qu'on veut rendre required.
+          # Ajuste ici si tu renommes des workflows/jobs.
+          allowlist=(
+            "Quality Gate / quality"
+            "CI - Lint & Typecheck / lint-typecheck"
+            "DB Integrity (billing) / db-integrity"
+            "Next15 Audit / next15-audit"
+            "PR Guardian — Security Checklist / pr-guardian"
+            "CI - E2E (Playwright) / E2E Smoke - local (chromium)"
+          )
+
+          : > required-checks.txt
+          missing=()
+
+          for want in "${allowlist[@]}"; do
+            if grep -Fxq "$want" all-checks.txt; then
+              echo "$want" >> required-checks.txt
+            else
+              missing+=("$want")
+            fi
+          done
+
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::The PR does not contain all allowlisted checks. Missing:"
+            printf ' - %s\n' "${missing[@]}"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "## ❌ Missing allowlisted checks on PR" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            printf '%s\n' "${missing[@]}" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "## ✅ Required checks (allowlist result)" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          cat required-checks.txt >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Apply branch protection (allowlist)
+        env:
+          GH_TOKEN: ${{ secrets.GH_ADMIN_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.event.repository.name }}
+          BRANCHES: ${{ github.event.inputs.branches }}
+          INCLUDE_AUDIT: ${{ github.event.inputs.include_security_audit_on_staging }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::error::Missing secrets.GH_ADMIN_TOKEN (admin PAT required)"
+            exit 1
+          fi
+
+          mapfile -t BASE_REQUIRED < required-checks.txt
+          AUDIT_CHECK="Security Audit (Staging) / audit"
+
+          IFS=',' read -ra BR <<< "${BRANCHES:-main,staging}"
+          for b in "${BR[@]}"; do
+            bn="$(echo "$b" | xargs)"
+            [ -z "$bn" ] && continue
+
+            checks=("${BASE_REQUIRED[@]}")
+            if [ "$bn" = "staging" ] && [ "${INCLUDE_AUDIT:-true}" = "true" ]; then
+              found="0"
+              for c in "${checks[@]}"; do
+                if [ "$c" = "$AUDIT_CHECK" ]; then found="1"; break; fi
+              done
+              if [ "$found" = "0" ]; then
+                checks+=("$AUDIT_CHECK")
+              fi
+            fi
+
+            contexts="$(printf '%s\n' "${checks[@]}" | jq -R . | jq -s .)"
+
+            jq -n --argjson ctx "$contexts" '{
+              enforce_admins: true,
+              required_status_checks: { strict: true, contexts: $ctx },
+              required_pull_request_reviews: {
+                required_approving_review_count: 1,
+                dismiss_stale_reviews: true,
+                require_code_owner_reviews: false
+              },
+              restrictions: null
+            }' > body.json
+
+            curl -fsS -X PUT \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${OWNER}/${REPO}/branches/${bn}/protection" \
+              -d @body.json > /dev/null
+
+            echo "[protect] OK branch=$bn (checks=${#checks[@]})"
+            printf '  - %s\n' "${checks[@]}"
+          done
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "## Branch protection synced (allowlist) ✅" >> "$GITHUB_STEP_SUMMARY"
+          echo "- PR used: #${{ github.event.inputs.pr_number }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Branches: ${{ github.event.inputs.branches }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Include audit on staging: ${{ github.event.inputs.include_security_audit_on_staging }}" >> "$GITHUB_STEP_SUMMARY"
