@@ -60,3 +60,6 @@ e2e.local.env
 
 # Local E2E env (never commit)
 e2e.local.env
+
+printf "\n# Playwright artifacts\n.pw/\nplaywright-report/\ntest-results/\n" >> .gitignore
+

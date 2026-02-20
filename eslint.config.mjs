@@ -7,20 +7,21 @@ import reactHooks from 'eslint-plugin-react-hooks'
 import jsxA11y from 'eslint-plugin-jsx-a11y'
 
 export default [
-  // Ignore (remplace .eslintignore)
-  {
-    ignores: [
-      'node_modules/**',
-      '.next/**',
-      'public/**',
-      'playwright-report/**',
-      'test-results/**',
-      'coverage/**',
-      'prisma/**',
-      '**/*.d.ts',
-      'eslint.config.mjs',
-    ],
-  },
+ // Ignore (remplace .eslintignore)
+{
+  ignores: [
+    "node_modules/**",
+    ".next/**",
+    "public/**",
+    "e2e/**",
+    "playwright-report/**",
+    "test-results/**",
+    "coverage/**",
+    "prisma/**",
+    "**/*.d.ts",
+    "eslint.config.mjs",
+  ],
+},
 
   // Base JS
   js.configs.recommended,

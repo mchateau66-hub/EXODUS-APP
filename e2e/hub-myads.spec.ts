@@ -145,7 +145,7 @@ async function waitAdPatch(page: Page, adId: string) {
   });
 }
 
-test.beforeEach(async ({}, testInfo) => {
+test.beforeEach(async (_ctx, testInfo) => {
   await ensureOutputDir(testInfo);
 });
 

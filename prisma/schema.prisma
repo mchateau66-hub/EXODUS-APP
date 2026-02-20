@@ -345,6 +345,28 @@ model StripeEvent {
   @@index([created])
 }
 
+model Event {
+  id         String    @id @default(cuid())
+  session_id String
+  user_id    String?
+
+  event      EventName
+  ts         DateTime  @default(now())
+
+  // ✅ AJOUTE ÇA
+  meta       Json      @default("{}")
+
+  // segmentation (optionnel)
+  role       String?
+  offer      String?
+  billing    String?
+
+  @@index([ts])
+  @@index([session_id])
+  @@index([event])
+  @@index([user_id])
+}
+
 enum Role {
   coach
   athlete
@@ -405,3 +427,16 @@ enum BillingPeriod {
   monthly
   yearly
 }
+
+enum EventName {
+  hero_click
+  pricing_click
+  signup_submit
+  checkout_success
+  sticky_click
+  finalcta_click
+  checkout_start
+  subscription_active
+  subscription_canceled
+}
+
