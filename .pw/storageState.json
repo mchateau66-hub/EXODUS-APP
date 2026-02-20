@@ -1,0 +1,35 @@
+{
+  "cookies": [
+    {
+      "name": "sid",
+      "value": "32b5ea0c-08df-4451-a59a-f498cccf48d5",
+      "domain": "127.0.0.1",
+      "path": "/",
+      "expires": 1774190125.639,
+      "httpOnly": true,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "session",
+      "value": "32b5ea0c-08df-4451-a59a-f498cccf48d5",
+      "domain": "127.0.0.1",
+      "path": "/",
+      "expires": 1774190125.639,
+      "httpOnly": true,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "plan",
+      "value": "free",
+      "domain": "127.0.0.1",
+      "path": "/",
+      "expires": 1774190125.64,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    }
+  ],
+  "origins": []
+}
