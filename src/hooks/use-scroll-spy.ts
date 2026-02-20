@@ -8,6 +8,10 @@ export function useScrollSpy(
 ) {
   const [activeId, setActiveId] = React.useState<string | null>(null)
 
+  // ✅ deps stables pour satisfaire react-hooks/exhaustive-deps
+  const rootMargin = options?.rootMargin ?? "-15% 0px -70% 0px"
+  const sectionKey = sectionIds.join("|")
+
   React.useEffect(() => {
     if (!sectionIds.length) return
 
@@ -34,13 +38,13 @@ export function useScrollSpy(
         // “active” when section is in the top/middle band
         root: null,
         threshold: [0.1, 0.2, 0.35, 0.5, 0.65],
-        rootMargin: options?.rootMargin ?? "-15% 0px -70% 0px",
+        rootMargin,
       }
     )
 
     elements.forEach((el) => observer.observe(el))
     return () => observer.disconnect()
-  }, [sectionIds.join("|")])
+  }, [sectionKey, rootMargin, sectionIds])
 
   return activeId
 }

@@ -216,7 +216,6 @@ export default function CreateAdClient({
     const ts = new Date().toISOString().slice(11, 19)
     const full = `[${ts}] ${line}`
     setDebugLines((prev) => [...prev, full].slice(-DEBUG_MAX_LINES))
-    // eslint-disable-next-line no-console
     console.debug(full)
   }
 

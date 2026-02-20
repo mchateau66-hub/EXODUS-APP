@@ -148,7 +148,6 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
       iconOnly &&
       !props["aria-label"]
     ) {
-      // eslint-disable-next-line no-console
       console.warn("Button: iconOnly=true requires an aria-label.")
     }
 

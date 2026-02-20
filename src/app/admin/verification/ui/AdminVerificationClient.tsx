@@ -443,7 +443,6 @@ export default function AdminVerificationClient({ initialRows }: Props) {
     } else {
       setToast(`Clipboard bloqué. (copie manuelle)`);
       setTimeout(() => setToast(null), 2000);
-      // eslint-disable-next-line no-alert
       alert(text);
     }
   }
