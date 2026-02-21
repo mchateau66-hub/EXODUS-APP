@@ -14,14 +14,18 @@ function stripWrappingQuotes(input: string): string {
   return s;
 }
 
-function resolveDbUrl(): string {
+/**
+ * Résout DATABASE_URL de manière robuste.
+ * IMPORTANT: Ne throw pas au build : retourne "" si invalide/absent.
+ */
+function resolveDbUrlSafe(): string {
   const rawDb0 = stripWrappingQuotes(process.env.DATABASE_URL ?? "");
   const rawDirect0 = stripWrappingQuotes(process.env.DIRECT_URL ?? "");
 
   let db = rawDb0;
 
-  // Supporte les patterns fréquents dans .env :
-  // DATABASE_URL="$DIRECT_URL" ou DATABASE_URL="${DIRECT_URL}"
+  // Supporte patterns fréquents:
+  // DATABASE_URL="$DIRECT_URL" ou DATABASE_URL="${DIRECT_URL}" ou "DIRECT_URL"
   if (db === "$DIRECT_URL" || db === "${DIRECT_URL}" || db === "DIRECT_URL") {
     db = rawDirect0;
   }
@@ -29,20 +33,25 @@ function resolveDbUrl(): string {
   // Fallback : si DATABASE_URL vide mais DIRECT_URL dispo
   if (!db && rawDirect0) db = rawDirect0;
 
-  // Sécurité : parfois la valeur contient encore des espaces / retours
   db = (db ?? "").trim();
+  if (!db) return "";
 
   // Validation minimale (Prisma exige postgres:// ou postgresql://)
   if (!/^postgres(ql)?:\/\//i.test(db)) {
-    const hint =
-      `[db] Invalid DATABASE_URL.\n` +
-      `- DATABASE_URL(raw)="${String(process.env.DATABASE_URL ?? "").slice(0, 120)}"\n` +
-      `- DIRECT_URL(raw)="${String(process.env.DIRECT_URL ?? "").slice(0, 120)}"\n\n` +
-      `Fix:\n` +
-      `- Mets une vraie URL dans DATABASE_URL (pas "$DIRECT_URL"), ou\n` +
-      `- Laisse DATABASE_URL vide et définis DIRECT_URL, ou\n` +
-      `- Assure-toi que DATABASE_URL ne commence pas par un guillemet.\n`;
-    throw new Error(hint);
+    // On ne throw pas ici pour ne pas casser le build Vercel.
+    // On log uniquement si DEBUG_DB_URL=1
+    if ((process.env.DEBUG_DB_URL ?? "").trim() === "1") {
+      const hint =
+        `[db] Invalid DATABASE_URL.\n` +
+        `- DATABASE_URL(raw)="${String(process.env.DATABASE_URL ?? "").slice(0, 120)}"\n` +
+        `- DIRECT_URL(raw)="${String(process.env.DIRECT_URL ?? "").slice(0, 120)}"\n` +
+        `Fix:\n` +
+        `- Mets une vraie URL dans DATABASE_URL (pas "$DIRECT_URL"), ou\n` +
+        `- Laisse DATABASE_URL vide et définis DIRECT_URL, ou\n` +
+        `- Assure-toi que DATABASE_URL ne commence pas par un guillemet.\n`;
+      console.warn(hint);
+    }
+    return "";
   }
 
   // Optionnel : debug léger sans leak complet
@@ -54,21 +63,39 @@ function resolveDbUrl(): string {
   return db;
 }
 
-const dbUrl = resolveDbUrl();
+/**
+ * Lazy Prisma accessor:
+ * - ne casse pas le build si DATABASE_URL/DIRECT_URL est absent ou invalide
+ * - retourne null si DB non configurée (Preview, build, etc.)
+ */
+export function getPrisma(): PrismaClient | null {
+  const dbUrl = resolveDbUrlSafe();
+  if (!dbUrl) return null;
 
-// Important: passer l’URL via `datasources` évite tous les soucis de parsing
-export const prisma =
-  globalForPrisma.prisma ??
-  new PrismaClient({
-    datasources: {
-      db: { url: dbUrl },
-    },
-    log:
-      process.env.NODE_ENV === "development"
-        ? ["query", "error", "warn"]
-        : ["error"],
-  });
-
-if (process.env.NODE_ENV !== "production") {
-  globalForPrisma.prisma = prisma;
+  // Singleton en dev (Next hot reload)
+  if (!globalForPrisma.prisma) {
+    globalForPrisma.prisma = new PrismaClient({
+      datasources: { db: { url: dbUrl } },
+      log: process.env.NODE_ENV === "development" ? ["query", "error", "warn"] : ["error"],
+    });
+  }
+  return globalForPrisma.prisma;
 }
+
+/**
+ * Compat: si une partie du code importe encore `prisma`,
+ * on l’expose mais SANS instancier au build.
+ * ⚠️ À terme, préfère importer getPrisma() partout.
+ */
+export const prisma: PrismaClient = new Proxy({} as PrismaClient, {
+  get(_target, prop) {
+    const client = getPrisma();
+    if (!client) {
+      throw new Error(
+        "[db] Prisma client unavailable (DATABASE_URL/DIRECT_URL missing or invalid)."
+      );
+    }
+    // @ts-expect-error dynamic proxy
+    return client[prop];
+  },
+}) as PrismaClient;

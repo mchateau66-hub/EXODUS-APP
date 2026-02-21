@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/db";
+import { getPrisma } from "@/lib/db";
 import type { Prisma, EventName } from "@prisma/client";
 
 export const runtime = "nodejs";
@@ -55,6 +55,14 @@ function bucketLabel(ms: number): string {
 export async function GET(req: NextRequest) {
   if (!requireAdmin(req)) return NextResponse.json({ ok: false }, { status: 401 });
 
+  const prisma = getPrisma();
+  if (!prisma) {
+    return NextResponse.json(
+      { ok: false, error: "DATABASE_URL/DIRECT_URL not set" },
+      { status: 503 }
+    );
+  }
+
   const url = new URL(req.url);
   const range = parseRange(url.searchParams.get("range"));
   const start = rangeToStart(range);
@@ -71,7 +79,6 @@ export async function GET(req: NextRequest) {
     ...(billing ? { billing } : {}),
   };
 
-  // On ne prend que les events utiles behavior pour réduire volume
   const keep: EventName[] = [
     "hero_click",
     "pricing_click",
@@ -86,7 +93,6 @@ export async function GET(req: NextRequest) {
     orderBy: { ts: "asc" },
   });
 
-  // group by session + first occurrence timestamps
   const bySession = new Map<string, Times>();
 
   for (const r of rows) {
@@ -94,7 +100,6 @@ export async function GET(req: NextRequest) {
     const t = bySession.get(sid) ?? {};
     const ms = r.ts.getTime();
 
-    // store first timestamp for each event
     switch (r.event) {
       case "hero_click":
         if (t.hero_ts == null) t.hero_ts = ms;
@@ -117,16 +122,13 @@ export async function GET(req: NextRequest) {
 
   const sessions = bySession.size;
 
-  // --- Sticky influence (among signup sessions)
   let signupSessions = 0;
   let signupWithSticky = 0;
   let signupWithoutSticky = 0;
 
-  // --- Fast lane vs Slow lane (among signup sessions)
-  let fastLane = 0; // signup without pricing
-  let slowLane = 0; // signup after pricing
+  let fastLane = 0;
+  let slowLane = 0;
 
-  // --- Time to convert (hero -> signup, or first touch -> signup)
   const heroToSignup: number[] = [];
   const firstTouchToSignup: number[] = [];
   const hist: Record<string, number> = { "<30s": 0, "30-60s": 0, "1-2m": 0, "2-5m": 0, "5m+": 0 };
@@ -143,7 +145,6 @@ export async function GET(req: NextRequest) {
     if (pricingBeforeSignup) slowLane += 1;
     else fastLane += 1;
 
-    // first touch = min of all known clicks
     const touches = [t.hero_ts, t.pricing_ts, t.sticky_ts, t.finalcta_ts].filter(
       (x): x is number => typeof x === "number"
     );
@@ -183,7 +184,7 @@ export async function GET(req: NextRequest) {
       slow_lane: slowLane,
     },
     rates: {
-      sticky_influence_rate: safeRate(signupWithSticky, signupSessions), // among signup sessions
+      sticky_influence_rate: safeRate(signupWithSticky, signupSessions),
       fast_lane_rate: safeRate(fastLane, signupSessions),
       slow_lane_rate: safeRate(slowLane, signupSessions),
     },
@@ -192,7 +193,7 @@ export async function GET(req: NextRequest) {
       p75,
       p90,
       sample_size: firstTouchToSignup.length,
-      histogram: hist, // based on first_touch -> signup
+      histogram: hist,
       hero_to_signup_p50: percentile(heroToSignup, 0.5),
     },
   });
