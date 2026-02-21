@@ -1,3 +1,5 @@
+"use client"
+
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { ArrowRight, Star, Moon } from "lucide-react"
@@ -97,8 +99,9 @@ export default function DebugUIPage() {
             </div>
 
             <div className="text-xs text-slate-500">
-              Note: si tu veux désactiver un Link-bouton, utilise <code>aria-disabled</code> +
-              styles / guard de navigation côté click (on peut le faire ensuite).
+              Note: si tu veux désactiver un Link-bouton, utilise{" "}
+              <code>aria-disabled</code> + styles / guard côté click (on peut le
+              faire ensuite).
             </div>
           </div>
         </div>
@@ -117,7 +120,8 @@ export default function DebugUIPage() {
 
           <div className="text-sm text-slate-500">
             Pour tester <span className="font-medium">hover</span> et{" "}
-            <span className="font-medium">pressed</span> : survole / maintiens le clic.
+            <span className="font-medium">pressed</span> : survole / maintiens le
+            clic.
           </div>
         </div>
       </section>
@@ -151,7 +155,8 @@ export default function DebugUIPage() {
           </div>
 
           <div className="text-xs text-slate-500">
-            <code>iconOnly</code> exige un <code>aria-label</code> (warning en dev si oublié).
+            <code>iconOnly</code> exige un <code>aria-label</code> (warning en dev
+            si oublié).
           </div>
         </div>
       </section>

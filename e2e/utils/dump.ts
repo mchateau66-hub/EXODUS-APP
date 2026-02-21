@@ -59,6 +59,7 @@ export async function dump(
   await writeDebugFile(testInfo, `${tag}-html.html`, (html || "").slice(0, 200_000));
   await attachDebugPath(testInfo, `${tag}-html`, `${tag}-html.html`, "text/html");
 
+  await ensureOutputDir(testInfo);
   const shot = path.join(testInfo.outputDir, `${tag}-screenshot.png`);
   await page.screenshot({ path: shot, fullPage: true }).catch(() => {});
   await testInfo.attach(`${tag}-screenshot`, { path: shot, contentType: "image/png" }).catch(() => {});
@@ -74,6 +75,7 @@ function contentTypeFromExt(ext: string) {
   if (e === ".html") return "text/html";
   if (e === ".json") return "application/json";
   if (e === ".md") return "text/markdown";
+  if (e === ".png") return "image/png";
   return "text/plain";
 }
 
@@ -93,4 +95,22 @@ export async function attachAllDebugFilesFromOutputDir(testInfo: TestInfo, inclu
     const name = f.replace(/\.[^.]+$/, "");
     await testInfo.attach(name, { path: path.join(testInfo.outputDir, f), contentType }).catch(() => {});
   }
+}
+
+export type LastHubApi = { url: string; status: number; body?: string };
+
+/**
+ * Wrapper standard : appelé uniquement sur FAIL
+ * - écrit fail-* via dump()
+ * - attache tout fail-*
+ */
+export async function dumpOnFail(
+  page: Page,
+  testInfo: TestInfo,
+  extra?: { lastHubApi?: LastHubApi }
+) {
+  const netLog = extra?.lastHubApi ? JSON.stringify(extra.lastHubApi, null, 2) : undefined;
+
+  await dump(page, testInfo, "fail", { netLog });
+  await attachAllDebugFilesFromOutputDir(testInfo, /^fail-/);
 }

@@ -14,7 +14,10 @@ type ThemeContextValue = {
 export const ThemeContext = createContext<ThemeContextValue | null>(null);
 
 const STORAGE_KEY = "exodus-theme-mode";
-const COORDS_KEY = "exodus-theme-coords"; // cache coords to reduce prompts
+
+// ⚠️ On n’enregistre plus la latitude/longitude exacte.
+// On stocke une version arrondie + timestamp (réduit la sensibilité + passe mieux CodeQL).
+const COORDS_KEY = "exodus-theme-coords-v2";
 
 function clampHour24(h: number) {
   let x = h % 24;
@@ -122,8 +125,7 @@ function getSunTimes(date: Date, lat: number, lng: number) {
 function readMode(): ThemeMode {
   if (typeof window === "undefined") return "auto";
   const raw = window.localStorage.getItem(STORAGE_KEY);
-  if (raw === "light" || raw === "dark" || raw === "system" || raw === "auto")
-    return raw;
+  if (raw === "light" || raw === "dark" || raw === "system" || raw === "auto") return raw;
   return "auto";
 }
 
@@ -136,19 +138,19 @@ function setHtmlTheme(resolved: ResolvedTheme) {
   root.setAttribute("data-theme", resolved);
 }
 
-function readCachedCoords():
-  | { lat: number; lng: number; ts: number }
-  | null {
+type CachedCoords = { lat2: number; lng2: number; ts: number };
+
+function readCachedCoords(): CachedCoords | null {
   try {
     const raw = window.localStorage.getItem(COORDS_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     if (
-      typeof parsed?.lat === "number" &&
-      typeof parsed?.lng === "number" &&
+      typeof parsed?.lat2 === "number" &&
+      typeof parsed?.lng2 === "number" &&
       typeof parsed?.ts === "number"
     ) {
-      return parsed;
+      return parsed as CachedCoords;
     }
     return null;
   } catch {
@@ -156,18 +158,23 @@ function readCachedCoords():
   }
 }
 
-function writeCachedCoords(lat: number, lng: number) {
+function writeCachedCoords(lat2: number, lng2: number) {
   window.localStorage.setItem(
     COORDS_KEY,
-    JSON.stringify({ lat, lng, ts: Date.now() })
+    JSON.stringify({ lat2, lng2, ts: Date.now() })
   );
 }
 
+// Réduction de précision => ~1.1km à 2 décimales
+function round2(x: number) {
+  return Math.round(x * 100) / 100;
+}
+
 async function getCoordsOptional(): Promise<{ lat: number; lng: number } | null> {
-  // Use cache up to 7 days to avoid re-prompting
+  // cache jusqu’à 7 jours pour éviter de re-prompt
   const cached = readCachedCoords();
   if (cached && Date.now() - cached.ts < 7 * 24 * 60 * 60 * 1000) {
-    return { lat: cached.lat, lng: cached.lng };
+    return { lat: cached.lat2, lng: cached.lng2 };
   }
 
   if (!("geolocation" in navigator)) return null;
@@ -175,10 +182,12 @@ async function getCoordsOptional(): Promise<{ lat: number; lng: number } | null>
   return await new Promise((resolve) => {
     navigator.geolocation.getCurrentPosition(
       (pos) => {
-        const lat = pos.coords.latitude;
-        const lng = pos.coords.longitude;
-        writeCachedCoords(lat, lng);
-        resolve({ lat, lng });
+        // ⚠️ On ne persiste pas la donnée brute : on arrondit avant stockage
+        const lat2 = round2(pos.coords.latitude);
+        const lng2 = round2(pos.coords.longitude);
+
+        writeCachedCoords(lat2, lng2);
+        resolve({ lat: lat2, lng: lng2 });
       },
       () => resolve(null),
       { enableHighAccuracy: false, timeout: 2500, maximumAge: 24 * 60 * 60 * 1000 }
@@ -188,9 +197,7 @@ async function getCoordsOptional(): Promise<{ lat: number; lng: number } | null>
 
 function resolveThemeSystem(): ResolvedTheme {
   if (typeof window === "undefined") return "light";
-  return window.matchMedia?.("(prefers-color-scheme: dark)")?.matches
-    ? "dark"
-    : "light";
+  return window.matchMedia?.("(prefers-color-scheme: dark)")?.matches ? "dark" : "light";
 }
 
 function resolveThemeFallbackAuto(now: Date): ResolvedTheme {
@@ -205,8 +212,7 @@ export default function Providers({ children }: { children: React.ReactNode }) {
 
   // init mode
   useEffect(() => {
-    const m = readMode();
-    setModeState(m);
+    setModeState(readMode());
   }, []);
 
   // persist mode
@@ -218,13 +224,11 @@ export default function Providers({ children }: { children: React.ReactNode }) {
   // resolver
   useEffect(() => {
     let alive = true;
-    let intervalId: number | null = null;
 
     const apply = async () => {
       const now = new Date();
 
-      let nextResolved: ResolvedTheme = "light";
-
+      let nextResolved: ResolvedTheme;
       if (mode === "light" || mode === "dark") {
         nextResolved = mode;
       } else if (mode === "system") {
@@ -235,10 +239,8 @@ export default function Providers({ children }: { children: React.ReactNode }) {
         if (coords) {
           const { sunrise, sunset } = getSunTimes(now, coords.lat, coords.lng);
           if (sunrise && sunset) {
-            nextResolved =
-              now >= sunset || now < sunrise ? "dark" : "light";
+            nextResolved = now >= sunset || now < sunrise ? "dark" : "light";
           } else {
-            // polar / edge cases
             nextResolved = resolveThemeFallbackAuto(now);
           }
         } else {
@@ -254,7 +256,7 @@ export default function Providers({ children }: { children: React.ReactNode }) {
     apply();
 
     // re-check regularly (simple & safe)
-    intervalId = window.setInterval(apply, 5 * 60 * 1000);
+    const intervalId = window.setInterval(apply, 5 * 60 * 1000);
 
     // system changes
     const mql = window.matchMedia?.("(prefers-color-scheme: dark)");
@@ -265,7 +267,7 @@ export default function Providers({ children }: { children: React.ReactNode }) {
 
     return () => {
       alive = false;
-      if (intervalId) window.clearInterval(intervalId);
+      window.clearInterval(intervalId);
       mql?.removeEventListener?.("change", onSystemChange);
     };
   }, [mode]);
@@ -275,9 +277,5 @@ export default function Providers({ children }: { children: React.ReactNode }) {
     [mode, resolved]
   );
 
-  return (
-    <ThemeContext.Provider value={value}>
-      {children}
-    </ThemeContext.Provider>
-  );
+  return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
 }
