@@ -2,55 +2,58 @@ name: CI - Lint & Typecheck
 
 on:
   pull_request:
-    branches: [ main, staging ]
-  workflow_dispatch:
+    branches: [main, staging]
+  workflow_dispatch: {}
 
 permissions:
   contents: read
 
+concurrency:
+  group: lint-typecheck-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_ENV: test
+  NEXT_TELEMETRY_DISABLED: "1"
+
 jobs:
-  typecheck:
+  lint-typecheck:
     name: lint-typecheck
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 1
 
-      - name: Setup Node.js
+      - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 20
 
-      - name: Setup pnpm (from packageManager)
-        uses: pnpm/action-setup@v4
-        with:
-          run_install: false
-
-      - name: Show pnpm version
-        run: pnpm -v
+      - name: Enable corepack (pnpm from packageManager)
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare pnpm@9.15.9 --activate
+          pnpm --version
 
       - name: Get pnpm store path
         id: pnpm-store
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
 
       - name: Cache pnpm store
         uses: actions/cache@v4
         with:
           path: ${{ steps.pnpm-store.outputs.path }}
-          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('pnpm-lock.yaml') }}
           restore-keys: |
             ${{ runner.os }}-pnpm-store-
 
       - name: Install deps (with devDependencies)
         env:
-          NODE_ENV: "" # inclure devDeps
+          NODE_ENV: ""
         run: pnpm install --frozen-lockfile
 
       - name: Print resolved versions

@@ -1,8 +1,168 @@
 /* src/app/globals.css */
-
 @import "tailwindcss";
 
-/* Tu peux mettre ton CSS global classique ici */
+/* ------------------------------------------------
+   Design tokens (light/dark)
+   Source of truth: <html class="dark">
+------------------------------------------------- */
+:root {
+  /* Light */
+  --bg: #f7f8fa;
+  --fg: #0b1220;
+
+  --bg-elev: #ffffff;      /* surfaces / cards */
+  --bg-muted: #eef1f5;     /* sections */
+
+  --text: var(--fg);
+  --text-muted: #53606f;
+
+  --border: rgba(15, 23, 42, 0.10);
+
+  /* Accent */
+  --accent: #0b5fff;
+  --accent-contrast: #ffffff;
+
+  /* Focus ring */
+  --ring: rgba(11, 95, 255, 0.30);
+
+  /* Radius */
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-lg: 18px;
+
+  /* Motion */
+  --theme-transition: 180ms ease;
+
+  /* Cursor */
+  --cursor-default: default;
+  --cursor-pointer: pointer;
+  --cursor-text: text;
+  --cursor-disabled: not-allowed;
+
+  /* Buttons */
+  --btn-primary-bg: var(--accent);
+  --btn-primary-fg: var(--accent-contrast);
+  --btn-primary-bg-hover: color-mix(in oklab, var(--btn-primary-bg) 92%, black);
+  --btn-primary-bg-pressed: color-mix(in oklab, var(--btn-primary-bg) 84%, black);
+
+  --btn-secondary-bg: var(--bg-muted);
+  --btn-secondary-fg: var(--text);
+  --btn-secondary-bg-hover: color-mix(in oklab, var(--btn-secondary-bg) 92%, black);
+  --btn-secondary-bg-pressed: color-mix(in oklab, var(--btn-secondary-bg) 84%, black);
+
+  --btn-ghost-bg: transparent;
+  --btn-ghost-fg: var(--accent);
+  --btn-ghost-bg-hover: color-mix(in oklab, var(--accent) 10%, transparent);
+  --btn-ghost-bg-pressed: color-mix(in oklab, var(--accent) 16%, transparent);
+
+  --btn-ring: var(--ring);
+
+  /* Status */
+  --danger: #ef4444;
+
+  /* Card / Surface */
+  --card-bg: var(--bg-elev);
+  --card-border: var(--border);
+  --card-shadow: 0 1px 0 rgba(0, 0, 0, 0.04);
+  --card-shadow-elevated: 0 12px 34px rgba(0, 0, 0, 0.10);
+
+  /* Header (sticky glass) */
+  --header-bg: color-mix(in oklab, var(--bg-elev) 78%, transparent);
+  --header-border: color-mix(in oklab, var(--border) 80%, transparent);
+  --header-shadow: 0 1px 0 rgba(0, 0, 0, 0.04);
+  --header-backdrop: blur(10px);
+
+  --header-fg: var(--text);
+  --header-muted: var(--text-muted);
+  --header-link-hover: color-mix(in oklab, var(--accent) 10%, transparent);
+
+  /* Premium accents */
+  --premium-hero-wash:
+    radial-gradient(900px 420px at 25% 10%, color-mix(in oklab, var(--accent) 14%, transparent), transparent 55%),
+    radial-gradient(700px 380px at 85% 35%, color-mix(in oklab, var(--accent) 8%, transparent), transparent 55%);
+  --premium-section-sep: color-mix(in oklab, var(--border) 70%, transparent);
+  --premium-cta-wash: color-mix(in oklab, var(--accent) 8%, transparent);
+
+  /* Pricing highlight ring */
+  --pricing-highlight-ring: color-mix(in oklab, var(--accent) 28%, transparent);
+
+  color-scheme: light;
+}
+
+/* Dark */
+html.dark {
+  --bg: #0b0f14;
+  --fg: #e7edf5;
+
+  --bg-elev: #0f1620;
+  --bg-muted: #121a24;
+
+  --text: var(--fg);
+  --text-muted: #9aa7b5;
+
+  --border: rgba(231, 237, 245, 0.12);
+
+  --accent: #4f8cff;
+  --accent-contrast: #0b0f14;
+
+  --ring: rgba(79, 140, 255, 0.35);
+
+  /* Buttons */
+  --btn-primary-bg: var(--accent);
+  --btn-primary-fg: var(--accent-contrast);
+  --btn-primary-bg-hover: color-mix(in oklab, var(--btn-primary-bg) 92%, black);
+  --btn-primary-bg-pressed: color-mix(in oklab, var(--btn-primary-bg) 84%, black);
+
+  --btn-secondary-bg: var(--bg-muted);
+  --btn-secondary-fg: var(--text);
+  --btn-secondary-bg-hover: color-mix(in oklab, var(--btn-secondary-bg) 92%, black);
+  --btn-secondary-bg-pressed: color-mix(in oklab, var(--btn-secondary-bg) 84%, black);
+
+  --btn-ghost-bg: transparent;
+  --btn-ghost-fg: var(--accent);
+  --btn-ghost-bg-hover: color-mix(in oklab, var(--accent) 12%, transparent);
+  --btn-ghost-bg-pressed: color-mix(in oklab, var(--accent) 18%, transparent);
+
+  --btn-ring: var(--ring);
+
+  --danger: #f87171;
+
+  /* Card / Surface */
+  --card-bg: var(--bg-elev);
+  --card-border: var(--border);
+  --card-shadow: 0 1px 0 rgba(255, 255, 255, 0.04);
+  --card-shadow-elevated: 0 14px 40px rgba(0, 0, 0, 0.60);
+
+  /* Header */
+  --header-bg: color-mix(in oklab, var(--bg-elev) 78%, transparent);
+  --header-border: color-mix(in oklab, var(--border) 90%, transparent);
+  --header-shadow: 0 1px 0 rgba(255, 255, 255, 0.04);
+  --header-backdrop: blur(10px);
+
+  --header-fg: var(--text);
+  --header-muted: var(--text-muted);
+  --header-link-hover: color-mix(in oklab, var(--accent) 12%, transparent);
+
+  /* Premium accents */
+  --premium-hero-wash:
+    radial-gradient(900px 420px at 25% 10%, color-mix(in oklab, var(--accent) 14%, transparent), transparent 55%),
+    radial-gradient(700px 380px at 85% 35%, color-mix(in oklab, var(--accent) 10%, transparent), transparent 55%);
+  --premium-section-sep: color-mix(in oklab, var(--border) 90%, transparent);
+  --premium-cta-wash: color-mix(in oklab, var(--accent) 10%, transparent);
+
+  --pricing-highlight-ring: color-mix(in oklab, var(--accent) 26%, transparent);
+
+  color-scheme: dark;
+}
+
+/* ------------------------------------------------
+   Base reset
+------------------------------------------------- */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
 
 html,
 body {
@@ -11,9 +171,172 @@ body {
   height: 100%;
 }
 
+/* ✅ “pro”: html a aussi bg/fg (overscroll, modals, iOS) */
+html {
+  background: var(--bg);
+  color: var(--text);
+
+  text-rendering: optimizeLegibility;
+  -webkit-text-size-adjust: 100%;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+
+  scroll-behavior: smooth;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+}
+
 body {
-  background-color: #f1f5f9; /* gris clair type slate-100 */
-  color: #020617;            /* texte foncé */
+  background: var(--bg);
+  color: var(--text);
+
   font-family: system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text",
     "SF Pro Display", sans-serif;
+
+  -webkit-tap-highlight-color: transparent;
+
+  transition: background-color var(--theme-transition), color var(--theme-transition);
+}
+
+/* Liens */
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+/* Sélection texte */
+::selection {
+  background: color-mix(in oklab, var(--accent) 18%, transparent);
+}
+
+/* ------------------------------------------------
+   Focus visible (sobre)
+------------------------------------------------- */
+:focus {
+  outline: none;
+}
+
+:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--ring);
+}
+
+/* ------------------------------------------------
+   Cursor (global)
+------------------------------------------------- */
+body {
+  cursor: var(--cursor-default);
+}
+
+a,
+button,
+[role="button"],
+input[type="button"],
+input[type="submit"],
+summary,
+label[for],
+select {
+  cursor: var(--cursor-pointer);
+}
+
+input,
+textarea,
+[contenteditable="true"] {
+  cursor: var(--cursor-text);
+}
+
+:disabled,
+[aria-disabled="true"] {
+  cursor: var(--cursor-disabled);
+}
+
+/* Sur mobile (pointer coarse), on laisse le navigateur gérer */
+@media (pointer: coarse) {
+  body {
+    cursor: auto;
+  }
+}
+
+/* ------------------------------------------------
+   Scrollbar discrète (desktop)
+------------------------------------------------- */
+@media (pointer: fine) {
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: rgba(148, 163, 184, 0.35);
+    border-radius: 999px;
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+
+  html.dark ::-webkit-scrollbar-thumb {
+    background: rgba(148, 163, 184, 0.25);
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+}
+
+/* ------------------------------------------------
+   Animations (messages)
+------------------------------------------------- */
+.message-enter {
+  animation: message-enter 0.18s ease-out both;
+}
+
+@keyframes message-enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Offset anchors for sticky header */
+[id] {
+  scroll-margin-top: 96px;
+}
+
+/* ------------------------------------------------
+   Pricing highlight (DS-safe)
+------------------------------------------------- */
+@keyframes pricing-highlight {
+  0% {
+    box-shadow: var(--card-shadow-elevated);
+    outline: 0px solid transparent;
+  }
+  40% {
+    box-shadow: var(--card-shadow-elevated);
+    outline: 3px solid var(--pricing-highlight-ring);
+    outline-offset: 2px;
+  }
+  100% {
+    box-shadow: var(--card-shadow-elevated);
+    outline: 0px solid transparent;
+  }
+}
+
+[data-pricing-highlight="true"] {
+  animation: pricing-highlight 900ms ease-out;
+}
+
+/* ------------------------------------------------
+   Reduce motion
+------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
 }

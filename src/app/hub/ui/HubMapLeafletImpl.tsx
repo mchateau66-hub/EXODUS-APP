@@ -61,8 +61,8 @@ function bboxToString(bounds: L.LatLngBounds) {
 
 function ensureLeafletIcons() {
   // Fix icônes marker en bundlers modernes
-  // @ts-ignore
-  delete (L.Icon.Default.prototype as any)._getIconUrl
+  // Leaflet icon fix (bundlers) – typing is intentionally bypassed via `any`
+delete (L.Icon.Default.prototype as any)._getIconUrl
   L.Icon.Default.mergeOptions({
     iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
     iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',

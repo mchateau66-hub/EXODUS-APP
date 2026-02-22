@@ -1,0 +1,1 @@
+-- applied manually on Neon (CHECK constraint)

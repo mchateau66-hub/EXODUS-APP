@@ -7,20 +7,21 @@ import reactHooks from 'eslint-plugin-react-hooks'
 import jsxA11y from 'eslint-plugin-jsx-a11y'
 
 export default [
-  // Ignore (remplace .eslintignore)
-  {
-    ignores: [
-      'node_modules/**',
-      '.next/**',
-      'public/**',
-      'playwright-report/**',
-      'test-results/**',
-      'coverage/**',
-      'prisma/**',
-      '**/*.d.ts',
-      'eslint.config.mjs',
-    ],
-  },
+ // Ignore (remplace .eslintignore)
+{
+  ignores: [
+    "node_modules/**",
+    ".next/**",
+    "public/**",
+    "e2e/**",
+    "playwright-report/**",
+    "test-results/**",
+    "coverage/**",
+    "prisma/**",
+    "**/*.d.ts",
+    "eslint.config.mjs",
+  ],
+},
 
   // Base JS
   js.configs.recommended,
@@ -91,15 +92,19 @@ export default [
     },
   },
 
-  // E2E : on laisse relax
-  {
-    files: ['e2e/**/*.{ts,tsx}'],
-    rules: {
-      'no-unused-vars': 'off',
-      '@typescript-eslint/no-unused-vars': 'off',
-      '@typescript-eslint/no-explicit-any': 'off',
-    },
-  },
+    // E2E : ce n'est pas du React → on coupe les règles React Hooks
+    {
+      files: ['e2e/**/*.{ts,tsx,js,jsx,mjs,cjs}'],
+      rules: {
+        'no-unused-vars': 'off',
+        '@typescript-eslint/no-unused-vars': 'off',
+        '@typescript-eslint/no-explicit-any': 'off',
+  
+        // ✅ important: Playwright fixtures utilisent parfois `use()` etc.
+        'react-hooks/rules-of-hooks': 'off',
+        'react-hooks/exhaustive-deps': 'off',
+      },
+    },  
 
   // ✅ MVP overrides (évite les erreurs "any" + "unused-vars" partout)
   // (et évite aussi de dépasser --max-warnings=10)

@@ -1,4 +1,3 @@
-# .github/workflows/enforce-branch-protection.yml
 name: Enforce Branch Protection
 
 on:
@@ -30,35 +29,66 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
           if [ -z "${GH_TOKEN:-}" ]; then
             echo "::error::Missing secrets.GH_ADMIN_TOKEN"
             exit 1
           fi
 
-          IFS=',' read -ra BR <<< "$BRANCHES"
-          checks=(
+          # ✅ Checks PR-safe (doivent tourner sur pull_request)
+          base_checks=(
             "Quality Gate / quality"
-            "PR Guardian — Security Checklist / validate-template"
-            "E2E Playwright / e2e"
+            "CI - Lint & Typecheck / lint-typecheck"
+            "DB Integrity (billing) / db-integrity"
+            "Next15 Audit / next15-audit"
+            "PR Guardian — Security Checklist / pr-guardian"
+            "CI - E2E (Playwright) / E2E Smoke - local (chromium)"
+          )
+
+          # ✅ Check staging-only (gate additionnel)
+          staging_extra_checks=(
             "Security Audit (Staging) / audit"
           )
 
-          contexts=$(printf '%s\n' "${checks[@]}" | jq -R . | jq -s .)
-
+          IFS=',' read -ra BR <<< "${BRANCHES}"
           for b in "${BR[@]}"; do
-            bn="${b// /}"
+            bn="$(echo "$b" | xargs)" # trim spaces
+            if [ -z "$bn" ]; then
+              continue
+            fi
+
+            echo "[protect] applying on branch=$bn"
+
+            # Build the check list per branch
+            checks=("${base_checks[@]}")
+            if [ "$bn" = "staging" ]; then
+              checks+=("${staging_extra_checks[@]}")
+            fi
+
+            contexts="$(printf '%s\n' "${checks[@]}" | jq -R . | jq -s .)"
+
             jq -n --argjson ctx "$contexts" '{
               enforce_admins: true,
-              required_status_checks: { strict: true, contexts: $ctx },
-              required_pull_request_reviews: { required_approving_review_count: 1, dismiss_stale_reviews: true },
+              required_status_checks: {
+                strict: true,
+                contexts: $ctx
+              },
+              required_pull_request_reviews: {
+                required_approving_review_count: 1,
+                dismiss_stale_reviews: true,
+                require_code_owner_reviews: false
+              },
               restrictions: null
             }' > body.json
 
-            curl -sS -X PUT \
-              -H "Authorization: Bearer $GH_TOKEN" \
+            curl -fsS -X PUT \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
               -H "Accept: application/vnd.github+json" \
-              "https://api.github.com/repos/'"$OWNER"'/'"$REPO"'/branches/'"$bn"'/protection" \
-              -d @body.json >/dev/null
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${OWNER}/${REPO}/branches/${bn}/protection" \
+              -d @body.json > /dev/null
 
-            echo "Applied protection on $bn"
+            echo "[protect] OK branch=$bn"
+            echo "[protect] required checks for $bn:"
+            printf '  - %s\n' "${checks[@]}"
           done

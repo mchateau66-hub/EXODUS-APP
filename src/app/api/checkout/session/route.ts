@@ -22,6 +22,7 @@ type CheckoutSessionBody = {
   billingPeriod?: string
   successUrl?: string
   cancelUrl?: string
+  analyticsSessionId?: string
 }
 
 type SessionUserRole = 'athlete' | 'coach' | 'admin'
@@ -42,6 +43,10 @@ function isPlanKey(value: unknown): value is PlanKey {
   )
 }
 
+function isNonEmptyString(v: unknown): v is string {
+  return typeof v === 'string' && v.trim().length > 0
+}
+
 function isBillingPeriod(value: unknown): value is BillingPeriod {
   return value === 'monthly' || value === 'yearly'
 }
@@ -56,11 +61,7 @@ function isCheckoutUser(value: unknown): value is CheckoutUser {
   }
 
   if (typeof maybe.id !== 'string') return false
-  if (
-    maybe.role !== 'athlete' &&
-    maybe.role !== 'coach' &&
-    maybe.role !== 'admin'
-  ) {
+  if (maybe.role !== 'athlete' && maybe.role !== 'coach' && maybe.role !== 'admin') {
     return false
   }
 
@@ -68,6 +69,7 @@ function isCheckoutUser(value: unknown): value is CheckoutUser {
     maybe.email === null ||
     typeof maybe.email === 'string' ||
     typeof maybe.email === 'undefined'
+
   const stripeIdOk =
     maybe.stripe_customer_id === null ||
     typeof maybe.stripe_customer_id === 'string' ||
@@ -78,20 +80,11 @@ function isCheckoutUser(value: unknown): value is CheckoutUser {
 
 async function getCheckoutUserFromSession(): Promise<CheckoutUser | null> {
   const rawSession: unknown = await getUserFromSession()
-
-  if (!rawSession || typeof rawSession !== 'object') {
-    return null
-  }
-
-  if (!('user' in rawSession)) {
-    return null
-  }
+  if (!rawSession || typeof rawSession !== 'object') return null
+  if (!('user' in rawSession)) return null
 
   const maybeUser = (rawSession as { user?: unknown }).user
-
-  if (!isCheckoutUser(maybeUser)) {
-    return null
-  }
+  if (!isCheckoutUser(maybeUser)) return null
 
   return {
     id: maybeUser.id,
@@ -104,26 +97,20 @@ async function getCheckoutUserFromSession(): Promise<CheckoutUser | null> {
 async function parseJsonBody<T>(req: NextRequest): Promise<T | null> {
   try {
     const raw: unknown = await req.json()
-    if (!raw || typeof raw !== 'object') {
-      return null
-    }
+    if (!raw || typeof raw !== 'object') return null
     return raw as T
   } catch {
     return null
   }
 }
 
-function getPriceIdFromEnv(
-  planKey: PlanKey,
-  billing: BillingPeriod,
-): string | null {
+function getPriceIdFromEnv(planKey: PlanKey, billing: BillingPeriod): string | null {
   if (planKey === 'athlete_premium' && billing === 'monthly') {
     return process.env.STRIPE_PRICE_ATHLETE_PREMIUM_MONTHLY ?? null
   }
   if (planKey === 'coach_premium' && billing === 'monthly') {
     return process.env.STRIPE_PRICE_COACH_PREMIUM_MONTHLY ?? null
   }
-  // à compléter plus tard si tu rajoutes d’autres prix
   return null
 }
 
@@ -133,67 +120,43 @@ export async function POST(
   req: NextRequest,
 ): Promise<NextResponse<CheckoutSessionResponse>> {
   const user = await getCheckoutUserFromSession()
-
   if (!user) {
-    return NextResponse.json(
-      { ok: false, error: 'invalid_session' },
-      { status: 401 },
-    )
+    return NextResponse.json({ ok: false, error: 'invalid_session' }, { status: 401 })
   }
 
-  const body =
-    (await parseJsonBody<CheckoutSessionBody>(req)) ?? {}
+  const body = (await parseJsonBody<CheckoutSessionBody>(req)) ?? {}
 
-  const requestedPlanKey = body.planKey
-  const requestedBilling = body.billingPeriod
-
-  const planKey: PlanKey = isPlanKey(requestedPlanKey)
-    ? requestedPlanKey
-    : 'athlete_premium'
-
-  const billingPeriod: BillingPeriod = isBillingPeriod(
-    requestedBilling,
-  )
-    ? requestedBilling
-    : 'monthly'
+  const planKey: PlanKey = isPlanKey(body.planKey) ? body.planKey : 'athlete_premium'
+  const billingPeriod: BillingPeriod = isBillingPeriod(body.billingPeriod) ? body.billingPeriod : 'monthly'
 
   if (!ALLOWED_PLANS.includes(planKey)) {
-    return NextResponse.json(
-      { ok: false, error: 'unsupported_plan' },
-      { status: 400 },
-    )
+    return NextResponse.json({ ok: false, error: 'unsupported_plan' }, { status: 400 })
   }
 
-  // Règles de rôle : athlète vs coach
   if (planKey === 'athlete_premium' && user.role !== 'athlete') {
-    return NextResponse.json(
-      { ok: false, error: 'forbidden_for_role' },
-      { status: 403 },
-    )
+    return NextResponse.json({ ok: false, error: 'forbidden_for_role' }, { status: 403 })
   }
-
   if (planKey === 'coach_premium' && user.role !== 'coach') {
-    return NextResponse.json(
-      { ok: false, error: 'forbidden_for_role' },
-      { status: 403 },
-    )
+    return NextResponse.json({ ok: false, error: 'forbidden_for_role' }, { status: 403 })
   }
 
-  // 1) Stripe customer
+  const analyticsSessionId = isNonEmptyString(body.analyticsSessionId)
+    ? body.analyticsSessionId
+    : null
+
+  // 1) Ensure Stripe customer
   let stripeCustomerId: string | null = user.stripe_customer_id
 
   if (!stripeCustomerId) {
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
     const customer = await stripe.customers.create({
       email: user.email ?? undefined,
       metadata: {
-        userId: user.id,
+        user_id: user.id,
         role: user.role,
       },
     })
 
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-    stripeCustomerId = customer.id as string
+    stripeCustomerId = customer.id
 
     await prisma.user.update({
       where: { id: user.id },
@@ -201,95 +164,86 @@ export async function POST(
     })
   }
 
-  // Par sécurité : si malgré tout on n'a toujours pas d'id client Stripe
   if (!stripeCustomerId) {
-    console.error(
-      `Stripe customer id still missing after creation for user=${user.id}`,
-    )
-    return NextResponse.json(
-      { ok: false, error: 'stripe_customer_missing' },
-      { status: 500 },
-    )
+    return NextResponse.json({ ok: false, error: 'stripe_customer_missing' }, { status: 500 })
   }
 
-  const customerIdForStripe: string = stripeCustomerId
-
-  // 2) Récup du price_id (Plan -> env)
+  // 2) price_id via Plan DB (fallback env)
   const plan = await prisma.plan.findUnique({
     where: { key: planKey },
+    select: {
+      stripe_price_id_monthly: true,
+      stripe_price_id_yearly: true,
+      active: true,
+    },
   })
 
-  let priceId: string | null = null
-
-  if (plan) {
-    priceId =
-      billingPeriod === 'monthly'
-        ? plan.stripe_price_id_monthly
-        : plan.stripe_price_id_yearly
+  if (plan && plan.active === false) {
+    return NextResponse.json({ ok: false, error: 'plan_inactive' }, { status: 400 })
   }
+
+  let priceId: string | null =
+    plan
+      ? (billingPeriod === 'monthly' ? plan.stripe_price_id_monthly : plan.stripe_price_id_yearly)
+      : null
+
+  if (!priceId) priceId = getPriceIdFromEnv(planKey, billingPeriod)
 
   if (!priceId) {
-    priceId = getPriceIdFromEnv(planKey, billingPeriod)
+    return NextResponse.json({ ok: false, error: 'price_not_configured' }, { status: 500 })
   }
 
-  if (!priceId) {
-    console.error(
-      `Stripe price id missing for planKey=${planKey}, billingPeriod=${billingPeriod}`,
-    )
-    return NextResponse.json(
-      { ok: false, error: 'price_not_configured' },
-      { status: 500 },
-    )
-  }
-
-  const baseUrl =
-    process.env.NEXT_PUBLIC_APP_URL ?? req.nextUrl.origin
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? req.nextUrl.origin
 
   const successUrl =
-    body.successUrl ??
-    `${baseUrl}/paywall/success?plan=${encodeURIComponent(
-      planKey,
-    )}`
+    body.successUrl ?? `${baseUrl}/paywall/success?plan=${encodeURIComponent(planKey)}`
   const cancelUrl =
-    body.cancelUrl ??
-    `${baseUrl}/paywall?plan=${encodeURIComponent(
-      planKey,
-    )}&canceled=1`
+    body.cancelUrl ?? `${baseUrl}/paywall?plan=${encodeURIComponent(planKey)}&canceled=1`
 
-  // 3) Création session Checkout
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
+  // ✅ analytics: checkout_start
+  if (analyticsSessionId) {
+    await prisma.event.create({
+      data: {
+        session_id: analyticsSessionId,
+        user_id: user.id,
+        event: 'checkout_start',
+        role: user.role,
+        offer: planKey,
+        billing: billingPeriod,
+        meta: { price_id: priceId },
+      },
+    })
+  }
+
+  // 3) Create Stripe Checkout Session
   const session = await stripe.checkout.sessions.create({
     mode: 'subscription',
-    customer: customerIdForStripe,
-    line_items: [
-      {
-        price: priceId,
-        quantity: 1,
-      },
-    ],
+    customer: stripeCustomerId,
+    client_reference_id: user.id,
+    line_items: [{ price: priceId, quantity: 1 }],
     success_url: successUrl,
     cancel_url: cancelUrl,
     allow_promotion_codes: true,
+
     metadata: {
-      userId: user.id,
+      user_id: user.id,
       planKey,
       billingPeriod,
+      analytics_session_id: analyticsSessionId ?? '',
     },
+
     subscription_data: {
       metadata: {
-        userId: user.id,
+        user_id: user.id,
         planKey,
+        billingPeriod,
+        analytics_session_id: analyticsSessionId ?? '',
       },
     },
   })
 
-  const response: CheckoutSessionResponse = {
-    ok: true,
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment
-    url: session.url ?? null,
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment
-    id: session.id ?? null,
-  }
-
-  return NextResponse.json(response, { status: 200 })
+  return NextResponse.json(
+    { ok: true, url: session.url ?? null, id: session.id ?? null },
+    { status: 200 },
+  )
 }

@@ -1,8 +1,7 @@
-# .github/workflows/pr-guardian.yml
 name: PR Guardian — Security Checklist
 
 on:
-  pull_request:
+  pull_request_target:
     branches: [main, staging]
     types: [opened, edited, synchronize, reopened, ready_for_review]
 
@@ -28,7 +27,6 @@ jobs:
           PR_BODY: ${{ github.event.pull_request.body }}
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
           PR_LABELS: ${{ toJson(github.event.pull_request.labels.*.name) }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
 
@@ -64,9 +62,9 @@ jobs:
           norm = normalize(body)
           pathlib.Path("pr_body_norm.md").write_text(norm, encoding="utf-8")
 
-          # ---- SKIP conditions ----
           labelset = {str(l).lower() for l in (labels or [])}
 
+          # Dependabot => skip
           if author.lower() == "dependabot[bot]":
             report = [
               marker,
@@ -81,6 +79,7 @@ jobs:
             write_output(result="skip")
             sys.exit(0)
 
+          # Marker skip in PR body
           if re.search(skip_marker_pattern, norm, flags=re.IGNORECASE):
             report = [
               marker,
@@ -93,6 +92,7 @@ jobs:
             write_output(result="skip")
             sys.exit(0)
 
+          # Labels skip
           if "skip-security-checklist" in labelset or "pr-guardian-skip" in labelset:
             report = [
               marker,
@@ -105,7 +105,6 @@ jobs:
             write_output(result="skip")
             sys.exit(0)
 
-          # ---- Required checklist items ----
           required = [
             ("Monetisation", r"monetisation"),
             ("Entitlements", r"entitlements"),
@@ -115,11 +114,10 @@ jobs:
             ("Health", r"\bhealth\b|\bready\b|\breadiness\b"),
             ("PII-Guard", r"pii\s*-?\s*guard"),
             ("E2E", r"\be2e\b"),
-            ("Security audit", r"security\s*audit|audit\s*securite|audit\s*securite"),
+            ("Security audit", r"security\s*audit|audit\s*securite|audit\s*s[eé]curit[eé]"),
           ]
 
           def ticked_line_regex(keyword_pattern: str) -> re.Pattern:
-            # Matches "- [x] ... <keyword>"
             return re.compile(
               r"^\s*[-*]\s*\[\s*[xX]\s*\]\s*.*(" + keyword_pattern + r")",
               flags=re.IGNORECASE | re.MULTILINE,
@@ -194,37 +192,30 @@ jobs:
             const result = process.env.RESULT || 'unknown';
             const report = fs.existsSync('report.md')
               ? fs.readFileSync('report.md', 'utf8')
-              : `${marker}\n### PR Guardian Report\n\n(no report)`;
+              : `${marker}\n### PR Guardian Report\n\n(no report)\n`;
 
             const { owner, repo } = context.repo;
             const issue_number = context.issue.number;
 
             const comments = await github.paginate(github.rest.issues.listComments, {
-              owner,
-              repo,
-              issue_number,
-              per_page: 100,
+              owner, repo, issue_number, per_page: 100,
             });
 
             const existing = comments.find(c => typeof c.body === 'string' && c.body.includes(marker));
 
-            // If FAIL -> ensure there's a comment (create or update)
+            // ✅ Politique recommandée:
+            // - si FAIL => créer/update commentaire
+            // - si PASS/SKIP => update si existant (ou supprimer si tu veux)
             if (result === 'fail') {
               if (existing) {
-                await github.rest.issues.updateComment({
-                  owner, repo, comment_id: existing.id, body: report,
-                });
+                await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body: report });
               } else {
-                await github.rest.issues.createComment({
-                  owner, repo, issue_number, body: report,
-                });
+                await github.rest.issues.createComment({ owner, repo, issue_number, body: report });
               }
               return;
             }
 
-            // If PASS/SKIP -> only update if a previous comment exists (avoid spamming)
+            // PASS ou SKIP: on met à jour le commentaire existant pour refléter l'état, sinon on ne spam pas
             if (existing) {
-              await github.rest.issues.updateComment({
-                owner, repo, comment_id: existing.id, body: report,
-              });
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body: report });
             }
