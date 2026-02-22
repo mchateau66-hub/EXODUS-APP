@@ -2,10 +2,12 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   // ✅ Fix build : désactive l’étape ESLint intégrée à `next build`
-  // (utile quand tu es sur ESLint 9+ et que Next déclenche "Invalid Options")
   eslint: {
     ignoreDuringBuilds: true,
   },
+
+  // ✅ Vercel tracing hardening (évite les ENOENT sur des manifests fantômes)
+  outputFileTracingRoot: __dirname,
 
   webpack: (config, { dev }) => {
     // Fix: évite les erreurs PackFileCacheStrategy (.next/cache/webpack/*.pack)
@@ -18,7 +20,6 @@ const nextConfig: NextConfig = {
   // E2E_LOGIN_REWRITE (do not remove)
   async rewrites() {
     return {
-      // ✅ CRITIQUE : appliqué AVANT le matching des routes (/api/login)
       beforeFiles: [
         {
           source: "/api/login",
