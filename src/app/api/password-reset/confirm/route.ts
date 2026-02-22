@@ -1,23 +1,48 @@
+// src/app/api/password-reset/confirm/route.ts
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
 import { hashPassword, hashResetToken } from "@/lib/password";
 import { ok, err } from "@/lib/api-response";
 import { getClientIp } from "@/lib/ip";
 import { writeAuditLog } from "@/lib/audit";
+import { limit, rateHeaders } from "@/lib/ratelimit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+function normalizeToken(v: unknown) {
+  return typeof v === "string" ? v.trim() : "";
+}
+
+function normalizePassword(v: unknown) {
+  return typeof v === "string" ? v : "";
+}
 
 export async function POST(req: NextRequest) {
   const body = (await req.json().catch(() => null)) as
     | { token?: string; password?: string }
     | null;
 
-  const token = (body?.token || "").trim();
-  const password = body?.password || "";
+  const token = normalizeToken(body?.token);
+  const password = normalizePassword(body?.password);
 
   const ip = getClientIp(req.headers);
   const ua = req.headers.get("user-agent") || "";
+
+  // ✅ rate limit (ex: 10 / 10 min) — ajuste si tu veux
+  const rl = await limit("pwreset_confirm", ip, 10, 10 * 60 * 1000);
+  const rH = rateHeaders(rl);
+
+  if (!rl.ok) {
+    await writeAuditLog({
+      action: "password_reset.confirm_rate_limited",
+      userId: null,
+      ip,
+      ua,
+      meta: { key: ip },
+    });
+    return err("rate_limited", 429, {}, { headers: rH });
+  }
 
   if (!token || !password) {
     await writeAuditLog({
@@ -27,7 +52,7 @@ export async function POST(req: NextRequest) {
       ua,
       meta: { hasToken: !!token, hasPassword: !!password },
     });
-    return err("bad_request", 400);
+    return err("bad_request", 400, {}, { headers: rH });
   }
 
   if (password.length < 8) {
@@ -38,7 +63,7 @@ export async function POST(req: NextRequest) {
       ua,
       meta: { length: password.length },
     });
-    return err("weak_password", 422);
+    return err("weak_password", 422, {}, { headers: rH });
   }
 
   const tokenHash = hashResetToken(token);
@@ -57,8 +82,7 @@ export async function POST(req: NextRequest) {
 
       if (!rec) return { ok: false as const };
 
-      // ✅ Consommer le token de façon "race-safe"
-      // Si 2 requêtes arrivent en même temps, une seule doit réussir.
+      // race-safe consume
       const consumed = await tx.passwordResetToken.updateMany({
         where: { id: rec.id, used_at: null },
         data: { used_at: now },
@@ -66,7 +90,6 @@ export async function POST(req: NextRequest) {
 
       if (consumed.count !== 1) return { ok: false as const };
 
-      // Hash mot de passe (await safe même si sync)
       const newHash = await hashPassword(password);
 
       await tx.user.update({
@@ -74,12 +97,10 @@ export async function POST(req: NextRequest) {
         data: { passwordHash: newHash },
       });
 
-      // Invalider toutes les sessions existantes (force reconnexion)
       const sessions = await tx.session.deleteMany({
         where: { user_id: rec.user_id },
       });
 
-      // Invalider tous les autres tokens reset non utilisés pour cet utilisateur
       const otherTokens = await tx.passwordResetToken.updateMany({
         where: { user_id: rec.user_id, used_at: null },
         data: { used_at: now },
@@ -101,7 +122,7 @@ export async function POST(req: NextRequest) {
         ua,
         meta: { reason: "invalid_or_expired_or_used" },
       });
-      return err("invalid_or_expired_token", 400);
+      return err("invalid_or_expired_token", 400, {}, { headers: rH });
     }
 
     await writeAuditLog({
@@ -115,7 +136,7 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    return ok({});
+    return ok({}, { headers: rH });
   } catch (e) {
     console.error("password_reset_confirm_failed", e);
 
@@ -127,6 +148,6 @@ export async function POST(req: NextRequest) {
       meta: { errorType: e instanceof Error ? e.name : "unknown" },
     });
 
-    return err("server_error", 500);
+    return err("server_error", 500, {}, { headers: rH });
   }
 }

@@ -6,6 +6,26 @@ import { stripe } from '@/lib/stripe'
 import { prisma } from '@/lib/db'
 import { BillingPeriod } from '@prisma/client'
 
+function ok() {
+  return new Response("ok", {
+    status: 200,
+    headers: {
+      "content-type": "text/plain; charset=utf-8",
+      "cache-control": "no-store",
+    },
+  });
+}
+
+function bad(msg: string, status = 400) {
+  return new Response(msg, {
+    status,
+    headers: {
+      "content-type": "text/plain; charset=utf-8",
+      "cache-control": "no-store",
+    },
+  });
+}
+
 export const runtime = 'nodejs'
 
 type SubStatus =
@@ -267,24 +287,42 @@ async function upsertSubscriptionAndEntitlements(
 }
 
 export async function POST(req: NextRequest) {
-  const headersList = await headers()
-  const sig = headersList.get('stripe-signature')
-  if (!sig) return new Response('Missing stripe-signature', { status: 400 })
+  const headersList = await headers();
+  const sig = headersList.get("stripe-signature");
+  if (!sig) return bad("Missing stripe-signature", 400);
 
-  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET
-  if (!webhookSecret) return new Response('Webhook config error', { status: 500 })
+  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+  if (!webhookSecret) return bad("Webhook config error", 500);
 
-  const rawBody = await req.text()
-
-  let event: Stripe.Event
-  try {
-    event = stripe.webhooks.constructEvent(rawBody, sig, webhookSecret)
-  } catch (err: any) {
-    console.error('Stripe webhook signature error', err)
-    return new Response(`Webhook Error: ${err.message}`, { status: 400 })
+  // ✅ Anti abuse — limite 1MB
+  const len = Number(req.headers.get("content-length") || "0");
+  if (len && len > 1_000_000) {
+    return bad("Payload too large", 413);
   }
 
-  // ✅ Idempotence (ignore retries)
+  const rawBody = await req.text();
+
+  let event: Stripe.Event;
+  try {
+    event = stripe.webhooks.constructEvent(rawBody, sig, webhookSecret);
+  } catch (err: any) {
+    console.error("Stripe webhook signature error:", err?.message);
+    return bad("Invalid signature", 400);
+  }
+
+  // ✅ Livemode guard (évite test events en prod)
+  const expectedLivemode = process.env.STRIPE_LIVEMODE === "1";
+  if (event.livemode !== expectedLivemode) {
+    console.warn("Stripe livemode mismatch", {
+      eventLivemode: event.livemode,
+      expectedLivemode,
+      id: event.id,
+      type: event.type,
+    });
+    return ok();
+  }
+
+  // ✅ Idempotence (ignore retries Stripe)
   try {
     await prisma.stripeEvent.create({
       data: {
@@ -293,143 +331,89 @@ export async function POST(req: NextRequest) {
         created: event.created,
         livemode: event.livemode,
       },
-    })
+    });
   } catch {
-    return new Response('ok', { status: 200 })
+    return ok();
   }
 
   try {
     switch (event.type) {
-      case 'checkout.session.completed': {
-        const session = event.data.object as Stripe.Checkout.Session
+      case "checkout.session.completed": {
+        const session = event.data.object as Stripe.Checkout.Session;
 
-        const userIdHint = nonEmptyString(session.metadata?.user_id) ?? undefined
-        const analyticsSessionId = nonEmptyString(session.metadata?.analytics_session_id)
-        const planKey = nonEmptyString(session.metadata?.planKey) ?? null
-        const billingPeriod = nonEmptyString(session.metadata?.billingPeriod) ?? null
+        const userIdHint = nonEmptyString(session.metadata?.user_id) ?? undefined;
+        const analyticsSessionId = nonEmptyString(session.metadata?.analytics_session_id);
+        const planKey = nonEmptyString(session.metadata?.planKey) ?? null;
+        const billingPeriod = nonEmptyString(session.metadata?.billingPeriod) ?? null;
 
-        // ✅ analytics: checkout_success
         if (analyticsSessionId) {
-          await audit('checkout_success', userIdHint ?? null, {
+          await audit("checkout_success", userIdHint ?? null, {
             session_id: analyticsSessionId,
             offer: planKey,
             billing: billingPeriod,
             stripe_session_id: session.id,
-            stripe_customer_id: typeof session.customer === 'string' ? session.customer : null,
+            stripe_customer_id:
+              typeof session.customer === "string" ? session.customer : null,
             stripe_subscription_id:
-              typeof session.subscription === 'string' ? session.subscription : null,
-          })
+              typeof session.subscription === "string"
+                ? session.subscription
+                : null,
+          });
         }
 
-        // ✅ sync subscription + entitlements (also sets billing)
-        if (typeof session.subscription === 'string') {
+        if (typeof session.subscription === "string") {
           const sub = await stripe.subscriptions.retrieve(session.subscription, {
-            expand: ['items.data.price'],
-          })
-          await upsertSubscriptionAndEntitlements(sub as Stripe.Subscription, userIdHint)
+            expand: ["items.data.price"],
+          });
+          await upsertSubscriptionAndEntitlements(
+            sub as Stripe.Subscription,
+            userIdHint,
+          );
         }
 
-        break
+        break;
       }
 
-      case 'customer.subscription.created':
-      case 'customer.subscription.updated':
-      case 'customer.subscription.deleted': {
-        const subLite = event.data.object as Stripe.Subscription
+      case "customer.subscription.created":
+      case "customer.subscription.updated":
+      case "customer.subscription.deleted": {
+        const subLite = event.data.object as Stripe.Subscription;
         const sub = await stripe.subscriptions.retrieve(subLite.id, {
-          expand: ['items.data.price'],
-        })
+          expand: ["items.data.price"],
+        });
 
-        const sync = await upsertSubscriptionAndEntitlements(sub as Stripe.Subscription)
-
-        if (sync) {
-          const becameActive = !isActiveLike(sync.prevStatus) && isActiveLike(sync.nextStatus)
-          const becameCanceled = sync.nextStatus === 'canceled' || sync.nextStatus === 'unpaid'
-          const becameCancelScheduled =
-            sync.prevCancelAtPeriodEnd === false && sync.nextCancelAtPeriodEnd === true
-          const becameReactivated =
-            sync.prevCancelAtPeriodEnd === true && sync.nextCancelAtPeriodEnd === false
-
-          if (becameActive) {
-            await audit('subscription_active', sync.userId, {
-              session_id: sync.analyticsSessionId ?? `stripe:${sync.stripeSubId}`,
-              role: sync.role,
-              offer: sync.planKey,
-              stripe_subscription_id: sync.stripeSubId,
-              stripe_customer_id: sync.customerId,
-              prev_status: sync.prevStatus,
-              next_status: sync.nextStatus,
-            })
-          }
-
-          if (becameCancelScheduled) {
-            await audit('subscription_cancel_scheduled', sync.userId, {
-              session_id: sync.analyticsSessionId ?? `stripe:${sync.stripeSubId}`,
-              role: sync.role,
-              offer: sync.planKey,
-              stripe_subscription_id: sync.stripeSubId,
-              stripe_customer_id: sync.customerId,
-              cancel_at_period_end: true,
-              cancel_at_unix: sync.cancelAtUnix,
-              current_period_end_unix: sync.currentPeriodEndUnix,
-              prev_cancel_at_period_end: sync.prevCancelAtPeriodEnd,
-              next_cancel_at_period_end: sync.nextCancelAtPeriodEnd,
-            })
-          }
-
-          if (becameReactivated) {
-            await audit('subscription_reactivated', sync.userId, {
-              session_id: sync.analyticsSessionId ?? `stripe:${sync.stripeSubId}`,
-              role: sync.role,
-              offer: sync.planKey,
-              stripe_subscription_id: sync.stripeSubId,
-              stripe_customer_id: sync.customerId,
-              cancel_at_period_end: false,
-              prev_cancel_at_period_end: sync.prevCancelAtPeriodEnd,
-              next_cancel_at_period_end: sync.nextCancelAtPeriodEnd,
-            })
-          }
-
-          if (becameCanceled) {
-            await audit('subscription_canceled', sync.userId, {
-              session_id: sync.analyticsSessionId ?? `stripe:${sync.stripeSubId}`,
-              role: sync.role,
-              offer: sync.planKey,
-              stripe_subscription_id: sync.stripeSubId,
-              stripe_customer_id: sync.customerId,
-              prev_status: sync.prevStatus,
-              next_status: sync.nextStatus,
-            })
-          }
-        }
-
-        break
+        await upsertSubscriptionAndEntitlements(sub as Stripe.Subscription);
+        break;
       }
 
-      case 'invoice.payment_failed': {
-        const invoice = event.data.object as Stripe.Invoice
+      case "invoice.payment_failed": {
+        const invoice = event.data.object as Stripe.Invoice;
 
         const stripeSubId =
-          typeof (invoice as any).subscription === 'string'
+          typeof (invoice as any).subscription === "string"
             ? (invoice as any).subscription
-            : null
+            : null;
 
         if (stripeSubId) {
           await prisma.subscription.updateMany({
             where: { stripe_subscription_id: stripeSubId },
-            data: { status: 'past_due' as any, updated_at: new Date() },
-          })
+            data: {
+              status: "past_due" as any,
+              updated_at: new Date(),
+            },
+          });
         }
-        break
+
+        break;
       }
 
       default:
-        console.log('Unhandled Stripe event type', event.type)
+        console.log("Unhandled Stripe event type:", event.type);
     }
 
-    return new Response('ok', { status: 200 })
+    return ok();
   } catch (err) {
-    console.error('Error handling Stripe webhook', err)
-    return new Response('Webhook handler error', { status: 500 })
+    console.error("Stripe webhook handler error:", err);
+    return bad("Webhook handler error", 500);
   }
 }

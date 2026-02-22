@@ -6,30 +6,64 @@ import { limit, rateHeaders } from "@/lib/ratelimit";
 import { ok, err } from "@/lib/api-response";
 import { sendPasswordResetEmail } from "@/lib/email";
 import { writeAuditLog } from "@/lib/audit";
+import { createHash } from "node:crypto";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 function normalizeEmail(s: string) {
   return s.trim().toLowerCase();
 }
 
+function isValidEmail(email: string) {
+  if (!email || email.length > 180) return false;
+  // validation simple mais meilleure que includes("@")
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+function clampStr(s: string, max: number) {
+  const v = (s ?? "").trim();
+  return v.length > max ? v.slice(0, max) : v;
+}
+
+function emailKey(email: string) {
+  // évite de mettre l'email en clair dans la clé rate-limit
+  return createHash("sha256").update(email).digest("hex").slice(0, 24);
+}
+
 function getBaseUrl(req: NextRequest) {
-  // plus fiable en prod/staging derrière proxy
-  return process.env.NEXT_PUBLIC_APP_URL || new URL(req.url).origin;
+  return (process.env.NEXT_PUBLIC_APP_URL || new URL(req.url).origin).replace(/\/+$/, "");
+}
+
+function noStore(headers?: Headers) {
+  const h = headers ?? new Headers();
+  h.set("cache-control", "no-store");
+  return h;
 }
 
 export async function POST(req: NextRequest) {
+  // ✅ Payload size guard (petit payload attendu)
+  const cl = req.headers.get("content-length");
+  if (cl) {
+    const n = Number(cl);
+    if (Number.isFinite(n) && n > 8_000) {
+      // réponse neutre anti-enum
+      return ok({}, { headers: noStore() });
+    }
+  }
+
   const body = (await req.json().catch(() => null)) as { email?: string } | null;
   const email = normalizeEmail(body?.email || "");
-  if (!email || !email.includes("@")) return err("bad_request", 400);
+  if (!isValidEmail(email)) return err("bad_request", 400, {}, { headers: noStore() });
 
   const ip = getClientIp(req.headers);
-  const ua = req.headers.get("user-agent") || "";
+  const ua = clampStr(req.headers.get("user-agent") || "", 256);
 
-  // ✅ 5 requêtes / 10 min par IP+email
-  const rl = await limit("pwreset", `${ip}:${email}`, 5, 10 * 60 * 1000);
-  const headers = rateHeaders(rl);
+  // ✅ 5 requêtes / 10 min par IP+email (email hashé)
+  const rlKey = `${ip}:${emailKey(email)}`;
+  const rl = await limit("pwreset", rlKey, 5, 10 * 60 * 1000);
+  const headers = noStore(rateHeaders(rl));
 
   if (!rl.ok) {
     await writeAuditLog({
@@ -38,8 +72,9 @@ export async function POST(req: NextRequest) {
       email,
       ip,
       ua,
-      meta: { key: `${ip}:${email}` },
+      meta: { key: rlKey },
     });
+    // anti-enum : on reste neutre
     return err("too_many_requests", 429, {}, { headers });
   }
 
@@ -85,7 +120,6 @@ export async function POST(req: NextRequest) {
 
     const resetUrl = `${baseUrl}/reset-password?token=${encodeURIComponent(token)}`;
 
-    // Envoi email (ne doit jamais casser l'anti-enum)
     try {
       await sendPasswordResetEmail({ to: email, resetUrl, ttlMinutes: ttlMin });
     } catch (e) {
@@ -98,10 +132,9 @@ export async function POST(req: NextRequest) {
         ua,
         meta: { errorType: e instanceof Error ? e.name : "unknown" },
       });
-      // on répond ok quand même
+      // anti-enum : répondre OK quand même
     }
 
-    // ✅ resetUrl uniquement en DEV (jamais staging/prod)
     const returnUrl =
       process.env.NODE_ENV === "development" &&
       process.env.RETURN_RESET_URL_IN_RESPONSE === "1";
