@@ -1,130 +1,170 @@
+// src/app/api/track/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { analyticsStore, type TrackEvent } from "@/lib/analytics-store";
-import { limitSeconds, rateHeaders, rateKeyFromRequest } from "@/lib/ratelimit";
+import { getClientIp } from "@/lib/ip";
+import { limit, rateHeaders } from "@/lib/ratelimit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const revalidate = 0;
 
-// --- helpers
-function noStore(res: NextResponse) {
-  res.headers.set("cache-control", "no-store");
-  return res;
-}
+const MAX_BODY_CHARS = 20_000;
 
-// 204 = ultra-safe pour analytics (pas d’info aux bots)
-function ok204(extraHeaders?: Headers) {
-  const res = new NextResponse(null, { status: 204 });
-  res.headers.set("cache-control", "no-store");
-  if (extraHeaders) {
-    extraHeaders.forEach((v, k) => res.headers.set(k, v));
-  }
-  return res;
-}
+// ✅ Events autorisés (whitelist)
+const ALLOWED_EVENTS = new Set<string>([
+  "page_view",
+  "hero_click",
+  "pricing_click",
+  "sticky_click",
+  "finalcta_click",
+  "signup_submit",
+  "checkout_success",
+  "subscription_active",
+  "subscription_cancel_scheduled",
+  "subscription_reactivated",
+  "subscription_canceled",
+]);
 
-function sameOrigin(req: NextRequest) {
-  const origin = req.headers.get("origin");
-  if (!origin) return true; // sendBeacon peut ne pas le mettre selon contexte
-  try {
-    const o = new URL(origin);
-    return o.host === req.nextUrl.host;
-  } catch {
-    return false;
-  }
-}
+// ✅ Enums stricts
+const ALLOWED_ROLES = new Set(["athlete", "coach", "admin"]);
+const ALLOWED_BILLING = new Set(["monthly", "yearly"]);
 
-function clampStr(v: unknown, max: number) {
+// ✅ Offers autorisées (adapte si tu as d’autres clés)
+const ALLOWED_OFFERS = new Set([
+  "standard",
+  "premium",
+  "athlete_premium",
+  "coach_premium",
+]);
+
+// ✅ “sources” autorisées (facultatif)
+const ALLOWED_SRC = new Set(["web", "landing", "paywall", "email", "ads", "unknown"]);
+
+function safeString(v: unknown, max = 120): string | undefined {
   if (typeof v !== "string") return undefined;
   const s = v.trim();
   if (!s) return undefined;
   return s.length > max ? s.slice(0, max) : s;
 }
 
-function clampObj(v: unknown, maxChars: number) {
-  if (v == null) return undefined;
-  if (typeof v !== "object") return undefined;
+function pickFromSet(v: unknown, allowed: Set<string>, max = 80): string | undefined {
+  const s = safeString(v, max);
+  if (!s) return undefined;
+  return allowed.has(s) ? s : undefined;
+}
+
+function safeMeta(v: unknown): Record<string, unknown> | undefined {
+  if (!v || typeof v !== "object") return undefined;
   try {
-    const json = JSON.stringify(v);
-    if (json.length > maxChars) return undefined; // drop si trop gros
+    const str = JSON.stringify(v);
+    if (str.length > 5000) return undefined;
     return v as Record<string, unknown>;
   } catch {
     return undefined;
   }
 }
 
-function isFiniteNumber(v: unknown) {
-  return typeof v === "number" && Number.isFinite(v);
+/**
+ * ✅ Anti-abus cross-site léger:
+ * - accepte si same-origin
+ * - ou si pas d’Origin (sendBeacon peut parfois ne pas envoyer Origin selon contexte)
+ * - sinon refuse
+ */
+function isAllowedOrigin(req: NextRequest) {
+  const origin = req.headers.get("origin");
+  if (!origin) return true;
+
+  const host = req.headers.get("host");
+  if (!host) return false;
+
+  // compare origin host <-> host actuel
+  try {
+    const o = new URL(origin);
+    return o.host === host;
+  } catch {
+    return false;
+  }
 }
 
 export async function POST(req: NextRequest) {
-  // 0) Origin guard (anti cross-site spam)
-  if (!sameOrigin(req)) return ok204();
+  // 0) Origin guard (anti spam depuis un autre site)
+  if (!isAllowedOrigin(req)) {
+    return NextResponse.json({ ok: false, error: "forbidden_origin" }, { status: 403 });
+  }
 
-  // 1) Rate limit (ex: 60 req / 60s / IP)
-  // Ajuste si tu veux plus strict: 30/min, etc.
-  const key = rateKeyFromRequest(req);
-  const rl = await limitSeconds("track", key, 60, 60);
+  // 1) Rate limit (IP)
+  const ip = getClientIp(req.headers);
+  const rl = await limit("track", ip, 60, 60_000); // 60/min/IP
   const rlHeaders = rateHeaders(rl);
 
   if (!rl.ok) {
-    // On répond 204 quand même (silencieux), mais on renvoie les headers
-    return ok204(rlHeaders);
+    return NextResponse.json(
+      { ok: false, error: "rate_limited" },
+      { status: 429, headers: rlHeaders }
+    );
   }
 
-  // 2) Payload size guard
-  // - content-length fiable si présent
-  const len = Number(req.headers.get("content-length") || "0");
-  if (len && len > 20_000) return ok204(rlHeaders); // 20KB max
+  // 2) Guard taille body si content-length dispo
+  const cl = Number(req.headers.get("content-length") ?? "0");
+  if (Number.isFinite(cl) && cl > MAX_BODY_CHARS) {
+    return NextResponse.json(
+      { ok: false, error: "payload_too_large" },
+      { status: 413, headers: rlHeaders }
+    );
+  }
 
-  // - sinon on lit en texte et on coupe si trop long
-  let raw = "";
+  // 3) Parse JSON
+  let body: Partial<TrackEvent> | null = null;
   try {
-    raw = await req.text();
+    body = (await req.json()) as Partial<TrackEvent>;
   } catch {
-    return ok204(rlHeaders);
-  }
-  if (!raw || raw.length > 20_000) return ok204(rlHeaders);
-
-  // 3) Parse JSON robuste
-  let body: Partial<TrackEvent> = {};
-  try {
-    body = JSON.parse(raw);
-  } catch {
-    return ok204(rlHeaders);
+    return NextResponse.json(
+      { ok: false, error: "invalid_json" },
+      { status: 400, headers: rlHeaders }
+    );
   }
 
-  // 4) Validation + normalisation (anti garbage)
-  const event = clampStr(body.event, 64);
-  if (!event) return ok204(rlHeaders);
+  const event = safeString(body?.event, 80);
+  if (!event) {
+    return NextResponse.json(
+      { ok: false, error: "invalid_event" },
+      { status: 400, headers: rlHeaders }
+    );
+  }
 
-  const payload: TrackEvent = {
+  // 4) Whitelist event
+  if (!ALLOWED_EVENTS.has(event)) {
+    return NextResponse.json(
+      { ok: false, error: "event_not_allowed" },
+      { status: 400, headers: rlHeaders }
+    );
+  }
+
+  // 5) Enums stricts (si la valeur n’est pas reconnue => undefined)
+  const role = pickFromSet(body?.role, ALLOWED_ROLES, 40);
+  const billing = pickFromSet(body?.billing, ALLOWED_BILLING, 16);
+  const offer = pickFromSet(body?.offer, ALLOWED_OFFERS, 80);
+  const src = pickFromSet(body?.src, ALLOWED_SRC, 40) ?? safeString(body?.src, 40);
+
+  analyticsStore.add({
     event,
+    role,
+    offer,
+    billing,
+    src,
+    ts: typeof body?.ts === "number" ? body.ts : Date.now(),
+    path: safeString(body?.path, 300),
+    ref: safeString(body?.ref, 500),
+    sessionId: safeString(body?.sessionId, 120),
+    ua: safeString(body?.ua, 300),
+    meta: safeMeta(body?.meta),
+  });
 
-    role: clampStr(body.role, 32),
-    offer: clampStr(body.offer, 64),
-    billing: clampStr(body.billing, 16),
-    src: clampStr(body.src, 64),
-
-    ts: isFiniteNumber(body.ts) ? (body.ts as number) : Date.now(),
-    path: clampStr(body.path, 256),
-    ref: clampStr(body.ref, 512),
-    sessionId: clampStr(body.sessionId, 96),
-
-    // UA peut être énorme → clamp + fallback header
-    ua:
-      clampStr(body.ua, 256) ??
-      clampStr(req.headers.get("user-agent"), 256),
-
-    // meta : drop si trop gros / non sérialisable
-    meta: clampObj(body.meta, 2_000),
-  };
-
-  // 5) Store (never throw)
-  try {
-    analyticsStore.add(payload);
-  } catch {
-    // ignore (analytics must not break app)
-  }
-
-  return ok204(rlHeaders);
+  // 6) Réponse légère + headers RL + no-store
+  return new NextResponse(null, {
+    status: 204,
+    headers: {
+      ...Object.fromEntries(rlHeaders.entries()),
+      "cache-control": "no-store",
+    },
+  });
 }
