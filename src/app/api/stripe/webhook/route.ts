@@ -6,35 +6,70 @@ import { stripe } from '@/lib/stripe'
 import { prisma } from '@/lib/db'
 import { BillingPeriod } from '@prisma/client'
 
+export const runtime = 'nodejs'
+
 function ok() {
-  return new Response("ok", {
+  return new Response('ok', {
     status: 200,
     headers: {
-      "content-type": "text/plain; charset=utf-8",
-      "cache-control": "no-store",
+      'content-type': 'text/plain; charset=utf-8',
+      'cache-control': 'no-store',
     },
-  });
+  })
 }
 
 function bad(msg: string, status = 400) {
   return new Response(msg, {
     status,
     headers: {
-      "content-type": "text/plain; charset=utf-8",
-      "cache-control": "no-store",
+      'content-type': 'text/plain; charset=utf-8',
+      'cache-control': 'no-store',
     },
-  });
+  })
 }
 
-export const runtime = 'nodejs'
+/**
+ * 🔒 Offers autorisées côté serveur.
+ * Même si on résout via DB, on refuse toute valeur surprise.
+ */
+const ALLOWED_OFFERS = new Set(['free', 'athlete_premium', 'coach_premium'])
 
-type SubStatus =
-  | 'incomplete'
-  | 'trialing'
-  | 'active'
-  | 'past_due'
-  | 'canceled'
-  | 'unpaid'
+function assertOfferAllowed(offer: string) {
+  if (!ALLOWED_OFFERS.has(offer)) {
+    throw new Error(`Offer not allowed: ${offer}`)
+  }
+}
+
+/**
+ * 🔒 Flag runtime (canary/rollback via env)
+ * - CANARY_ENABLED=1 + CANARY_PERCENT=5 => active “strict” sur 5% (déterministe par userId)
+ * - FLAG_STRICT_PRICE_MAPPING=0 => désactive totalement (rollback instant)
+ */
+function envOn(name: string, defaultValue = '0') {
+  const v = (process.env[name] ?? defaultValue).toString()
+  return v === '1' || v.toLowerCase() === 'true'
+}
+
+function inCanary(userId: string | null | undefined, percent: number): boolean {
+  if (!userId) return false
+  const p = Math.max(0, Math.min(100, percent))
+  // hash déterministe sans crypto import (simple & suffisant pour buckets)
+  let h = 0
+  for (let i = 0; i < userId.length; i++) {
+    h = (h * 31 + userId.charCodeAt(i)) >>> 0
+  }
+  const bucket = h % 100
+  return bucket < p
+}
+
+function isStrictPriceMappingEnabled(userId?: string | null) {
+  if (!envOn('FLAG_STRICT_PRICE_MAPPING', '1')) return false
+  if (!envOn('CANARY_ENABLED', '0')) return true
+  const pct = Number(process.env.CANARY_PERCENT ?? '5')
+  return inCanary(userId ?? null, Number.isFinite(pct) ? pct : 5)
+}
+
+type SubStatus = 'incomplete' | 'trialing' | 'active' | 'past_due' | 'canceled' | 'unpaid'
 
 function mapStripeStatus(status: Stripe.Subscription.Status): SubStatus {
   switch (status) {
@@ -52,10 +87,6 @@ function mapStripeStatus(status: Stripe.Subscription.Status): SubStatus {
 function fromUnixSeconds(v: number | null | undefined): Date | null {
   if (!v) return null
   return new Date(v * 1000)
-}
-
-function isActiveLike(s: SubStatus | null | undefined) {
-  return s === 'active' || s === 'trialing'
 }
 
 function nonEmptyString(v: unknown): string | null {
@@ -85,38 +116,72 @@ async function audit(action: string, userId: string | null, meta: Record<string,
   })
 }
 
-async function resolvePlanKeyAndBilling(sub: Stripe.Subscription) {
+/**
+ * ✅ STRICT resolver (avec canary / rollback):
+ * - Source de vérité = DB (Plan.active + priceId match)
+ * - metadata.planKey ignoré pour les droits (signal log only)
+ * - si priceId inconnu :
+ *    - strict ON  => throw (Stripe retry) => empêche toute sub “non mappée”
+ *    - strict OFF => warn + retourne planKey null (on n'écrit rien)
+ */
+async function resolvePlanKeyAndBilling(
+  sub: Stripe.Subscription,
+  userIdForCanary?: string | null,
+) {
+  const stripeSubId = sub.id
   const priceId = sub.items.data[0]?.price?.id ?? null
 
-  let planKey: string | null = (sub.metadata as any)?.planKey ?? null
-  let billing: BillingPeriod | null =
-    toBillingPeriod((sub.metadata as any)?.billingPeriod ?? null) ??
-    billingFromStripe(sub)
-
-  if (!planKey && priceId) {
-    const plan = await prisma.plan.findFirst({
-      where: {
-        OR: [
-          { stripe_price_id_monthly: priceId },
-          { stripe_price_id_yearly: priceId },
-        ],
-      },
-      select: {
-        key: true,
-        stripe_price_id_monthly: true,
-        stripe_price_id_yearly: true,
-      },
-    })
-
-    planKey = plan?.key ?? null
-
-    if (!billing && plan && priceId) {
-      if (plan.stripe_price_id_yearly === priceId) billing = BillingPeriod.yearly
-      else if (plan.stripe_price_id_monthly === priceId) billing = BillingPeriod.monthly
-    }
+  if (!priceId) {
+    // pas de price => pas de plan => on refuse (toujours)
+    throw new Error(`Stripe subscription has no priceId (sub=${stripeSubId})`)
   }
 
-  return { planKey, priceId, billing }
+  // Billing: Stripe interval d’abord
+  let billing: BillingPeriod | null =
+    toBillingPeriod((sub.metadata as any)?.billingPeriod ?? null) ?? billingFromStripe(sub)
+
+  const plan = await prisma.plan.findFirst({
+    where: {
+      active: true,
+      OR: [{ stripe_price_id_monthly: priceId }, { stripe_price_id_yearly: priceId }],
+    },
+    select: {
+      key: true,
+      stripe_price_id_monthly: true,
+      stripe_price_id_yearly: true,
+    },
+  })
+
+  const strict = isStrictPriceMappingEnabled(userIdForCanary ?? null)
+
+  if (!plan) {
+    if (strict) {
+      throw new Error(`Unknown Stripe priceId=${priceId} for sub=${stripeSubId}`)
+    }
+    console.warn('Webhook: Unknown Stripe priceId (soft)', { priceId, stripeSubId })
+    return { planKey: null as string | null, priceId, billing }
+  }
+
+  // Ajuste billing si besoin via match DB
+  if (!billing) {
+    if (plan.stripe_price_id_yearly === priceId) billing = BillingPeriod.yearly
+    else if (plan.stripe_price_id_monthly === priceId) billing = BillingPeriod.monthly
+  }
+
+  assertOfferAllowed(plan.key)
+
+  // Signal uniquement (log) : metadata.planKey (non fiable)
+  const metaPlanKey = nonEmptyString((sub.metadata as any)?.planKey)
+  if (metaPlanKey && metaPlanKey !== plan.key) {
+    console.warn('Webhook: metadata planKey mismatch (ignored)', {
+      stripeSubId,
+      priceId,
+      metaPlanKey,
+      resolvedPlanKey: plan.key,
+    })
+  }
+
+  return { planKey: plan.key, priceId, billing }
 }
 
 type SyncSummary = {
@@ -152,14 +217,9 @@ async function upsertSubscriptionAndEntitlements(
   const isEntitled = nextStatus === 'active' || nextStatus === 'trialing'
   const expiresAt = isEntitled ? null : (currentPeriodEnd ?? new Date())
 
-  const { planKey, priceId, billing } = await resolvePlanKeyAndBilling(sub)
-  if (!planKey) {
-    console.warn('Webhook: planKey not resolved', { stripeSubId, priceId })
-    return null
-  }
-
   const analyticsSessionId = nonEmptyString((sub.metadata as any)?.analytics_session_id)
 
+  // Trouve l'user (on essaie userIdHint d’abord, sinon via stripe_customer_id)
   const user =
     (userIdHint
       ? await prisma.user.findUnique({
@@ -174,6 +234,15 @@ async function upsertSubscriptionAndEntitlements(
 
   if (!user) {
     console.warn('Webhook: user not found', { userIdHint, customerId, stripeSubId })
+    return null
+  }
+
+  // ✅ strict/canary se base sur user.id (stable)
+  const { planKey, priceId, billing } = await resolvePlanKeyAndBilling(sub, user.id)
+
+  // mode soft => on ne touche rien
+  if (!planKey) {
+    console.warn('Webhook: planKey not resolved (soft mode)', { stripeSubId, priceId })
     return null
   }
 
@@ -197,7 +266,7 @@ async function upsertSubscriptionAndEntitlements(
         trial_end_at: trialEndAt,
         expires_at: expiresAt,
         updated_at: new Date(),
-        billing, // ✅ BillingPeriod | null (plus de as any)
+        billing,
       },
       create: {
         user_id: user.id,
@@ -216,6 +285,7 @@ async function upsertSubscriptionAndEntitlements(
       select: { id: true, status: true, cancel_at_period_end: true },
     })
 
+    // Reset entitlements "plan" pour cette subscription
     await tx.userEntitlement.deleteMany({
       where: {
         user_id: user.id,
@@ -257,8 +327,7 @@ async function upsertSubscriptionAndEntitlements(
 
   const currentPeriodEndUnix =
     typeof (sub as any).current_period_end === 'number' ? (sub as any).current_period_end : null
-  const cancelAtUnix =
-    typeof (sub as any).cancel_at === 'number' ? (sub as any).cancel_at : null
+  const cancelAtUnix = typeof (sub as any).cancel_at === 'number' ? (sub as any).cancel_at : null
 
   console.log(
     '[Stripe] synced user=%s plan=%s sub=%s status=%s cancel_at_period_end=%s billing=%s',
@@ -287,39 +356,39 @@ async function upsertSubscriptionAndEntitlements(
 }
 
 export async function POST(req: NextRequest) {
-  const headersList = await headers();
-  const sig = headersList.get("stripe-signature");
-  if (!sig) return bad("Missing stripe-signature", 400);
+  const headersList = await headers()
+  const sig = headersList.get('stripe-signature')
+  if (!sig) return bad('Missing stripe-signature', 400)
 
-  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
-  if (!webhookSecret) return bad("Webhook config error", 500);
+  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET
+  if (!webhookSecret) return bad('Webhook config error', 500)
 
   // ✅ Anti abuse — limite 1MB
-  const len = Number(req.headers.get("content-length") || "0");
+  const len = Number(req.headers.get('content-length') || '0')
   if (len && len > 1_000_000) {
-    return bad("Payload too large", 413);
+    return bad('Payload too large', 413)
   }
 
-  const rawBody = await req.text();
+  const rawBody = await req.text()
 
-  let event: Stripe.Event;
+  let event: Stripe.Event
   try {
-    event = stripe.webhooks.constructEvent(rawBody, sig, webhookSecret);
+    event = stripe.webhooks.constructEvent(rawBody, sig, webhookSecret)
   } catch (err: any) {
-    console.error("Stripe webhook signature error:", err?.message);
-    return bad("Invalid signature", 400);
+    console.error('Stripe webhook signature error:', err?.message)
+    return bad('Invalid signature', 400)
   }
 
   // ✅ Livemode guard (évite test events en prod)
-  const expectedLivemode = process.env.STRIPE_LIVEMODE === "1";
+  const expectedLivemode = process.env.STRIPE_LIVEMODE === '1'
   if (event.livemode !== expectedLivemode) {
-    console.warn("Stripe livemode mismatch", {
+    console.warn('Stripe livemode mismatch', {
       eventLivemode: event.livemode,
       expectedLivemode,
       id: event.id,
       type: event.type,
-    });
-    return ok();
+    })
+    return ok()
   }
 
   // ✅ Idempotence (ignore retries Stripe)
@@ -331,89 +400,84 @@ export async function POST(req: NextRequest) {
         created: event.created,
         livemode: event.livemode,
       },
-    });
+    })
   } catch {
-    return ok();
+    return ok()
   }
 
   try {
     switch (event.type) {
-      case "checkout.session.completed": {
-        const session = event.data.object as Stripe.Checkout.Session;
+      case 'checkout.session.completed': {
+        const session = event.data.object as Stripe.Checkout.Session
 
-        const userIdHint = nonEmptyString(session.metadata?.user_id) ?? undefined;
-        const analyticsSessionId = nonEmptyString(session.metadata?.analytics_session_id);
-        const planKey = nonEmptyString(session.metadata?.planKey) ?? null;
-        const billingPeriod = nonEmptyString(session.metadata?.billingPeriod) ?? null;
+        const userIdHint = nonEmptyString(session.metadata?.user_id) ?? undefined
+        const analyticsSessionId = nonEmptyString(session.metadata?.analytics_session_id)
+
+        // ⚠️ On ne fait PAS confiance à planKey/billingPeriod pour les droits,
+        // mais on peut les auditer (analytics).
+        const requestedPlanKey = nonEmptyString(session.metadata?.planKey) ?? null
+        const requestedBilling = nonEmptyString(session.metadata?.billingPeriod) ?? null
 
         if (analyticsSessionId) {
-          await audit("checkout_success", userIdHint ?? null, {
+          await audit('checkout_success', userIdHint ?? null, {
             session_id: analyticsSessionId,
-            offer: planKey,
-            billing: billingPeriod,
+            offer: requestedPlanKey,
+            billing: requestedBilling,
             stripe_session_id: session.id,
-            stripe_customer_id:
-              typeof session.customer === "string" ? session.customer : null,
-            stripe_subscription_id:
-              typeof session.subscription === "string"
-                ? session.subscription
-                : null,
-          });
+            stripe_customer_id: typeof session.customer === 'string' ? session.customer : null,
+            stripe_subscription_id: typeof session.subscription === 'string' ? session.subscription : null,
+          })
         }
 
-        if (typeof session.subscription === "string") {
+        if (typeof session.subscription === 'string') {
           const sub = await stripe.subscriptions.retrieve(session.subscription, {
-            expand: ["items.data.price"],
-          });
-          await upsertSubscriptionAndEntitlements(
-            sub as Stripe.Subscription,
-            userIdHint,
-          );
+            expand: ['items.data.price'],
+          })
+          await upsertSubscriptionAndEntitlements(sub as Stripe.Subscription, userIdHint)
         }
 
-        break;
+        break
       }
 
-      case "customer.subscription.created":
-      case "customer.subscription.updated":
-      case "customer.subscription.deleted": {
-        const subLite = event.data.object as Stripe.Subscription;
+      case 'customer.subscription.created':
+      case 'customer.subscription.updated':
+      case 'customer.subscription.deleted': {
+        const subLite = event.data.object as Stripe.Subscription
         const sub = await stripe.subscriptions.retrieve(subLite.id, {
-          expand: ["items.data.price"],
-        });
-
-        await upsertSubscriptionAndEntitlements(sub as Stripe.Subscription);
-        break;
+          expand: ['items.data.price'],
+        })
+        await upsertSubscriptionAndEntitlements(sub as Stripe.Subscription)
+        break
       }
 
-      case "invoice.payment_failed": {
-        const invoice = event.data.object as Stripe.Invoice;
+      case 'invoice.payment_failed': {
+        const invoice = event.data.object as Stripe.Invoice
 
         const stripeSubId =
-          typeof (invoice as any).subscription === "string"
-            ? (invoice as any).subscription
-            : null;
+          typeof (invoice as any).subscription === 'string' ? ((invoice as any).subscription as string) : null
 
         if (stripeSubId) {
           await prisma.subscription.updateMany({
             where: { stripe_subscription_id: stripeSubId },
             data: {
-              status: "past_due" as any,
+              status: 'past_due' as any,
               updated_at: new Date(),
             },
-          });
+          })
         }
 
-        break;
+        break
       }
 
       default:
-        console.log("Unhandled Stripe event type:", event.type);
+        console.log('Unhandled Stripe event type:', event.type)
     }
 
-    return ok();
+    return ok()
   } catch (err) {
-    console.error("Stripe webhook handler error:", err);
-    return bad("Webhook handler error", 500);
+    // 🔒 Important : si price_id inconnu en strict => throw => 500 => Stripe retente.
+    // Ça évite d’enregistrer une sub invalide et te force à seed/mapper le plan.
+    console.error('Stripe webhook handler error:', err)
+    return bad('Webhook handler error', 500)
   }
 }

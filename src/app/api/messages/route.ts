@@ -14,6 +14,7 @@ import {
   type CoachVerificationStatus,
 } from "@/lib/coachVerification";
 import { requireJson, requireSameOrigin } from "@/lib/security";
+import { requireFeature } from "@/lib/entitlements-guard";
 import { limit, rateHeaders } from "@/lib/ratelimit";
 import { consumeSAT } from "@/lib/sat";
 
