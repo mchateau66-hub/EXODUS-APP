@@ -58,6 +58,13 @@ export async function POST(_req: NextRequest) {
     },
   })
 
+  await prisma.user.update({
+    where: { id: userId },
+    data: {
+      entitlements_version: { increment: 1 },
+    },
+  })
+
   return NextResponse.json(
     {
       ok: true,
