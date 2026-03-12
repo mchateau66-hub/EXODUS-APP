@@ -3,6 +3,7 @@ import { NextRequest } from "next/server";
 import crypto from "node:crypto";
 import { prisma } from "@/lib/db";
 import { logSecurity } from "@/lib/security-log";
+import { consumeJtiOnce } from "@/lib/entitlements-jti";
 
 export type EntitlementClaim = {
   sub: string; // userId
@@ -237,6 +238,9 @@ export async function requireFeature(
   const claim = requireEntitlementClaim(req);
 
   await assertFreshEntitlementsVersion(claim, req);
+
+  // 🔐 anti-replay JTI
+  await consumeJtiOnce(claim);
 
   if (!claim.features.includes(featureKey)) {
     logSecurity("feature_forbidden", {
