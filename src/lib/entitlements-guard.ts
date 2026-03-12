@@ -4,6 +4,7 @@ import crypto from "node:crypto";
 import { prisma } from "@/lib/db";
 import { logSecurity } from "@/lib/security-log";
 import { consumeJtiOnce } from "@/lib/entitlements-jti";
+import { getEntitlementsVersionCached } from "@/lib/entitlements-version-cache";
 
 export type EntitlementClaim = {
   sub: string; // userId
@@ -205,12 +206,9 @@ export function requireEntitlementClaim(req: NextRequest): EntitlementClaim {
 }
 
 async function assertFreshEntitlementsVersion(claim: EntitlementClaim, req?: NextRequest) {
-  const row = await prisma.user.findUnique({
-    where: { id: claim.sub },
-    select: { entitlements_version: true },
-  });
+  const dbEv = await getEntitlementsVersionCached(claim.sub);
 
-  if (!row) {
+  if (!dbEv) {
     logSecurity("user_not_found_for_claim", {
       ...requestMeta(req),
       userId: claim.sub,
@@ -219,13 +217,13 @@ async function assertFreshEntitlementsVersion(claim: EntitlementClaim, req?: Nex
     unauthorized("user_not_found");
   }
 
-  if (row.entitlements_version !== claim.ev) {
+  if (dbEv !== claim.ev) {
     logSecurity("stale_entitlements", {
       ...requestMeta(req),
       userId: claim.sub,
       jti: claim.jti,
       claimEv: claim.ev,
-      dbEv: row.entitlements_version,
+      dbEv,
     });
     unauthorized("stale_entitlements");
   }
