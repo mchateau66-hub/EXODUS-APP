@@ -1,6 +1,6 @@
 // src/app/api/onboarding/step-3/route.ts
 import { NextRequest, NextResponse } from "next/server"
-import type { Prisma } from "@prisma/client" // ✅ AJOUT
+import type { Prisma } from "@prisma/client"
 import { getUserFromSession } from "@/lib/auth"
 import { prisma } from "@/lib/db"
 import { COACH_KEYWORDS } from "@/data/coachKeywords"
@@ -88,7 +88,7 @@ function addDays(d: Date, days: number) {
  * - Ne re-grant pas si l'utilisateur édite son profil après coup.
  */
 async function grantCoachHubMapTrialIfNeeded(
-  tx: Prisma.TransactionClient, // ✅ FIX: tx n'est pas un PrismaClient complet
+  tx: Prisma.TransactionClient,
   userId: string
 ) {
   const now = new Date()
@@ -109,6 +109,7 @@ async function grantCoachHubMapTrialIfNeeded(
   if (existingActive) {
     if (existingActive.source === "promo") {
       const currentExp = existingActive.expires_at
+
       if (!currentExp || currentExp < trialEnd) {
         await tx.userEntitlement.update({
           where: { id: existingActive.id },
@@ -117,8 +118,16 @@ async function grantCoachHubMapTrialIfNeeded(
             meta: { reason: "coach_trial_30d_extended_on_step3" },
           },
         })
+
+        await tx.user.update({
+          where: { id: userId },
+          data: {
+            entitlements_version: { increment: 1 },
+          },
+        })
       }
     }
+
     return
   }
 
@@ -130,6 +139,13 @@ async function grantCoachHubMapTrialIfNeeded(
       starts_at: now,
       expires_at: trialEnd,
       meta: { reason: "coach_trial_30d_on_step3" },
+    },
+  })
+
+  await tx.user.update({
+    where: { id: userId },
+    data: {
+      entitlements_version: { increment: 1 },
     },
   })
 }
