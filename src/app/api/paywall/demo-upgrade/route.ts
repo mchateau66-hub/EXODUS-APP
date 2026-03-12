@@ -114,6 +114,14 @@ export async function POST(_req: NextRequest) {
             throw err
           }
         })
+
+      // 5) Invalide immédiatement les anciens claims entitlements
+      await tx.user.update({
+        where: { id: userId },
+        data: {
+          entitlements_version: { increment: 1 },
+        },
+      })
     })
 
     return NextResponse.json({ ok: true }, { status: 200 })
