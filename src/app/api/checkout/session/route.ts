@@ -1,8 +1,8 @@
-// src/app/api/checkout/session/route.ts
 import { NextRequest, NextResponse } from 'next/server'
 import { stripe } from '@/lib/stripe'
 import { getUserFromSession } from '@/lib/auth'
 import { prisma } from '@/lib/db'
+import { limitSeconds, rateHeaders, rateKeyFromRequest } from '@/lib/ratelimit'
 
 export const runtime = 'nodejs'
 
@@ -78,6 +78,26 @@ function isCheckoutUser(value: unknown): value is CheckoutUser {
   return emailOk && stripeIdOk
 }
 
+function jsonWithHeaders(
+  body: CheckoutSessionResponse,
+  init: ResponseInit = {},
+  extraHeaders?: Headers,
+): NextResponse<CheckoutSessionResponse> {
+  const headers = new Headers(init.headers)
+  headers.set('cache-control', 'no-store')
+
+  if (extraHeaders) {
+    extraHeaders.forEach((value, key) => {
+      headers.set(key, value)
+    })
+  }
+
+  return NextResponse.json(body, {
+    ...init,
+    headers,
+  })
+}
+
 async function getCheckoutUserFromSession(): Promise<CheckoutUser | null> {
   const rawSession: unknown = await getUserFromSession()
   if (!rawSession || typeof rawSession !== 'object') return null
@@ -121,7 +141,27 @@ export async function POST(
 ): Promise<NextResponse<CheckoutSessionResponse>> {
   const user = await getCheckoutUserFromSession()
   if (!user) {
-    return NextResponse.json({ ok: false, error: 'invalid_session' }, { status: 401 })
+    return jsonWithHeaders({ ok: false, error: 'invalid_session' }, { status: 401 })
+  }
+
+  const limitN = parseInt(process.env.RATELIMIT_CHECKOUT_SESSION_LIMIT || '5', 10)
+  const windowS = parseInt(process.env.RATELIMIT_CHECKOUT_SESSION_WINDOW_S || '300', 10)
+
+  const rlKey = rateKeyFromRequest(req, user.id)
+  const rl = await limitSeconds(
+    'checkout_session',
+    rlKey,
+    limitN > 0 ? limitN : 5,
+    Math.max(1, windowS),
+  )
+  const rlHeaders = rateHeaders(rl)
+
+  if (!rl.ok) {
+    return jsonWithHeaders(
+      { ok: false, error: 'rate_limited' },
+      { status: 429 },
+      rlHeaders,
+    )
   }
 
   const body = (await parseJsonBody<CheckoutSessionBody>(req)) ?? {}
@@ -130,14 +170,27 @@ export async function POST(
   const billingPeriod: BillingPeriod = isBillingPeriod(body.billingPeriod) ? body.billingPeriod : 'monthly'
 
   if (!ALLOWED_PLANS.includes(planKey)) {
-    return NextResponse.json({ ok: false, error: 'unsupported_plan' }, { status: 400 })
+    return jsonWithHeaders(
+      { ok: false, error: 'unsupported_plan' },
+      { status: 400 },
+      rlHeaders,
+    )
   }
 
   if (planKey === 'athlete_premium' && user.role !== 'athlete') {
-    return NextResponse.json({ ok: false, error: 'forbidden_for_role' }, { status: 403 })
+    return jsonWithHeaders(
+      { ok: false, error: 'forbidden_for_role' },
+      { status: 403 },
+      rlHeaders,
+    )
   }
+
   if (planKey === 'coach_premium' && user.role !== 'coach') {
-    return NextResponse.json({ ok: false, error: 'forbidden_for_role' }, { status: 403 })
+    return jsonWithHeaders(
+      { ok: false, error: 'forbidden_for_role' },
+      { status: 403 },
+      rlHeaders,
+    )
   }
 
   const analyticsSessionId = isNonEmptyString(body.analyticsSessionId)
@@ -165,7 +218,11 @@ export async function POST(
   }
 
   if (!stripeCustomerId) {
-    return NextResponse.json({ ok: false, error: 'stripe_customer_missing' }, { status: 500 })
+    return jsonWithHeaders(
+      { ok: false, error: 'stripe_customer_missing' },
+      { status: 500 },
+      rlHeaders,
+    )
   }
 
   // 2) price_id via Plan DB (fallback env)
@@ -179,7 +236,11 @@ export async function POST(
   })
 
   if (plan && plan.active === false) {
-    return NextResponse.json({ ok: false, error: 'plan_inactive' }, { status: 400 })
+    return jsonWithHeaders(
+      { ok: false, error: 'plan_inactive' },
+      { status: 400 },
+      rlHeaders,
+    )
   }
 
   let priceId: string | null =
@@ -190,7 +251,11 @@ export async function POST(
   if (!priceId) priceId = getPriceIdFromEnv(planKey, billingPeriod)
 
   if (!priceId) {
-    return NextResponse.json({ ok: false, error: 'price_not_configured' }, { status: 500 })
+    return jsonWithHeaders(
+      { ok: false, error: 'price_not_configured' },
+      { status: 500 },
+      rlHeaders,
+    )
   }
 
   const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? req.nextUrl.origin
@@ -200,7 +265,7 @@ export async function POST(
   const cancelUrl =
     body.cancelUrl ?? `${baseUrl}/paywall?plan=${encodeURIComponent(planKey)}&canceled=1`
 
-  // ✅ analytics: checkout_start
+  // analytics: checkout_start
   if (analyticsSessionId) {
     await prisma.event.create({
       data: {
@@ -242,8 +307,9 @@ export async function POST(
     },
   })
 
-  return NextResponse.json(
+  return jsonWithHeaders(
     { ok: true, url: session.url ?? null, id: session.id ?? null },
     { status: 200 },
+    rlHeaders,
   )
 }
