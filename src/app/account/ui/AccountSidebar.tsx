@@ -45,6 +45,11 @@ const items: NavItem[] = [
     label: "Vérification",
     description: "Statut et documents",
   },
+  {
+    href: "/account/support",
+    label: "Support",
+    description: "Aide et informations utiles",
+  },
 ];
 
 function isActive(pathname: string, href: string) {
