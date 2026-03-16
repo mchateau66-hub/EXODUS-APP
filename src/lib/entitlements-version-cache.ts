@@ -1,3 +1,4 @@
+// src/lib/entitlements-version-cache.ts
 import { prisma } from "@/lib/db";
 
 type CacheEntry = {
@@ -17,7 +18,9 @@ export function clearEntitlementsVersionCache(userId?: string) {
   cache.clear();
 }
 
-export async function getEntitlementsVersionCached(userId: string): Promise<number | null> {
+export async function getEntitlementsVersionCached(
+  userId: string,
+): Promise<number | null> {
   const now = Date.now();
   const cached = cache.get(userId);
 
