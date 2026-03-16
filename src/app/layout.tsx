@@ -3,6 +3,7 @@ import "leaflet/dist/leaflet.css"
 import "./globals.css"
 import { Inter } from "next/font/google"
 import Script from "next/script"
+import Providers from "./Providers"
 
 const inter = Inter({ subsets: ["latin"] })
 
@@ -15,7 +16,7 @@ const themeInitScript = `
 (function () {
   try {
     var key = "theme";
-    var stored = localStorage.getItem(key); // "system" | "light" | "dark" | null
+    var stored = localStorage.getItem(key);
     var mode = stored || "system";
     var root = document.documentElement;
 
@@ -39,7 +40,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           {themeInitScript}
         </Script>
       </head>
-      <body>{children}</body>
+      <body>
+        <Providers>{children}</Providers>
+      </body>
     </html>
   )
 }
