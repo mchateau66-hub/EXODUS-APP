@@ -1,4 +1,3 @@
-// src/lib/security-log.ts
 type SecurityLogLevel = "warn" | "error" | "info";
 
 type SecurityLogMeta = Record<string, unknown>;
@@ -67,4 +66,24 @@ export function logSecurity(
   }
 
   console.warn(line);
+}
+
+/**
+ * Helper spécifique pour les blocages rate limit
+ * Permet un format stable dans les logs sécurité
+ */
+export function logRateLimited(meta: {
+  route?: string
+  userId?: string
+  key?: string
+  limit?: number
+  remaining?: number
+  reset?: number
+  ip?: string
+}) {
+  logSecurity(
+    "rate_limited",
+    meta,
+    "warn",
+  );
 }
