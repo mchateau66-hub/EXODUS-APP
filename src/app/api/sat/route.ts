@@ -1,9 +1,8 @@
-// src/app/api/sat/route.ts
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
 import { getUserFromSession } from "@/lib/auth";
 import { requireJson, requireSameOrigin } from "@/lib/security";
-import { limit, rateHeaders } from "@/lib/ratelimit";
+import { limitSeconds, rateHeaders, rateKeyFromRequest } from "@/lib/ratelimit";
 import { issueSAT, normalizeSatPath } from "@/lib/sat";
 
 export const runtime = "nodejs";
@@ -54,12 +53,10 @@ function envBool(name: string) {
   return v === "1" || v === "true" || v === "yes" || v === "on";
 }
 
-/** ✅ manquait chez toi -> d’où l’erreur */
 function isE2E(req: NextRequest) {
   return req.headers.get("x-e2e") === "1";
 }
 
-/** ✅ vérifie le token E2E uniquement quand x-e2e: 1 */
 function requireE2ETokenIfE2E(req: NextRequest) {
   if (!isE2E(req)) return { ok: true as const };
 
@@ -69,15 +66,20 @@ function requireE2ETokenIfE2E(req: NextRequest) {
   if (!expected) {
     return {
       ok: false as const,
-      res: json({ ok: false, error: "missing_server_e2e_token_env" }, { status: 500, headers: noStore() }),
+      res: json(
+        { ok: false, error: "missing_server_e2e_token_env" },
+        { status: 500, headers: noStore() },
+      ),
     };
   }
+
   if (!token || token !== expected) {
     return {
       ok: false as const,
       res: json({ ok: false, error: "unauthorized_e2e" }, { status: 401, headers: noStore() }),
     };
   }
+
   return { ok: true as const };
 }
 
@@ -106,7 +108,6 @@ export async function GET(req: NextRequest) {
     const url = new URL(req.url);
     const { searchParams } = url;
 
-    // ✅ E2E override: /api/sat?plan=premium&role=athlete (ou cookies e2e_plan/e2e_role)
     if (isE2E(req)) {
       const gate = requireE2ETokenIfE2E(req);
       if (!gate.ok) return gate.res;
@@ -130,10 +131,8 @@ export async function GET(req: NextRequest) {
           { status: 200, headers: noStore() },
         );
       }
-      // si pas de plan/role -> on continue en mode "normal"
     }
 
-    // --- Mode normal (prod / user session)
     let userId = searchParams.get("userId");
 
     if (!userId) {
@@ -176,10 +175,20 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   const csrf = requireSameOrigin(req);
-  if (csrf) return new Response(csrf.body, { status: csrf.status, headers: noStore(csrf.headers) }) as any;
+  if (csrf) {
+    return new Response(csrf.body, {
+      status: csrf.status,
+      headers: noStore(csrf.headers),
+    }) as any;
+  }
 
   const jsonOnly = requireJson(req);
-  if (jsonOnly) return new Response(jsonOnly.body, { status: jsonOnly.status, headers: noStore(jsonOnly.headers) }) as any;
+  if (jsonOnly) {
+    return new Response(jsonOnly.body, {
+      status: jsonOnly.status,
+      headers: noStore(jsonOnly.headers),
+    }) as any;
+  }
 
   const session = await getUserFromSession().catch(() => null);
   const user = (session as any)?.user;
@@ -193,7 +202,6 @@ export async function POST(req: NextRequest) {
   const inCI = envBool("CI");
   const e2e = isE2E(req);
 
-  // ✅ rate-limit ON en prod/CI/force + E2E
   const enableRateLimit = isProd || inCI || forceRateLimit || e2e;
 
   let body: SatIssueBody = {};
@@ -208,12 +216,20 @@ export async function POST(req: NextRequest) {
   const path = normalizeSatPath(normStr(body.path));
 
   let rlHeaders = noStore();
+
   if (enableRateLimit) {
     const limitN = parseInt(process.env.RATELIMIT_SAT_LIMIT || "20", 10);
     const windowS = parseInt(process.env.RATELIMIT_SAT_WINDOW_S || "60", 10);
 
-    const key = `${String(user.id)}:${feature || "unknown"}`;
-    const rl = await limit("sat", key, limitN > 0 ? limitN : 20, Math.max(1, windowS) * 1000);
+    const baseKey = rateKeyFromRequest(req, String(user.id));
+    const key = `${baseKey}:${feature || "unknown"}`;
+
+    const rl = await limitSeconds(
+      "sat",
+      key,
+      limitN > 0 ? limitN : 20,
+      Math.max(1, windowS),
+    );
 
     rlHeaders = rateHeaders(rl);
     rlHeaders.set("cache-control", "no-store");
@@ -223,9 +239,17 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  if (!feature) return json({ ok: false, error: "missing_feature" }, { status: 400, headers: rlHeaders });
-  if (!method || !isHttpMethod(method)) return json({ ok: false, error: "invalid_method" }, { status: 400, headers: rlHeaders });
-  if (!path) return json({ ok: false, error: "invalid_path" }, { status: 400, headers: rlHeaders });
+  if (!feature) {
+    return json({ ok: false, error: "missing_feature" }, { status: 400, headers: rlHeaders });
+  }
+
+  if (!method || !isHttpMethod(method)) {
+    return json({ ok: false, error: "invalid_method" }, { status: 400, headers: rlHeaders });
+  }
+
+  if (!path) {
+    return json({ ok: false, error: "invalid_path" }, { status: 400, headers: rlHeaders });
+  }
 
   const known = new Set(["chat.send", "chat.media", "contacts.view", "whatsapp.handoff"]);
   if (!known.has(feature)) {
@@ -233,8 +257,6 @@ export async function POST(req: NextRequest) {
   }
 
   const premiumGated = new Set(["contacts.view", "whatsapp.handoff", "chat.media"]);
-
-  // ✅ En prod: entitlements ON, mais en E2E: on bypass
   const enforceEntitlements = isProd && premiumGated.has(feature) && !e2e;
 
   if (enforceEntitlements) {
@@ -248,12 +270,21 @@ export async function POST(req: NextRequest) {
     const features = new Set(active.map((e) => String(e.feature_key)));
 
     if (!features.has(feature)) {
-      return json({ ok: false, error: "not_entitled", feature }, { status: 403, headers: rlHeaders });
+      return json(
+        { ok: false, error: "not_entitled", feature },
+        { status: 403, headers: rlHeaders },
+      );
     }
   }
 
   try {
-    const { token, expMs } = await issueSAT({ userId: String(user.id), feature, method, path });
+    const { token, expMs } = await issueSAT({
+      userId: String(user.id),
+      feature,
+      method,
+      path,
+    });
+
     return json({ ok: true, token, exp: expMs }, { status: 200, headers: rlHeaders });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "server_error";
