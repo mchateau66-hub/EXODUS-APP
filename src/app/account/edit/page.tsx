@@ -1,5 +1,3 @@
-// src/app/account/edit/page.tsx
-import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { getUserFromSession } from '@/lib/auth'
 import { prisma } from '@/lib/db'
@@ -11,16 +9,17 @@ export const revalidate = 0
 
 export default async function AccountEditPage() {
   const session = await getUserFromSession()
-  if (!session) redirect('/login?next=/hub')
+  if (!session) redirect('/login?next=/account/edit')
 
   const userId = session.user?.id
-  if (!userId) redirect('/login?next=/hub')
+  if (!userId) redirect('/login?next=/account/edit')
 
   const user = await prisma.user.findUnique({
     where: { id: userId },
     select: { onboardingStep: true },
   })
-  if (!user) redirect('/login?next=/hub')
+
+  if (!user) redirect('/login?next=/account/edit')
 
   const onboardingStep = user.onboardingStep ?? 0
 
@@ -29,33 +28,23 @@ export default async function AccountEditPage() {
   if (onboardingStep < 3) redirect('/onboarding/step-3')
 
   return (
-    <main className="min-h-screen bg-slate-50">
-      <header className="border-b border-slate-200 bg-white">
-        <div className="mx-auto flex max-w-5xl items-center justify-between gap-4 px-4 py-3">
-          <div>
-            <p className="text-xs text-slate-500">Mon compte</p>
-            <h1 className="text-sm font-semibold text-slate-900">Modifier mon profil</h1>
-          </div>
-          <nav className="flex items-center gap-2">
-            <Link
-              href="/account"
-              className="inline-flex items-center rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:border-slate-400"
-            >
-              Retour
-            </Link>
-            <Link
-              href="/hub"
-              className="inline-flex items-center rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:border-slate-400"
-            >
-              Hub
-            </Link>
-          </nav>
+    <div className="space-y-6">
+      <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="max-w-2xl">
+          <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+            Profil
+          </p>
+          <h2 className="mt-2 text-xl font-semibold text-slate-900">
+            Modifier mon profil
+          </h2>
+          <p className="mt-2 text-sm text-slate-600">
+            Mets à jour tes informations personnelles et publiques pour améliorer
+            ta présentation dans l’application.
+          </p>
         </div>
-      </header>
+      </section>
 
-      <div className="mx-auto max-w-5xl px-4 py-8">
-        <AccountProfileEditClient />
-      </div>
-    </main>
+      <AccountProfileEditClient />
+    </div>
   )
 }
