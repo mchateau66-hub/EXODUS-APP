@@ -122,7 +122,7 @@ export async function limitSeconds(
   return limit(name, key, limitN, Math.max(1, windowSeconds) * 1000);
 }
 
-// ✅ helper clé stable (sans PII)
+// ✅ helper clé stable côté serveur
 export function rateKeyFromRequest(req: { headers: Headers }, userId?: string) {
   const xf = req.headers.get("x-forwarded-for");
   const ip =
@@ -132,7 +132,6 @@ export function rateKeyFromRequest(req: { headers: Headers }, userId?: string) {
   return userId ? `${userId}:${ip}` : ip;
 }
 
-// src/lib/ratelimit.ts
 export function rateHeaders(r: RateResult) {
   const limit = String(r.limit);
   const remaining = String(r.remaining);
