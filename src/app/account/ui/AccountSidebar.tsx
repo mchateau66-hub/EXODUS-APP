@@ -31,6 +31,11 @@ const items: NavItem[] = [
     description: "Affichage et expérience",
   },
   {
+    href: "/account/notifications",
+    label: "Notifications",
+    description: "Emails et alertes",
+  },
+  {
     href: "/account/billing",
     label: "Abonnement",
     description: "Plan et facturation",
