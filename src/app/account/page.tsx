@@ -118,7 +118,7 @@ export default async function AccountPage() {
             </Link>
 
             <Link
-              href="/account/edit"
+              href="/account/profile"
               className="inline-flex items-center rounded-full bg-slate-900 px-4 py-2 text-xs font-medium text-white transition hover:bg-slate-800"
             >
               Modifier mon profil
