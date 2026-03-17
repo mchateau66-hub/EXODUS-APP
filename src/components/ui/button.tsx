@@ -19,7 +19,7 @@ const buttonVariants = cva(
     "whitespace-nowrap rounded-xl font-medium",
     "transition-[background-color,box-shadow,opacity,color] duration-150",
     "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--btn-ring)] focus-visible:ring-offset-2",
-    "ring-offset-white dark:ring-offset-slate-950",
+    "[--tw-ring-offset-color:var(--bg)]",
     "disabled:pointer-events-none disabled:opacity-50",
     "[&>svg]:pointer-events-none [&>svg]:shrink-0 [&>svg]:size-4",
   ].join(" "),
@@ -240,7 +240,6 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
           isDisabled ? "pointer-events-none opacity-50" : "",
           childProps.className
         ),
-        ref,
         onPointerDown: mergedOnPointerDown,
         onClick: mergedOnClick,
         "aria-busy": loading || undefined,
