@@ -124,7 +124,7 @@ export function PublicHeader({
                   isActive
                     ? "bg-[var(--header-link-hover)] text-[var(--header-fg)]"
                     : "text-[var(--header-muted)] hover:bg-[var(--header-link-hover)] hover:text-[var(--header-fg)]",
-                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] focus-visible:ring-offset-2 ring-offset-white dark:ring-offset-slate-950"
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] focus-visible:ring-offset-2 [--tw-ring-offset-color:var(--bg)]"
                 )}
               >
                 {item.label}
@@ -150,8 +150,6 @@ export function PublicHeader({
         </div>
 
         <div className="flex items-center gap-2 md:hidden">
-          <ThemeToggle />
-
           <Button
             type="button"
             variant="ghost"
@@ -166,58 +164,60 @@ export function PublicHeader({
       </div>
 
       {open && (
-        <>
-          <div className="md:hidden">
-            <div className="mx-auto w-full max-w-6xl px-4 pb-4">
-              <div className="rounded-2xl border border-[var(--card-border)] bg-[var(--card-bg)] shadow-[var(--card-shadow)]">
-                <div className="flex flex-col p-2">
-                  {nav.map((item) => {
-                    const isActive =
-                      item.href.startsWith("#") && activeId === item.href.slice(1)
+        <div className="md:hidden">
+          <button
+            type="button"
+            aria-label="Fermer le menu"
+            className="fixed inset-0 z-40 bg-black/20"
+            onClick={() => setOpen(false)}
+          />
 
-                    return (
-                      <Link
-                        key={item.href}
-                        href={item.href}
-                        onClick={() => setOpen(false)}
-                        aria-current={isActive ? "page" : undefined}
-                        className={cn(
-                          "rounded-xl px-3 py-2 text-sm transition-[background-color,opacity,color] duration-150",
-                          isActive
-                            ? "bg-[var(--header-link-hover)] text-[var(--header-fg)]"
-                            : "text-[var(--header-fg)] hover:bg-[var(--header-link-hover)]"
-                        )}
-                      >
-                        {item.label}
-                      </Link>
-                    )
-                  })}
+          <div className="relative z-50 mx-auto w-full max-w-6xl px-4 pb-4">
+            <div className="rounded-2xl border border-[var(--card-border)] bg-[var(--card-bg)] shadow-[var(--card-shadow)]">
+              <div className="flex flex-col p-2">
+                <div className="p-2">
+                  <ThemeToggle />
+                </div>
 
-                  <div className="mt-2 grid grid-cols-2 gap-2 p-2">
-                    <Link href="/login" onClick={() => setOpen(false)}>
-                      <Button className="w-full" variant="secondary" size="sm">
-                        Se connecter
-                      </Button>
+                {nav.map((item) => {
+                  const isActive =
+                    item.href.startsWith("#") && activeId === item.href.slice(1)
+
+                  return (
+                    <Link
+                      key={item.href}
+                      href={item.href}
+                      onClick={() => setOpen(false)}
+                      aria-current={isActive ? "page" : undefined}
+                      className={cn(
+                        "rounded-xl px-3 py-2 text-sm transition-[background-color,opacity,color] duration-150",
+                        isActive
+                          ? "bg-[var(--header-link-hover)] text-[var(--header-fg)]"
+                          : "text-[var(--header-fg)] hover:bg-[var(--header-link-hover)]"
+                      )}
+                    >
+                      {item.label}
                     </Link>
+                  )
+                })}
 
-                    <Link href="/signup" onClick={() => setOpen(false)}>
-                      <Button className="w-full" variant="primary" size="sm">
-                        Commencer
-                      </Button>
-                    </Link>
-                  </div>
+                <div className="mt-2 grid grid-cols-2 gap-2 p-2">
+                  <Link href="/login" onClick={() => setOpen(false)}>
+                    <Button className="w-full" variant="secondary" size="sm">
+                      Se connecter
+                    </Button>
+                  </Link>
+
+                  <Link href="/signup" onClick={() => setOpen(false)}>
+                    <Button className="w-full" variant="primary" size="sm">
+                      Commencer
+                    </Button>
+                  </Link>
                 </div>
               </div>
             </div>
           </div>
-
-          <button
-            type="button"
-            aria-label="Fermer le menu"
-            className="fixed inset-0 z-40 bg-black/20 md:hidden"
-            onClick={() => setOpen(false)}
-          />
-        </>
+        </div>
       )}
     </header>
   )
