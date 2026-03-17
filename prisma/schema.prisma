@@ -45,6 +45,8 @@ model User {
   usageCounters           UsageCounter[]
   entitlements            UserEntitlement[]
   athleteAds              AthleteAd[]
+  entitlementJtis         EntitlementJti[]
+  entitlements_version Int @default(1)
 
   @@index([role])
 }
@@ -346,25 +348,38 @@ model StripeEvent {
 }
 
 model Event {
-  id         String    @id @default(cuid())
+  id         String  @id @default(cuid())
   session_id String
   user_id    String?
 
-  event      EventName
-  ts         DateTime  @default(now())
+  event EventName
+  ts    DateTime  @default(now())
 
   // ✅ AJOUTE ÇA
-  meta       Json      @default("{}")
+  meta Json @default("{}")
 
   // segmentation (optionnel)
-  role       String?
-  offer      String?
-  billing    String?
+  role    String?
+  offer   String?
+  billing String?
 
   @@index([ts])
   @@index([session_id])
   @@index([event])
   @@index([user_id])
+}
+
+model EntitlementJti {
+  jti        String   @id
+  user_id    String
+  sid        String?
+  exp_at     DateTime
+  created_at DateTime @default(now())
+
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id])
+  @@index([exp_at])
 }
 
 enum Role {
@@ -439,4 +454,3 @@ enum EventName {
   subscription_active
   subscription_canceled
 }
-

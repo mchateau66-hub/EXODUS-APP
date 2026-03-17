@@ -70,7 +70,7 @@
   --header-bg: color-mix(in oklab, var(--bg-elev) 78%, transparent);
   --header-border: color-mix(in oklab, var(--border) 80%, transparent);
   --header-shadow: 0 1px 0 rgba(0, 0, 0, 0.04);
-  --header-backdrop: blur(10px);
+  --header-backdrop: 10px;
 
   --header-fg: var(--text);
   --header-muted: var(--text-muted);
@@ -137,7 +137,7 @@ html.dark {
   --header-bg: color-mix(in oklab, var(--bg-elev) 78%, transparent);
   --header-border: color-mix(in oklab, var(--border) 90%, transparent);
   --header-shadow: 0 1px 0 rgba(255, 255, 255, 0.04);
-  --header-backdrop: blur(10px);
+  --header-backdrop: 10px;
 
   --header-fg: var(--text);
   --header-muted: var(--text-muted);

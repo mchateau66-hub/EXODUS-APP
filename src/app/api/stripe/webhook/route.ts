@@ -5,6 +5,7 @@ import Stripe from 'stripe'
 import { stripe } from '@/lib/stripe'
 import { prisma } from '@/lib/db'
 import { BillingPeriod } from '@prisma/client'
+import { clearEntitlementsVersionCache } from "@/lib/entitlements-version-cache";
 
 export const runtime = 'nodejs'
 
@@ -286,18 +287,31 @@ async function upsertSubscriptionAndEntitlements(
     })
 
     // Reset entitlements "plan" pour cette subscription
-    await tx.userEntitlement.deleteMany({
-      where: {
-        user_id: user.id,
-        source: 'plan',
-        subscription_id: subscription.id,
-      },
-    })
-
     const planFeatures = await tx.planFeature.findMany({
       where: { plan_key: planKey },
       select: { feature_key: true },
-    })
+    });
+    
+    if (planFeatures.length > 0) {
+      const now = new Date();
+    
+      await tx.userEntitlement.createMany({
+        data: planFeatures.map((pf) => ({
+          user_id: user.id,
+          feature_key: pf.feature_key,
+          source: "plan",
+          starts_at: now,
+          expires_at: null,
+        })),
+      });
+    }
+    
+    await tx.user.update({
+      where: { id: user.id },
+      data: {
+        entitlements_version: { increment: 1 },
+      },
+    });
 
     if (planFeatures.length > 0) {
       const now = new Date()

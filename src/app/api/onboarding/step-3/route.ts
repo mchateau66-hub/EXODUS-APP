@@ -4,6 +4,7 @@ import type { Prisma } from "@prisma/client"
 import { getUserFromSession } from "@/lib/auth"
 import { prisma } from "@/lib/db"
 import { COACH_KEYWORDS } from "@/data/coachKeywords"
+import { clearEntitlementsVersionCache } from "@/lib/entitlements-version-cache"
 
 export const runtime = "nodejs"
 
@@ -86,11 +87,12 @@ function addDays(d: Date, days: number) {
  * Grant 30j "Hub Map listing" aux coachs quand ils finalisent réellement l'étape 3.
  * - Respecte la contrainte anti-overlap (EXCLUDE gist) : on UPDATE si déjà actif.
  * - Ne re-grant pas si l'utilisateur édite son profil après coup.
+ * - Retourne true si les entitlements ont changé, false sinon.
  */
 async function grantCoachHubMapTrialIfNeeded(
   tx: Prisma.TransactionClient,
-  userId: string
-) {
+  userId: string,
+): Promise<boolean> {
   const now = new Date()
   const trialDays = 30
   const featureKey = "hub.map.listing"
@@ -125,10 +127,12 @@ async function grantCoachHubMapTrialIfNeeded(
             entitlements_version: { increment: 1 },
           },
         })
+
+        return true
       }
     }
 
-    return
+    return false
   }
 
   await tx.userEntitlement.create({
@@ -148,6 +152,8 @@ async function grantCoachHubMapTrialIfNeeded(
       entitlements_version: { increment: 1 },
     },
   })
+
+  return true
 }
 
 /**
@@ -274,6 +280,8 @@ export async function POST(req: NextRequest) {
   const isCompletingStep3Now = currentStep < 3 && nextStep === 3
   const isCoach = String(dbUser.role ?? "").toLowerCase() === "coach"
 
+  let entitlementChanged = false
+
   const updated = await prisma.$transaction(async (tx) => {
     const u = await tx.user.update({
       where: { id: userId },
@@ -300,11 +308,15 @@ export async function POST(req: NextRequest) {
     })
 
     if (isCoach && isCompletingStep3Now) {
-      await grantCoachHubMapTrialIfNeeded(tx, userId)
+      entitlementChanged = await grantCoachHubMapTrialIfNeeded(tx, userId)
     }
 
     return u
   })
+
+  if (entitlementChanged) {
+    clearEntitlementsVersionCache(userId)
+  }
 
   return NextResponse.json(
     {

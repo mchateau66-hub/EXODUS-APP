@@ -15,7 +15,7 @@ export const metadata: Metadata = {
 const themeInitScript = `
 (function () {
   try {
-    var key = "theme";
+    var key = "exodus-theme-mode";
     var stored = localStorage.getItem(key);
     var mode = stored || "system";
     var root = document.documentElement;
@@ -24,10 +24,14 @@ const themeInitScript = `
       return window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
     }
 
-    var resolved = (mode === "system") ? (systemDark() ? "dark" : "light") : mode;
+    var resolved = mode === "system"
+      ? (systemDark() ? "dark" : "light")
+      : mode;
 
     if (resolved === "dark") root.classList.add("dark");
     else root.classList.remove("dark");
+
+    root.style.colorScheme = resolved;
   } catch (e) {}
 })();
 `

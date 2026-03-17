@@ -5,50 +5,64 @@ import * as React from "react"
 export type ThemeMode = "system" | "light" | "dark"
 export type ResolvedTheme = "light" | "dark"
 
-const STORAGE_KEY = "theme"
+const STORAGE_KEY = "exodus-theme-mode"
+
+function isThemeMode(value: string | null): value is ThemeMode {
+  return value === "system" || value === "light" || value === "dark"
+}
 
 function getSystemTheme(): ResolvedTheme {
   if (typeof window === "undefined") return "light"
-  return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light"
+  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"
 }
 
-function applyTheme(mode: ThemeMode) {
+function resolveTheme(mode: ThemeMode): ResolvedTheme {
+  return mode === "system" ? getSystemTheme() : mode
+}
+
+function applyTheme(mode: ThemeMode): ResolvedTheme {
   const root = document.documentElement
-  const resolved: ResolvedTheme = mode === "system" ? getSystemTheme() : mode
+  const resolved = resolveTheme(mode)
   root.classList.toggle("dark", resolved === "dark")
+  root.style.colorScheme = resolved
   return resolved
+}
+
+function getStoredTheme(): ThemeMode {
+  if (typeof window === "undefined") return "system"
+  const raw = localStorage.getItem(STORAGE_KEY)
+  return isThemeMode(raw) ? raw : "system"
 }
 
 export function useTheme() {
   const [mode, setMode] = React.useState<ThemeMode>("system")
   const [resolvedTheme, setResolvedTheme] = React.useState<ResolvedTheme>("light")
+  const [mounted, setMounted] = React.useState(false)
 
-  // Init: lire localStorage + appliquer sur <html>
   React.useEffect(() => {
-    const stored = (localStorage.getItem(STORAGE_KEY) as ThemeMode | null) ?? "system"
+    const stored = getStoredTheme()
     setMode(stored)
     setResolvedTheme(applyTheme(stored))
+    setMounted(true)
   }, [])
 
-  // Quand mode change: sauver + appliquer
   React.useEffect(() => {
-    // évite d’écraser au premier render avant init
-    if (typeof window === "undefined") return
+    if (!mounted) return
     localStorage.setItem(STORAGE_KEY, mode)
     setResolvedTheme(applyTheme(mode))
-  }, [mode])
+  }, [mode, mounted])
 
-  // Écoute les changements système si mode === "system"
   React.useEffect(() => {
     if (typeof window === "undefined") return
-    const mq = window.matchMedia?.("(prefers-color-scheme: dark)")
-    if (!mq) return
+
+    const mq = window.matchMedia("(prefers-color-scheme: dark)")
 
     const onChange = () => {
-      if (mode === "system") setResolvedTheme(applyTheme("system"))
+      if (mode === "system") {
+        setResolvedTheme(applyTheme("system"))
+      }
     }
 
-    // compat safari
     if (mq.addEventListener) mq.addEventListener("change", onChange)
     else mq.addListener(onChange)
 
@@ -63,12 +77,17 @@ export function useTheme() {
   }, [])
 
   const toggle = React.useCallback(() => {
-    // toggle basé sur le thème résolu (si system->dark => toggle vers light, etc.)
     setMode((prev) => {
       const currentResolved = prev === "system" ? getSystemTheme() : prev
       return currentResolved === "dark" ? "light" : "dark"
     })
   }, [])
 
-  return { mode, resolvedTheme, setThemeMode, toggle }
+  return {
+    mode,
+    resolvedTheme,
+    setThemeMode,
+    toggle,
+    mounted,
+  }
 }
