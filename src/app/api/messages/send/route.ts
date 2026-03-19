@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { requireFeature } from "@/lib/entitlements-guard";
+import { authorizeFeature } from "@/lib/authorizeFeature";
 import { limitSeconds, rateHeaders, rateKeyFromRequest } from "@/lib/ratelimit";
+import { getErrorCode, getHttpStatus } from "@/lib/http-error";
 
 export const runtime = "nodejs";
 
@@ -28,8 +29,8 @@ function jsonWithHeaders(
 export async function POST(req: NextRequest) {
   try {
     // 🔐 Token signé + feature premium
-    const claim = await requireFeature(req, "messages.unlimited");
-    const userId = String(claim.sub);
+    const auth = await authorizeFeature(req, "messages.unlimited", { mode: "bearer" });
+    const userId = String(auth.userId);
 
     const limitN = parseInt(process.env.RATELIMIT_MESSAGES_SEND_LIMIT || "12", 10);
     const windowS = parseInt(process.env.RATELIMIT_MESSAGES_SEND_WINDOW_S || "60", 10);
@@ -79,10 +80,12 @@ export async function POST(req: NextRequest) {
     });
 
     return jsonWithHeaders({ ok: true }, { status: 200 }, rlHeaders);
-  } catch (err: any) {
+  } catch (err: unknown) {
+    const status = getHttpStatus(err) ?? 403;
+    const code = getErrorCode(err) ?? (err instanceof Error ? err.message : null) ?? "forbidden";
     return jsonWithHeaders(
-      { ok: false, error: err?.message || "forbidden" },
-      { status: 403 },
+      { ok: false, error: code },
+      { status },
     );
   }
 }
