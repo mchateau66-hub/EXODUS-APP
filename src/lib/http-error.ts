@@ -2,25 +2,22 @@ export class HttpError extends Error {
   readonly status: number;
   readonly code?: string;
 
-  constructor(status: number, code?: string, message?: string) {
-    super(message ?? code ?? `http_${status}`);
+  constructor(status: number, code: string, message: string) {
+    super(message);
     this.status = status;
     this.code = code;
+
+    // important pour instanceof
+    Object.setPrototypeOf(this, HttpError.prototype);
   }
 }
 
-export function getHttpStatus(error: unknown): number | null {
-  if (!error || typeof error !== "object") return null;
-  if ("status" in error && typeof (error as { status?: unknown }).status === "number") {
-    return (error as { status: number }).status;
-  }
-  return null;
+export function getHttpStatus(err: unknown): number {
+  if (err instanceof HttpError) return err.status;
+  return 500;
 }
 
-export function getErrorCode(error: unknown): string | null {
-  if (!error || typeof error !== "object") return null;
-  if ("code" in error && typeof (error as { code?: unknown }).code === "string") {
-    return (error as { code: string }).code;
-  }
-  return null;
+export function getErrorCode(err: unknown): string {
+  if (err instanceof HttpError && err.code) return err.code;
+  return "internal_error";
 }
