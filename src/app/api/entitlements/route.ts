@@ -2,6 +2,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
 import { getUserFromSession } from "@/lib/auth";
+import { computeEntitlementsEpochForUser } from "@/lib/entitlements-version-cache";
 import { signJWT } from "@/lib/jwt";
 
 export const runtime = "nodejs";
@@ -117,6 +118,12 @@ export async function GET(req: NextRequest) {
   const planFeatures = PLAN_FEATURES[planKey] ?? [];
   const features = Array.from(new Set([...planFeatures, ...directFeatures]));
 
+  // 2quater) `ev` : même source que la validation bearer (`getEntitlementsVersionCached`)
+  const ev = await computeEntitlementsEpochForUser(userId);
+  if (ev === null) {
+    return NextResponse.json({ ok: false, error: "user_not_found" }, { status: 404 });
+  }
+
   // 3) Claim
   const iatSec = Math.floor(now.getTime() / 1000);
   const ttl = parseInt(process.env.ENTITLEMENTS_TTL_S || "300", 10);
@@ -133,6 +140,7 @@ export async function GET(req: NextRequest) {
     exp: expSec,
     jti: `${sid}-${iatSec}`,
     ver: 1,
+    ev,
   };
 
   // 4) (Optionnel) Token signé
