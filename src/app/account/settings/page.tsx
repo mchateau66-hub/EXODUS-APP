@@ -3,6 +3,7 @@ import { redirect } from "next/navigation"
 import { getUserFromSession } from "@/lib/auth"
 import { prisma } from "@/lib/db"
 import { getEffectiveFeatures } from "@/lib/entitlements.server"
+import { getContactUnlockAvailability } from "@/lib/contact-unlock-access"
 import { getMessageDailyLimit } from "@/lib/message-daily-limit"
 import { userHasUnlimitedMessages } from "@/server/features"
 import { getUsageCounters } from "@/lib/usage-tracking"
@@ -94,6 +95,7 @@ type SettingsViewModel = {
       cancelAtPeriodEnd: boolean
     }
     effectiveFeatures: string[]
+    canUnlockContacts: boolean
   }
   usage: {
     messagesSentToday: number | null
@@ -177,23 +179,25 @@ export default async function AccountSettingsPage() {
   if (onboardingStep < 2) redirect("/onboarding/step-2")
   if (onboardingStep < 3) redirect("/onboarding/step-3")
 
-  const [subscription, effectiveFeatures, usageCounters, messageDailyLimit, hasUnlimitedMessages] = await Promise.all([
-    prisma.subscription.findFirst({
-      where: { user_id: userId },
-      orderBy: { created_at: "desc" },
-      select: {
-        plan_key: true,
-        status: true,
-        current_period_end: true,
-        cancel_at_period_end: true,
-        plan: { select: { key: true, name: true } },
-      },
-    }),
-    getEffectiveFeatures(userId),
-    getUsageCounters(userId),
-    getMessageDailyLimit(userId),
-    userHasUnlimitedMessages(userId),
-  ])
+  const [subscription, effectiveFeatures, usageCounters, messageDailyLimit, hasUnlimitedMessages, canUnlockContacts] =
+    await Promise.all([
+      prisma.subscription.findFirst({
+        where: { user_id: userId },
+        orderBy: { created_at: "desc" },
+        select: {
+          plan_key: true,
+          status: true,
+          current_period_end: true,
+          cancel_at_period_end: true,
+          plan: { select: { key: true, name: true } },
+        },
+      }),
+      getEffectiveFeatures(userId),
+      getUsageCounters(userId),
+      getMessageDailyLimit(userId),
+      userHasUnlimitedMessages(userId),
+      getContactUnlockAvailability(userId),
+    ])
 
   const settingsViewModel: SettingsViewModel = {
     profile: {
@@ -230,6 +234,7 @@ export default async function AccountSettingsPage() {
           }
         : null,
       effectiveFeatures,
+      canUnlockContacts,
     },
     usage: (() => {
       const messagesSentToday = usageCounters?.messages_sent_today ?? null
@@ -429,7 +434,19 @@ export default async function AccountSettingsPage() {
               value="Aucune ligne d’abonnement trouvée pour ce compte (plus récent par date de création)."
             />
           )}
+          <SettingsFactRow
+            label="Déverrouillage de contact"
+            value={vm.billing.canUnlockContacts ? "Autorisé" : "Non autorisé"}
+          />
         </SettingsFactsList>
+
+        <p className="mt-4 text-sm text-[var(--text-muted)]">
+          L’accès dépend de votre abonnement ou de vos entitlements actifs.
+        </p>
+
+        <SettingsInfoBox>
+          Certaines fonctionnalités, comme le déverrouillage de contact, dépendent de vos entitlements actifs.
+        </SettingsInfoBox>
 
         <div className="mt-6">
           <p className="text-xs font-medium uppercase tracking-wide text-[var(--text-muted)]">
@@ -474,6 +491,7 @@ export default async function AccountSettingsPage() {
           coachProfileViews={vm.usage.coachProfileViews}
           searchResultViews={vm.usage.searchResultViews}
           contactUnlocks={vm.usage.contactUnlocks}
+          canUnlockContacts={vm.billing.canUnlockContacts}
           dailyResetMode={vm.usage.dailyResetMode}
         />
       </SettingsSection>

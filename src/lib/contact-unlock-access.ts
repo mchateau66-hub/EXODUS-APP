@@ -23,3 +23,9 @@ export async function checkContactUnlockAccess(
   }
   return { allowed: false, reason: "feature_forbidden" }
 }
+
+/** Lecture seule — aligné sur `checkContactUnlockAccess` (UI / settings). */
+export async function getContactUnlockAvailability(userId: string, now: Date = new Date()): Promise<boolean> {
+  const r = await checkContactUnlockAccess(userId, now)
+  return r.allowed
+}

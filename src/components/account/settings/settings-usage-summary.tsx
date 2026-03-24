@@ -13,6 +13,8 @@ export type SettingsUsageSummaryProps = {
   coachProfileViews: number | null
   searchResultViews: number | null
   contactUnlocks: number | null
+  /** Aligné sur `checkContactUnlockAccess` / API contacts. */
+  canUnlockContacts: boolean
   dailyResetMode: "utc"
 }
 
@@ -33,6 +35,10 @@ function displayRemaining(remaining: number | null, hasUnlimitedMessages: boolea
   return String(remaining)
 }
 
+function contactUnlockCapabilityLabel(allowed: boolean): string {
+  return allowed ? "Autorisé" : "Non autorisé"
+}
+
 /**
  * Compteurs d’usage serveur — lecture seule, sans quota ni progression.
  */
@@ -45,6 +51,7 @@ export function SettingsUsageSummary({
   coachProfileViews,
   searchResultViews,
   contactUnlocks,
+  canUnlockContacts,
   dailyResetMode,
 }: SettingsUsageSummaryProps) {
   const showUtcNote = dailyResetMode === "utc"
@@ -65,6 +72,10 @@ export function SettingsUsageSummary({
         <SettingsFactRow label="Profils coach consultés" value={displayValue(coachProfileViews)} />
         <SettingsFactRow label="Résultats de recherche consultés" value={displayValue(searchResultViews)} />
         <SettingsFactRow label="Contacts débloqués" value={displayValue(contactUnlocks)} />
+        <SettingsFactRow
+          label="Déverrouillage de contact"
+          value={contactUnlockCapabilityLabel(canUnlockContacts)}
+        />
       </SettingsFactsList>
       {showUtcNote ? (
         <SettingsInfoBox>
