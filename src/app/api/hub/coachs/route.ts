@@ -3,7 +3,7 @@ import { NextRequest } from "next/server"
 import { prisma } from "@/lib/db"
 import { getUserFromSession } from "@/lib/auth"
 import { Prisma } from "@prisma/client"
-import { getPriorityCoachIds, prioritizeCoachResults } from "@/lib/coach-priority-listing"
+import { getCoachListingTiers, prioritizeCoachResultsByTier } from "@/lib/coach-priority-listing"
 import { trackSearchResultView } from "@/lib/usage-tracking"
 
 export const runtime = "nodejs"
@@ -179,11 +179,11 @@ export async function GET(req: NextRequest) {
     })
   }
 
-  const priorityCoachIds = await getPriorityCoachIds(
+  const coachListingTiers = await getCoachListingTiers(
     pinRows.map((r) => r.userId),
     now,
   )
-  const orderedRows = prioritizeCoachResults(pinRows, priorityCoachIds)
+  const orderedRows = prioritizeCoachResultsByTier(pinRows, coachListingTiers)
   const pins = orderedRows.map((r) => r.pin)
 
   await trackSearchResultView(String(me.id), pins.length)

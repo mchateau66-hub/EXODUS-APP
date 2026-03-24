@@ -11,6 +11,8 @@ export const FEATURE_KEYS = {
   coachProDashboard: 'coach.pro_dashboard',
   /** Priorité d’affichage Hub / liste (bucket avant les autres, ordre interne inchangé). */
   coachPriorityListing: 'coach.priority_listing',
+  /** Second niveau de mise en avant Hub (après priority_listing). */
+  profileBoost: 'profile.boost',
   coachUnlimitedAthletes: 'coach.unlimited_athletes',
   coachExternalAppLink: 'coach.external_app_link',
 } as const
@@ -35,6 +37,7 @@ export const ATHLETE_FEATURES: FeatureKey[] = [
 export const COACH_FEATURES: FeatureKey[] = [
   FEATURE_KEYS.coachProDashboard,
   FEATURE_KEYS.coachPriorityListing,
+  FEATURE_KEYS.profileBoost,
   FEATURE_KEYS.coachUnlimitedAthletes,
   FEATURE_KEYS.coachExternalAppLink,
 ]
