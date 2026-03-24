@@ -7,6 +7,8 @@ import {
 export type SettingsUsageSummaryProps = {
   messagesSentToday: number | null
   messagesSentTotal: number | null
+  messageDailyLimit: number | null
+  messagesRemainingToday: number | null
   coachProfileViews: number | null
   searchResultViews: number | null
   contactUnlocks: number | null
@@ -18,12 +20,24 @@ function displayValue(n: number | null): string {
   return String(n)
 }
 
+function displayDailyLimit(limit: number | null): string {
+  if (limit === null) return "Non définie"
+  return String(limit)
+}
+
+function displayRemaining(remaining: number | null): string {
+  if (remaining === null) return "Non disponible"
+  return String(remaining)
+}
+
 /**
  * Compteurs d’usage serveur — lecture seule, sans quota ni progression.
  */
 export function SettingsUsageSummary({
   messagesSentToday,
   messagesSentTotal,
+  messageDailyLimit,
+  messagesRemainingToday,
   coachProfileViews,
   searchResultViews,
   contactUnlocks,
@@ -36,6 +50,8 @@ export function SettingsUsageSummary({
       <SettingsFactsList>
         <SettingsFactRow label="Messages envoyés aujourd’hui" value={displayValue(messagesSentToday)} />
         <SettingsFactRow label="Messages envoyés au total" value={displayValue(messagesSentTotal)} />
+        <SettingsFactRow label="Limite quotidienne de messages" value={displayDailyLimit(messageDailyLimit)} />
+        <SettingsFactRow label="Messages restants aujourd’hui" value={displayRemaining(messagesRemainingToday)} />
         <SettingsFactRow label="Profils coach consultés" value={displayValue(coachProfileViews)} />
         <SettingsFactRow label="Résultats de recherche consultés" value={displayValue(searchResultViews)} />
         <SettingsFactRow label="Contacts débloqués" value={displayValue(contactUnlocks)} />
@@ -43,6 +59,8 @@ export function SettingsUsageSummary({
       {showUtcNote ? (
         <SettingsInfoBox>
           Le compteur quotidien est réinitialisé sur une base calendaire UTC.
+          <br />
+          La limite quotidienne de messages, lorsqu’elle est définie, s’applique à ce compteur.
         </SettingsInfoBox>
       ) : null}
     </>

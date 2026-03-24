@@ -59,29 +59,50 @@ async function readDailyLimitFromEntitlements(userId: string, now: Date): Promis
   }
 }
 
+type DailyLimitResolve =
+  | { state: "no_limit" }
+  | { state: "invalid"; raw: unknown }
+  | { state: "ok"; limit: number }
+
+async function resolveDailyLimitEntitlement(userId: string, now: Date): Promise<DailyLimitResolve> {
+  const { hasRow, rawExtracted } = await readDailyLimitFromEntitlements(userId, now)
+  if (!hasRow) return { state: "no_limit" }
+  if (rawExtracted == null) return { state: "no_limit" }
+  const limit = parseDailyLimit(rawExtracted)
+  if (limit == null) return { state: "invalid", raw: rawExtracted }
+  return { state: "ok", limit }
+}
+
+/**
+ * Limite quotidienne issue de l’entitlement `messages.daily_limit` (lecture seule, pas de log).
+ * `null` : pas de limite valide configurée.
+ */
+export async function getMessageDailyLimit(userId: string, now = new Date()): Promise<number | null> {
+  const r = await resolveDailyLimitEntitlement(userId, now)
+  if (r.state === "ok") return r.limit
+  return null
+}
+
 /**
  * Option A : enforcement strict si une limite quotidienne valide est définie via `messages.daily_limit`.
  * Sans limite valide : laisse passer (comportement inchangé).
  */
 export async function checkMessageDailyLimit(userId: string, now = new Date()): Promise<MessageDailyLimitCheck> {
-  const { hasRow, rawExtracted } = await readDailyLimitFromEntitlements(userId, now)
+  const r = await resolveDailyLimitEntitlement(userId, now)
 
-  if (!hasRow) {
+  if (r.state === "no_limit") {
     return { allowed: true, limit: null, usedToday: null }
   }
 
-  if (rawExtracted == null) {
-    return { allowed: true, limit: null, usedToday: null }
-  }
-
-  const limit = parseDailyLimit(rawExtracted)
-  if (limit == null) {
+  if (r.state === "invalid") {
     console.warn("message_daily_limit_invalid_entitlement", {
       userId,
-      raw: rawExtracted,
+      raw: r.raw,
     })
     return { allowed: true, limit: null, usedToday: null }
   }
+
+  const limit = r.limit
 
   const usage = await getUsageCounters(userId)
   if (usage == null) {
