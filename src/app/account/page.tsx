@@ -102,6 +102,24 @@ export default async function AccountPage() {
       </header>
 
       <div className="mx-auto max-w-5xl space-y-6 px-4 py-8">
+        {/* Paramètres (navigation secondaire) */}
+        <Link
+          href="/account/settings"
+          className="block rounded-[var(--radius-lg)] border border-[var(--border)] bg-[var(--card-bg)] p-5 shadow-[var(--card-shadow)] transition-colors hover:bg-[var(--bg-muted)]"
+        >
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 className="text-base font-semibold text-[var(--text)]">Paramètres</h2>
+              <p className="mt-1 text-sm text-[var(--text-muted)]">
+                Accédez aux réglages du profil, de la sécurité, des préférences et de l’abonnement.
+              </p>
+            </div>
+            <span className="inline-flex shrink-0 items-center justify-center rounded-[var(--radius-md)] bg-[var(--btn-primary-bg)] px-4 py-2 text-sm font-medium text-[var(--btn-primary-fg)]">
+              Ouvrir les paramètres
+            </span>
+          </div>
+        </Link>
+
         {/* Profil */}
         <section className="space-y-4 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
           <div className="flex flex-wrap items-start justify-between gap-4">
