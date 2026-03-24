@@ -15,6 +15,7 @@ const DEFAULT_ITEMS: SettingsNavItem[] = [
   { id: "preferences", label: "Préférences" },
   { id: "privacy", label: "Confidentialité" },
   { id: "billing", label: "Abonnement" },
+  { id: "usage", label: "Usage" },
 ]
 
 export type SettingsSidebarProps = {

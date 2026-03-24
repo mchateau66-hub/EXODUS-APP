@@ -3,6 +3,7 @@ import { redirect } from "next/navigation"
 import { getUserFromSession } from "@/lib/auth"
 import { prisma } from "@/lib/db"
 import { getEffectiveFeatures } from "@/lib/entitlements.server"
+import { getUsageCounters } from "@/lib/usage-tracking"
 import type { Role, SubStatus, UserStatus } from "@prisma/client"
 import { SettingsShell } from "@/components/account/settings/settings-shell"
 import {
@@ -12,6 +13,7 @@ import {
   SettingsSection,
 } from "@/components/account/settings/settings-section"
 import { SettingsPreferencesForm } from "@/components/account/settings/settings-preferences-form"
+import { SettingsUsageSummary } from "@/components/account/settings/settings-usage-summary"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -91,6 +93,14 @@ type SettingsViewModel = {
     }
     effectiveFeatures: string[]
   }
+  usage: {
+    messagesSentToday: number | null
+    messagesSentTotal: number | null
+    coachProfileViews: number | null
+    searchResultViews: number | null
+    contactUnlocks: number | null
+    dailyResetMode: "utc"
+  }
 }
 
 function SettingsAccountSummary({ vm }: { vm: SettingsViewModel }) {
@@ -162,7 +172,7 @@ export default async function AccountSettingsPage() {
   if (onboardingStep < 2) redirect("/onboarding/step-2")
   if (onboardingStep < 3) redirect("/onboarding/step-3")
 
-  const [subscription, effectiveFeatures] = await Promise.all([
+  const [subscription, effectiveFeatures, usageCounters] = await Promise.all([
     prisma.subscription.findFirst({
       where: { user_id: userId },
       orderBy: { created_at: "desc" },
@@ -175,6 +185,7 @@ export default async function AccountSettingsPage() {
       },
     }),
     getEffectiveFeatures(userId),
+    getUsageCounters(userId),
   ])
 
   const settingsViewModel: SettingsViewModel = {
@@ -213,6 +224,23 @@ export default async function AccountSettingsPage() {
         : null,
       effectiveFeatures,
     },
+    usage: usageCounters
+      ? {
+          messagesSentToday: usageCounters.messages_sent_today,
+          messagesSentTotal: usageCounters.messages_sent_total,
+          coachProfileViews: usageCounters.coach_profile_views,
+          searchResultViews: usageCounters.search_result_views,
+          contactUnlocks: usageCounters.contact_unlocks,
+          dailyResetMode: "utc" as const,
+        }
+      : {
+          messagesSentToday: null,
+          messagesSentTotal: null,
+          coachProfileViews: null,
+          searchResultViews: null,
+          contactUnlocks: null,
+          dailyResetMode: "utc" as const,
+        },
   }
 
   const vm = settingsViewModel
@@ -410,6 +438,21 @@ export default async function AccountSettingsPage() {
             Gérer l’abonnement
           </Link>
         </div>
+      </SettingsSection>
+
+      <SettingsSection
+        id="usage"
+        title="Usage"
+        description="Suivez l’activité mesurée sur votre compte."
+      >
+        <SettingsUsageSummary
+          messagesSentToday={vm.usage.messagesSentToday}
+          messagesSentTotal={vm.usage.messagesSentTotal}
+          coachProfileViews={vm.usage.coachProfileViews}
+          searchResultViews={vm.usage.searchResultViews}
+          contactUnlocks={vm.usage.contactUnlocks}
+          dailyResetMode={vm.usage.dailyResetMode}
+        />
       </SettingsSection>
     </SettingsShell>
   )
