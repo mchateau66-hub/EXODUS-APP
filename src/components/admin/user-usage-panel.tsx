@@ -21,6 +21,7 @@ export type UserUsagePanelProps = {
     hasUnlimitedMessages: boolean
     messageDailyLimit: number | null
     messagesRemainingToday: number | null
+    hasCoachPriorityListing: boolean
   }
   effectiveFeatures: string[]
 }
@@ -45,6 +46,10 @@ function remainingLabel(limits: UserUsagePanelProps["limits"]): string {
   if (limits.messageDailyLimit === null) return "Non disponible"
   if (limits.messagesRemainingToday === null) return "Non disponible"
   return String(limits.messagesRemainingToday)
+}
+
+function priorityListingLabel(active: boolean): string {
+  return active ? "Activée" : "Non activée"
 }
 
 /**
@@ -120,6 +125,26 @@ export function UserUsagePanel({
             Compteurs journaliers en UTC. La limite quotidienne s’applique via l’entitlement{" "}
             <span className="font-mono text-xs">messages.daily_limit</span> lorsqu’elle est définie, sauf si{" "}
             <span className="font-mono text-xs">messages.unlimited</span> est actif.
+          </SettingsInfoBox>
+        </div>
+      </section>
+
+      <section
+        className="rounded-[var(--radius-lg)] border border-[var(--border)] bg-[var(--card-bg)] p-5 shadow-[var(--card-shadow)] md:p-6"
+      >
+        <h2 className="border-b border-[var(--border)] pb-3 text-base font-semibold tracking-tight text-[var(--text)]">
+          Découverte (Hub)
+        </h2>
+        <div className="pt-5">
+          <SettingsFactsList>
+            <SettingsFactRow
+              label="Mise en avant du profil coach"
+              value={priorityListingLabel(limits.hasCoachPriorityListing)}
+            />
+          </SettingsFactsList>
+          <SettingsInfoBox>
+            Cette fonctionnalité permet de prioriser votre profil dans les résultats du Hub. La mise en avant applique une
+            priorisation dans les résultats, sans garantir une position absolue.
           </SettingsInfoBox>
         </div>
       </section>
