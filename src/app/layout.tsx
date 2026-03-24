@@ -14,19 +14,20 @@ export const metadata: Metadata = {
 const themeInitScript = `
 (function () {
   try {
-    var key = "theme";
-    var stored = localStorage.getItem(key); // "system" | "light" | "dark" | null
-    var mode = stored || "system";
+    var key = "exodus-theme-mode";
+    var stored = localStorage.getItem(key) || localStorage.getItem("theme");
+    var mode =
+      stored === "light" || stored === "dark" || stored === "system" ? stored : "system";
     var root = document.documentElement;
 
     function systemDark() {
       return window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
     }
 
-    var resolved = (mode === "system") ? (systemDark() ? "dark" : "light") : mode;
+    var resolved = mode === "system" ? (systemDark() ? "dark" : "light") : mode;
 
-    if (resolved === "dark") root.classList.add("dark");
-    else root.classList.remove("dark");
+    root.classList.toggle("dark", resolved === "dark");
+    root.style.colorScheme = resolved;
   } catch (e) {}
 })();
 `

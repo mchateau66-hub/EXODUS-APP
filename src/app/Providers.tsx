@@ -135,7 +135,8 @@ function writeMode(mode: ThemeMode) {
 
 function setHtmlTheme(resolved: ResolvedTheme) {
   const root = document.documentElement;
-  root.setAttribute("data-theme", resolved);
+  root.classList.toggle("dark", resolved === "dark");
+  root.style.colorScheme = resolved;
 }
 
 type CachedCoords = { lat2: number; lng2: number; ts: number };
