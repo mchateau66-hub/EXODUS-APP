@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db";
 import { authorizeFeature } from "@/lib/authorizeFeature";
 import { limitSeconds, rateHeaders, rateKeyFromRequest } from "@/lib/ratelimit";
 import { getErrorCode, getHttpStatus } from "@/lib/http-error";
+import { trackMessageSent } from "@/lib/usage-tracking";
 
 export const runtime = "nodejs";
 
@@ -78,6 +79,8 @@ export async function POST(req: NextRequest) {
         content: content.trim(),
       },
     });
+
+    await trackMessageSent(userId);
 
     return jsonWithHeaders({ ok: true }, { status: 200 }, rlHeaders);
   } catch (err: unknown) {

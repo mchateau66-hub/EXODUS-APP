@@ -3,6 +3,7 @@ import { NextRequest } from "next/server"
 import { prisma } from "@/lib/db"
 import { getUserFromSession } from "@/lib/auth"
 import { Prisma } from "@prisma/client"
+import { trackSearchResultView } from "@/lib/usage-tracking"
 
 export const runtime = "nodejs"
 
@@ -170,6 +171,8 @@ export async function GET(req: NextRequest) {
         typeof u?.coachQualificationScore === "number" ? u.coachQualificationScore : undefined,
     })
   }
+
+  await trackSearchResultView(String(me.id), pins.length)
 
   return Response.json({ pins })
 }

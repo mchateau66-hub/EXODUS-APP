@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { getUserFromSession } from "@/lib/auth";
 import { consumeSAT } from "@/lib/sat";
+import { trackContactUnlock } from "@/lib/usage-tracking";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -59,6 +60,8 @@ export async function GET(req: NextRequest) {
     where: { id: String(coach.user_id) },
     select: { email: true },
   });
+
+  await trackContactUnlock(String(user.id));
 
   return NextResponse.json(
     {

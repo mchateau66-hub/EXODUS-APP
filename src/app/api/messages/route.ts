@@ -16,6 +16,7 @@ import {
 import { requireJson, requireSameOrigin } from "@/lib/security";
 import { limit, rateHeaders } from "@/lib/ratelimit";
 import { consumeSAT } from "@/lib/sat";
+import { trackMessageSent } from "@/lib/usage-tracking";
 
 // --------- Types ---------
 
@@ -524,6 +525,8 @@ export async function POST(req: NextRequest) {
     const message = await prisma.message.create({
       data: { user_id: userId, content: finalContent, coach_id: coachIdForDb },
     });
+
+    await trackMessageSent(userId);
 
     const usedAfter = hasUnlimited ? null : (usedBefore ?? 0) + 1;
     const { usage, meta } = await computeQuota(userId, now, hasUnlimited, usedAfter);

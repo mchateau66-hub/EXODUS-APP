@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { prisma } from "@/lib/db";
 import { requireOnboardingStep } from "@/lib/onboarding";
+import { trackCoachProfileView } from "@/lib/usage-tracking";
 
 import CoachVerificationBadge from "@/components/coach/CoachVerificationBadge";
 import {
@@ -97,6 +98,8 @@ export default async function CoachProfilePage({
   });
 
   if (!coach) notFound();
+
+  await trackCoachProfileView(String((user as any).id));
 
   const coachUser = coach.user as any;
 
