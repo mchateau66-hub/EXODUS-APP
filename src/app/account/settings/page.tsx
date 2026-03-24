@@ -11,6 +11,7 @@ import {
   SettingsInfoBox,
   SettingsSection,
 } from "@/components/account/settings/settings-section"
+import { SettingsPreferencesForm } from "@/components/account/settings/settings-preferences-form"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -305,32 +306,20 @@ export default async function AccountSettingsPage() {
       <SettingsSection
         id="preferences"
         title="Préférences"
-        description="Valeurs enregistrées en base sur le profil (hors thème local du navigateur)."
+        description="Thème et langue enregistrés sur ton profil (base de données). Le thème global de l’interface est géré à part."
       >
-        <SettingsFactsList>
-          <SettingsFactRow
-            label="Thème (profil)"
-            value={vm.preferences.userTheme?.trim() ? vm.preferences.userTheme : "Non renseigné"}
-          />
-          <SettingsFactRow
-            label="Langue"
-            value={vm.preferences.language?.trim() ? vm.preferences.language : "Non renseigné"}
-          />
-        </SettingsFactsList>
         <SettingsInfoBox>
-          Le thème d’affichage de l’interface (clair / sombre / système) peut aussi être réglé
-          <span className="font-medium text-[var(--text)]"> localement sur cet appareil </span>
-          via le sélecteur de thème (stockage navigateur). Indépendant du « Thème (profil) »
-          ci-dessus.
+          <span className="font-medium text-[var(--text)]">Thème UI (appareil)</span> : réglage
+          local via le sélecteur de thème (stockage navigateur, clé dédiée), sans impact sur la
+          base.
+          <br />
+          <span className="font-medium text-[var(--text)]">Thème du profil</span> : préférence
+          métier ci-dessous, distincte du thème UI.
         </SettingsInfoBox>
-        <div className="mt-6">
-          <Link
-            href="/account/edit"
-            className="inline-flex items-center rounded-[var(--radius-md)] bg-[var(--btn-primary-bg)] px-4 py-2 text-sm font-medium text-[var(--btn-primary-fg)] shadow-sm transition-opacity hover:opacity-95"
-          >
-            Modifier les préférences du profil
-          </Link>
-        </div>
+        <SettingsPreferencesForm
+          theme={vm.preferences.userTheme}
+          language={vm.preferences.language}
+        />
       </SettingsSection>
 
       <SettingsSection
