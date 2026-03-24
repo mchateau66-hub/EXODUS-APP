@@ -2,6 +2,7 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 
 type DocRow = {
   id: string;
@@ -1263,6 +1264,15 @@ export default function AdminVerificationClient({ initialRows }: Props) {
                           Copy userId
                         </button>
                       ) : null}
+
+                      {g.userId?.trim() ? (
+                        <Link
+                          href={`/admin/users/${g.userId}`}
+                          className="inline-flex items-center text-sm text-[var(--text-muted)] underline underline-offset-4 hover:underline focus-visible:rounded-[var(--radius-md)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--border)]"
+                        >
+                          Voir la fiche admin
+                        </Link>
+                      ) : null}
                     </div>
                   </div>
 
@@ -1561,6 +1571,16 @@ export default function AdminVerificationClient({ initialRows }: Props) {
                       </div>
                       {r.coachSlug ? (
                         <div className="mt-1 text-xs text-white/50">slug: {r.coachSlug}</div>
+                      ) : null}
+                      {r.userId?.trim() ? (
+                        <div className="mt-2">
+                          <Link
+                            href={`/admin/users/${r.userId}`}
+                            className="text-sm text-[var(--text-muted)] underline underline-offset-4 hover:underline focus-visible:rounded-[var(--radius-md)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--border)]"
+                          >
+                            Voir la fiche admin
+                          </Link>
+                        </div>
                       ) : null}
                     </td>
 
