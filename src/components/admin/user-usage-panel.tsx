@@ -22,6 +22,7 @@ export type UserUsagePanelProps = {
     messageDailyLimit: number | null
     messagesRemainingToday: number | null
     hasCoachPriorityListing: boolean
+    hasProfileBoost: boolean
   }
   effectiveFeatures: string[]
 }
@@ -50,6 +51,10 @@ function remainingLabel(limits: UserUsagePanelProps["limits"]): string {
 
 function priorityListingLabel(active: boolean): string {
   return active ? "Activée" : "Non activée"
+}
+
+function profileBoostLabel(active: boolean): string {
+  return active ? "Activé" : "Non activé"
 }
 
 /**
@@ -141,10 +146,15 @@ export function UserUsagePanel({
               label="Mise en avant du profil coach"
               value={priorityListingLabel(limits.hasCoachPriorityListing)}
             />
+            <SettingsFactRow label="Boost du profil" value={profileBoostLabel(limits.hasProfileBoost)} />
           </SettingsFactsList>
           <SettingsInfoBox>
             Cette fonctionnalité permet de prioriser votre profil dans les résultats du Hub. La mise en avant applique une
             priorisation dans les résultats, sans garantir une position absolue.
+          </SettingsInfoBox>
+          <SettingsInfoBox>
+            Cette fonctionnalité améliore la visibilité de votre profil dans les résultats du Hub. Le boost du profil
+            constitue une priorisation secondaire dans le Hub.
           </SettingsInfoBox>
         </div>
       </section>

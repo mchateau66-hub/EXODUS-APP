@@ -4,6 +4,7 @@ import { getUserFromSession } from "@/lib/auth"
 import { prisma } from "@/lib/db"
 import { getEffectiveFeatures } from "@/lib/entitlements.server"
 import { getCoachPriorityListingAvailability } from "@/lib/coach-priority-access"
+import { getProfileBoostAvailability } from "@/lib/profile-boost-access"
 import { getContactUnlockAvailability } from "@/lib/contact-unlock-access"
 import { getMessageDailyLimit } from "@/lib/message-daily-limit"
 import { userHasUnlimitedMessages } from "@/server/features"
@@ -98,6 +99,7 @@ type SettingsViewModel = {
     effectiveFeatures: string[]
     canUnlockContacts: boolean
     hasCoachPriorityListing: boolean
+    hasProfileBoost: boolean
   }
   usage: {
     messagesSentToday: number | null
@@ -189,6 +191,7 @@ export default async function AccountSettingsPage() {
     hasUnlimitedMessages,
     canUnlockContacts,
     hasCoachPriorityListing,
+    hasProfileBoost,
   ] = await Promise.all([
     prisma.subscription.findFirst({
       where: { user_id: userId },
@@ -207,6 +210,7 @@ export default async function AccountSettingsPage() {
     userHasUnlimitedMessages(userId),
     getContactUnlockAvailability(userId),
     getCoachPriorityListingAvailability(userId),
+    getProfileBoostAvailability(userId),
   ])
 
   const settingsViewModel: SettingsViewModel = {
@@ -246,6 +250,7 @@ export default async function AccountSettingsPage() {
       effectiveFeatures,
       canUnlockContacts,
       hasCoachPriorityListing,
+      hasProfileBoost,
     },
     usage: (() => {
       const messagesSentToday = usageCounters?.messages_sent_today ?? null
@@ -453,6 +458,10 @@ export default async function AccountSettingsPage() {
             label="Mise en avant du profil coach"
             value={vm.billing.hasCoachPriorityListing ? "Activée" : "Non activée"}
           />
+          <SettingsFactRow
+            label="Boost du profil"
+            value={vm.billing.hasProfileBoost ? "Activé" : "Non activé"}
+          />
         </SettingsFactsList>
 
         <p className="mt-4 text-sm text-[var(--text-muted)]">
@@ -461,12 +470,18 @@ export default async function AccountSettingsPage() {
         <p className="mt-2 text-sm text-[var(--text-muted)]">
           Cette fonctionnalité permet de prioriser votre profil dans les résultats du Hub.
         </p>
+        <p className="mt-2 text-sm text-[var(--text-muted)]">
+          Cette fonctionnalité améliore la visibilité de votre profil dans les résultats du Hub.
+        </p>
 
         <SettingsInfoBox>
           Certaines fonctionnalités, comme le déverrouillage de contact, dépendent de vos entitlements actifs.
         </SettingsInfoBox>
         <SettingsInfoBox>
           La mise en avant applique une priorisation dans les résultats, sans garantir une position absolue.
+        </SettingsInfoBox>
+        <SettingsInfoBox>
+          Le boost du profil agit comme une priorisation secondaire et ne garantit pas une position absolue.
         </SettingsInfoBox>
 
         <div className="mt-6">
