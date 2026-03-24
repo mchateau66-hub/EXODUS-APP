@@ -5,6 +5,7 @@ import { prisma } from "@/lib/db"
 import { getEffectiveFeatures } from "@/lib/entitlements.server"
 import { getCoachPriorityListingAvailability } from "@/lib/coach-priority-access"
 import { getProfileBoostAvailability } from "@/lib/profile-boost-access"
+import { getSearchPriorityAvailability } from "@/lib/search-priority-access"
 import { getContactUnlockAvailability } from "@/lib/contact-unlock-access"
 import { getMessageDailyLimit } from "@/lib/message-daily-limit"
 import { userHasUnlimitedMessages } from "@/server/features"
@@ -100,6 +101,7 @@ type SettingsViewModel = {
     canUnlockContacts: boolean
     hasCoachPriorityListing: boolean
     hasProfileBoost: boolean
+    hasSearchPriority: boolean
   }
   usage: {
     messagesSentToday: number | null
@@ -192,6 +194,7 @@ export default async function AccountSettingsPage() {
     canUnlockContacts,
     hasCoachPriorityListing,
     hasProfileBoost,
+    hasSearchPriority,
   ] = await Promise.all([
     prisma.subscription.findFirst({
       where: { user_id: userId },
@@ -211,6 +214,7 @@ export default async function AccountSettingsPage() {
     getContactUnlockAvailability(userId),
     getCoachPriorityListingAvailability(userId),
     getProfileBoostAvailability(userId),
+    getSearchPriorityAvailability(userId),
   ])
 
   const settingsViewModel: SettingsViewModel = {
@@ -251,6 +255,7 @@ export default async function AccountSettingsPage() {
       canUnlockContacts,
       hasCoachPriorityListing,
       hasProfileBoost,
+      hasSearchPriority,
     },
     usage: (() => {
       const messagesSentToday = usageCounters?.messages_sent_today ?? null
@@ -462,16 +467,25 @@ export default async function AccountSettingsPage() {
             label="Boost du profil"
             value={vm.billing.hasProfileBoost ? "Activé" : "Non activé"}
           />
+          <SettingsFactRow
+            label="Priorité dans les résultats de recherche"
+            value={vm.billing.hasSearchPriority ? "Activée" : "Non activée"}
+          />
         </SettingsFactsList>
+
+        <p className="mt-4 text-sm text-[var(--text-muted)]">
+          Cette fonctionnalité améliore la visibilité de votre profil dans les résultats de recherche du Hub.
+        </p>
+        <SettingsInfoBox>
+          La priorité de recherche agit comme une priorisation dédiée aux résultats de recherche et ne garantit pas une
+          position absolue.
+        </SettingsInfoBox>
 
         <p className="mt-4 text-sm text-[var(--text-muted)]">
           L’accès dépend de votre abonnement ou de vos entitlements actifs.
         </p>
         <p className="mt-2 text-sm text-[var(--text-muted)]">
           Cette fonctionnalité permet de prioriser votre profil dans les résultats du Hub.
-        </p>
-        <p className="mt-2 text-sm text-[var(--text-muted)]">
-          Cette fonctionnalité améliore la visibilité de votre profil dans les résultats du Hub.
         </p>
 
         <SettingsInfoBox>

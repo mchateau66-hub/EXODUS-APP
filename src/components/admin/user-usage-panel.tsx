@@ -23,6 +23,7 @@ export type UserUsagePanelProps = {
     messagesRemainingToday: number | null
     hasCoachPriorityListing: boolean
     hasProfileBoost: boolean
+    hasSearchPriority: boolean
   }
   effectiveFeatures: string[]
 }
@@ -55,6 +56,10 @@ function priorityListingLabel(active: boolean): string {
 
 function profileBoostLabel(active: boolean): string {
   return active ? "Activé" : "Non activé"
+}
+
+function searchPriorityLabel(active: boolean): string {
+  return active ? "Activée" : "Non activée"
 }
 
 /**
@@ -147,7 +152,14 @@ export function UserUsagePanel({
               value={priorityListingLabel(limits.hasCoachPriorityListing)}
             />
             <SettingsFactRow label="Boost du profil" value={profileBoostLabel(limits.hasProfileBoost)} />
+            <SettingsFactRow
+              label="Priorité dans les résultats de recherche"
+              value={searchPriorityLabel(limits.hasSearchPriority)}
+            />
           </SettingsFactsList>
+          <SettingsInfoBox>
+            La priorité de recherche constitue une priorisation dédiée aux résultats de recherche du Hub.
+          </SettingsInfoBox>
           <SettingsInfoBox>
             Cette fonctionnalité permet de prioriser votre profil dans les résultats du Hub. La mise en avant applique une
             priorisation dans les résultats, sans garantir une position absolue.

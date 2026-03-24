@@ -3,6 +3,7 @@ import { notFound, redirect } from "next/navigation"
 import { UserUsagePanel } from "@/components/admin/user-usage-panel"
 import { getCoachPriorityListingAvailability } from "@/lib/coach-priority-access"
 import { getProfileBoostAvailability } from "@/lib/profile-boost-access"
+import { getSearchPriorityAvailability } from "@/lib/search-priority-access"
 import { getEffectiveFeatures } from "@/lib/entitlements.server"
 import { getMessageDailyLimit } from "@/lib/message-daily-limit"
 import { prisma } from "@/lib/db"
@@ -42,6 +43,7 @@ export default async function AdminUserUsagePage({ params }: { params: Promise<{
     hasUnlimitedMessages,
     hasCoachPriorityListing,
     hasProfileBoost,
+    hasSearchPriority,
     effectiveFeatures,
     subscription,
   ] = await Promise.all([
@@ -50,6 +52,7 @@ export default async function AdminUserUsagePage({ params }: { params: Promise<{
     userHasUnlimitedMessages(user.id),
     getCoachPriorityListingAvailability(user.id),
     getProfileBoostAvailability(user.id),
+    getSearchPriorityAvailability(user.id),
     getEffectiveFeatures(user.id),
     prisma.subscription.findFirst({
       where: { user_id: user.id },
@@ -131,6 +134,7 @@ export default async function AdminUserUsagePage({ params }: { params: Promise<{
               messagesRemainingToday,
               hasCoachPriorityListing,
               hasProfileBoost,
+              hasSearchPriority,
             }}
             effectiveFeatures={effectiveFeatures}
           />
