@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db"
+import { userHasUnlimitedMessages } from "@/server/features"
 import { getUsageCounters } from "@/lib/usage-tracking"
 
 /** Clé d’entitlement paramétrable (valeur numérique dans `meta`). */
@@ -9,6 +10,8 @@ export type MessageDailyLimitCheck =
       allowed: true
       limit: number | null
       usedToday: number | null
+      /** Présent si `messages.unlimited` court-circuite la limite quotidienne. */
+      bypassedByUnlimited?: boolean
     }
   | {
       allowed: false
@@ -85,9 +88,18 @@ export async function getMessageDailyLimit(userId: string, now = new Date()): Pr
 
 /**
  * Option A : enforcement strict si une limite quotidienne valide est définie via `messages.daily_limit`.
- * Sans limite valide : laisse passer (comportement inchangé).
+ * `messages.unlimited` a priorité : aucun blocage lié à la limite quotidienne (le tracking reste côté envoi).
  */
 export async function checkMessageDailyLimit(userId: string, now = new Date()): Promise<MessageDailyLimitCheck> {
+  if (await userHasUnlimitedMessages(userId, now)) {
+    return {
+      allowed: true,
+      limit: null,
+      usedToday: null,
+      bypassedByUnlimited: true,
+    }
+  }
+
   const r = await resolveDailyLimitEntitlement(userId, now)
 
   if (r.state === "no_limit") {

@@ -4,6 +4,7 @@ import { getUserFromSession } from "@/lib/auth"
 import { prisma } from "@/lib/db"
 import { getEffectiveFeatures } from "@/lib/entitlements.server"
 import { getMessageDailyLimit } from "@/lib/message-daily-limit"
+import { userHasUnlimitedMessages } from "@/server/features"
 import { getUsageCounters } from "@/lib/usage-tracking"
 import type { Role, SubStatus, UserStatus } from "@prisma/client"
 import { SettingsShell } from "@/components/account/settings/settings-shell"
@@ -103,6 +104,7 @@ type SettingsViewModel = {
     dailyResetMode: "utc"
     messageDailyLimit: number | null
     messagesRemainingToday: number | null
+    hasUnlimitedMessages: boolean
   }
 }
 
@@ -175,7 +177,7 @@ export default async function AccountSettingsPage() {
   if (onboardingStep < 2) redirect("/onboarding/step-2")
   if (onboardingStep < 3) redirect("/onboarding/step-3")
 
-  const [subscription, effectiveFeatures, usageCounters, messageDailyLimit] = await Promise.all([
+  const [subscription, effectiveFeatures, usageCounters, messageDailyLimit, hasUnlimitedMessages] = await Promise.all([
     prisma.subscription.findFirst({
       where: { user_id: userId },
       orderBy: { created_at: "desc" },
@@ -190,6 +192,7 @@ export default async function AccountSettingsPage() {
     getEffectiveFeatures(userId),
     getUsageCounters(userId),
     getMessageDailyLimit(userId),
+    userHasUnlimitedMessages(userId),
   ])
 
   const settingsViewModel: SettingsViewModel = {
@@ -231,7 +234,7 @@ export default async function AccountSettingsPage() {
     usage: (() => {
       const messagesSentToday = usageCounters?.messages_sent_today ?? null
       const messagesRemainingToday =
-        messageDailyLimit === null || messagesSentToday === null
+        hasUnlimitedMessages || messageDailyLimit === null || messagesSentToday === null
           ? null
           : Math.max(0, messageDailyLimit - messagesSentToday)
       return usageCounters
@@ -244,6 +247,7 @@ export default async function AccountSettingsPage() {
             dailyResetMode: "utc" as const,
             messageDailyLimit,
             messagesRemainingToday,
+            hasUnlimitedMessages,
           }
         : {
             messagesSentToday: null,
@@ -254,6 +258,7 @@ export default async function AccountSettingsPage() {
             dailyResetMode: "utc" as const,
             messageDailyLimit,
             messagesRemainingToday,
+            hasUnlimitedMessages,
           }
     })(),
   }
@@ -465,6 +470,7 @@ export default async function AccountSettingsPage() {
           messagesSentTotal={vm.usage.messagesSentTotal}
           messageDailyLimit={vm.usage.messageDailyLimit}
           messagesRemainingToday={vm.usage.messagesRemainingToday}
+          hasUnlimitedMessages={vm.usage.hasUnlimitedMessages}
           coachProfileViews={vm.usage.coachProfileViews}
           searchResultViews={vm.usage.searchResultViews}
           contactUnlocks={vm.usage.contactUnlocks}
