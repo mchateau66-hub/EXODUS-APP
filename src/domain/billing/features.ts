@@ -4,6 +4,10 @@
 export const FEATURE_KEYS = {
   messagesUnlimited: 'messages.unlimited',
   messagesFreeTrial: 'messages.free_trial',
+  /** Déverrouillage contact (gate produit V1). */
+  contactUnlock: 'contact.unlock',
+  /** @deprecated historique plans / SAT — garder tant que les grants DB utilisent cette clé */
+  contactsView: 'contacts.view',
   coachProDashboard: 'coach.pro_dashboard',
   coachUnlimitedAthletes: 'coach.unlimited_athletes',
   coachExternalAppLink: 'coach.external_app_link',

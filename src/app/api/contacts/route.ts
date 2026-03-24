@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { getUserFromSession } from "@/lib/auth";
+import { checkContactUnlockAccess } from "@/lib/contact-unlock-access";
 import { consumeSAT } from "@/lib/sat";
 import { trackContactUnlock } from "@/lib/usage-tracking";
 
@@ -14,6 +15,7 @@ function normStr(x: unknown) {
 
 /**
  * GET /api/contacts?coachSlug=marie
+ * Entitlement `contact.unlock` (ou `contacts.view` historique) requis.
  * SAT requis si SAT_JWT_SECRET est défini.
  * feature attendu: "contacts.view"
  */
@@ -25,9 +27,24 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401, headers: { "cache-control": "no-store" } });
   }
 
+  const userId = String(user.id);
+
   const coachSlug = normStr(req.nextUrl.searchParams.get("coachSlug"));
   if (!coachSlug) {
     return NextResponse.json({ ok: false, error: "missing_coachSlug" }, { status: 400, headers: { "cache-control": "no-store" } });
+  }
+
+  const access = await checkContactUnlockAccess(userId);
+  if (!access.allowed) {
+    console.warn("contact_unlock_forbidden", { userId, feature: "contact.unlock" });
+    return NextResponse.json(
+      {
+        error: "Déverrouillage du contact non autorisé.",
+        code: "feature_forbidden",
+        feature: "contact.unlock",
+      },
+      { status: 403, headers: { "cache-control": "no-store" } },
+    );
   }
 
   const enforceSat = Boolean((process.env.SAT_JWT_SECRET || "").trim());
@@ -61,7 +78,7 @@ export async function GET(req: NextRequest) {
     select: { email: true },
   });
 
-  await trackContactUnlock(String(user.id));
+  await trackContactUnlock(userId);
 
   return NextResponse.json(
     {
