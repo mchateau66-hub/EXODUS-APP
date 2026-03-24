@@ -4,6 +4,7 @@ import { authorizeFeature } from "@/lib/authorizeFeature";
 import { limitSeconds, rateHeaders, rateKeyFromRequest } from "@/lib/ratelimit";
 import { getErrorCode, getHttpStatus } from "@/lib/http-error";
 import { trackMessageSent } from "@/lib/usage-tracking";
+import { checkMessageDailyLimit, messageDailyLimit429Body } from "@/lib/message-daily-limit";
 
 export const runtime = "nodejs";
 
@@ -68,6 +69,19 @@ export async function POST(req: NextRequest) {
       return jsonWithHeaders(
         { ok: false, error: "invalid_coach_id" },
         { status: 400 },
+        rlHeaders,
+      );
+    }
+
+    const limitCheck = await checkMessageDailyLimit(userId);
+    if (!limitCheck.allowed) {
+      return jsonWithHeaders(
+        messageDailyLimit429Body({
+          reason: limitCheck.reason,
+          limit: limitCheck.limit,
+          usedToday: limitCheck.usedToday,
+        }),
+        { status: 429 },
         rlHeaders,
       );
     }

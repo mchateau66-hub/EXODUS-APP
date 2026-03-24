@@ -17,6 +17,7 @@ import { requireJson, requireSameOrigin } from "@/lib/security";
 import { limit, rateHeaders } from "@/lib/ratelimit";
 import { consumeSAT } from "@/lib/sat";
 import { trackMessageSent } from "@/lib/usage-tracking";
+import { checkMessageDailyLimit, messageDailyLimit429Body } from "@/lib/message-daily-limit";
 
 // --------- Types ---------
 
@@ -396,6 +397,18 @@ export async function POST(req: NextRequest) {
 
   try {
     const now = new Date();
+
+    const limitCheck = await checkMessageDailyLimit(userId, now);
+    if (!limitCheck.allowed) {
+      return NextResponse.json(
+        messageDailyLimit429Body({
+          reason: limitCheck.reason,
+          limit: limitCheck.limit,
+          usedToday: limitCheck.usedToday,
+        }),
+        { status: 429, headers: rlH },
+      );
+    }
 
     // --- coach lookup / checks ---
     let coachIdForDb: string | null = null;
