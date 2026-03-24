@@ -134,18 +134,23 @@ export async function maybeResetDailyCounters(userId: string): Promise<void> {
 }
 
 export async function getUsageCounters(userId: string) {
-  await maybeResetDailyCounters(userId)
-  await ensureUsageCounter(userId)
-  const row = await prisma.userUsageCounter.findUnique({
-    where: { user_id: userId },
-  })
-  if (!row) return null
-  return {
-    messages_sent_today: row.messages_sent_today,
-    messages_sent_total: row.messages_sent_total,
-    coach_profile_views: row.coach_profile_views,
-    search_result_views: row.search_result_views,
-    contact_unlocks: row.contact_unlocks,
-    daily_reset_at: row.daily_reset_at,
+  try {
+    await maybeResetDailyCounters(userId)
+    await ensureUsageCounter(userId)
+    const row = await prisma.userUsageCounter.findUnique({
+      where: { user_id: userId },
+    })
+    if (!row) return null
+    return {
+      messages_sent_today: row.messages_sent_today,
+      messages_sent_total: row.messages_sent_total,
+      coach_profile_views: row.coach_profile_views,
+      search_result_views: row.search_result_views,
+      contact_unlocks: row.contact_unlocks,
+      daily_reset_at: row.daily_reset_at,
+    }
+  } catch (e) {
+    logTech("usage_counter_read_failed", { userId, error: String(e) })
+    return null
   }
 }
