@@ -13,6 +13,8 @@ export const FEATURE_KEYS = {
   coachPriorityListing: 'coach.priority_listing',
   /** Second niveau de mise en avant Hub (après priority_listing). */
   profileBoost: 'profile.boost',
+  /** Priorité dans les résultats de recherche Hub (après profile.boost). */
+  searchPriority: 'search.priority',
   coachUnlimitedAthletes: 'coach.unlimited_athletes',
   coachExternalAppLink: 'coach.external_app_link',
 } as const
@@ -38,6 +40,7 @@ export const COACH_FEATURES: FeatureKey[] = [
   FEATURE_KEYS.coachProDashboard,
   FEATURE_KEYS.coachPriorityListing,
   FEATURE_KEYS.profileBoost,
+  FEATURE_KEYS.searchPriority,
   FEATURE_KEYS.coachUnlimitedAthletes,
   FEATURE_KEYS.coachExternalAppLink,
 ]
