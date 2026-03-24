@@ -9,6 +9,8 @@ export const FEATURE_KEYS = {
   /** @deprecated historique plans / SAT — garder tant que les grants DB utilisent cette clé */
   contactsView: 'contacts.view',
   coachProDashboard: 'coach.pro_dashboard',
+  /** Priorité d’affichage Hub / liste (bucket avant les autres, ordre interne inchangé). */
+  coachPriorityListing: 'coach.priority_listing',
   coachUnlimitedAthletes: 'coach.unlimited_athletes',
   coachExternalAppLink: 'coach.external_app_link',
 } as const
@@ -32,6 +34,7 @@ export const ATHLETE_FEATURES: FeatureKey[] = [
 
 export const COACH_FEATURES: FeatureKey[] = [
   FEATURE_KEYS.coachProDashboard,
+  FEATURE_KEYS.coachPriorityListing,
   FEATURE_KEYS.coachUnlimitedAthletes,
   FEATURE_KEYS.coachExternalAppLink,
 ]

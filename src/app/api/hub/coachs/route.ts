@@ -3,6 +3,7 @@ import { NextRequest } from "next/server"
 import { prisma } from "@/lib/db"
 import { getUserFromSession } from "@/lib/auth"
 import { Prisma } from "@prisma/client"
+import { getPriorityCoachIds, prioritizeCoachResults } from "@/lib/coach-priority-listing"
 import { trackSearchResultView } from "@/lib/usage-tracking"
 
 export const runtime = "nodejs"
@@ -19,6 +20,8 @@ type PinCoach = {
   isPremium: boolean
   coachQualificationScore?: number
 }
+
+type HubPinRow = { userId: string; pin: PinCoach }
 
 function parseBBox(v: string | null) {
   if (!v) return null
@@ -139,7 +142,8 @@ export async function GET(req: NextRequest) {
     return new Response("Entitlements view unavailable", { status: 503 })
   }
 
-  const pins: PinCoach[] = []
+  const now = new Date()
+  const pinRows: HubPinRow[] = []
   for (const c of coaches) {
     const u = c.user as any
     const uid = String(u?.id || "")
@@ -157,20 +161,30 @@ export async function GET(req: NextRequest) {
       if (lng < bbox.west || lng > bbox.east || lat < bbox.south || lat > bbox.north) continue
     }
 
-    pins.push({
-      id: String(c.id),
-      slug: String(c.slug),
-      name: String(c.name || "Coach"),
-      subtitle: c.subtitle ?? null,
-      country: u?.country ?? null,
-      language: u?.language ?? null,
-      lat,
-      lng,
-      isPremium: isPremiumFromFeatures(features),
-      coachQualificationScore:
-        typeof u?.coachQualificationScore === "number" ? u.coachQualificationScore : undefined,
+    pinRows.push({
+      userId: uid,
+      pin: {
+        id: String(c.id),
+        slug: String(c.slug),
+        name: String(c.name || "Coach"),
+        subtitle: c.subtitle ?? null,
+        country: u?.country ?? null,
+        language: u?.language ?? null,
+        lat,
+        lng,
+        isPremium: isPremiumFromFeatures(features),
+        coachQualificationScore:
+          typeof u?.coachQualificationScore === "number" ? u.coachQualificationScore : undefined,
+      },
     })
   }
+
+  const priorityCoachIds = await getPriorityCoachIds(
+    pinRows.map((r) => r.userId),
+    now,
+  )
+  const orderedRows = prioritizeCoachResults(pinRows, priorityCoachIds)
+  const pins = orderedRows.map((r) => r.pin)
 
   await trackSearchResultView(String(me.id), pins.length)
 
