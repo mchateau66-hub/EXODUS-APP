@@ -1,6 +1,8 @@
 import type { Role, UserStatus } from "@prisma/client"
+import type { PlanKey } from "@/domain/billing/features"
 
 type FeatureOption = { value: string; label: string }
+type PlanOption = { value: PlanKey; label: string }
 
 export type AdminPremiumFilterMode = "" | "with" | "without"
 
@@ -13,9 +15,11 @@ type AdminUsersSearchFormProps = {
   feature: string
   premium: AdminPremiumFilterMode
   billing: AdminBillingFilterMode
+  plan: string
   roleOptions: Role[]
   statusOptions: UserStatus[]
   featureOptions: readonly FeatureOption[]
+  planOptions: readonly PlanOption[]
 }
 
 const ROLE_LABEL: Record<Role, string> = {
@@ -40,9 +44,11 @@ export function AdminUsersSearchForm({
   feature,
   premium,
   billing,
+  plan,
   roleOptions,
   statusOptions,
   featureOptions,
+  planOptions,
 }: AdminUsersSearchFormProps) {
   return (
     <form action="/admin/users" method="get" className="flex flex-col gap-4">
@@ -158,6 +164,25 @@ export function AdminUsersSearchForm({
             <option value="stripe">Avec client Stripe</option>
             <option value="subscribed">Avec abonnement actif</option>
             <option value="canceling">En résiliation fin de période</option>
+          </select>
+        </div>
+
+        <div className="min-w-0 md:col-span-1 lg:col-span-3">
+          <label htmlFor="admin-users-plan" className="mb-1.5 block text-xs font-medium text-[var(--text-muted)]">
+            Plan d’abonnement
+          </label>
+          <select
+            id="admin-users-plan"
+            name="plan"
+            defaultValue={plan}
+            className="w-full rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--card-bg)] px-3 py-2 text-sm text-[var(--text)] shadow-[var(--card-shadow)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--border)]"
+          >
+            <option value="">Tous les plans</option>
+            {planOptions.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
           </select>
         </div>
       </div>

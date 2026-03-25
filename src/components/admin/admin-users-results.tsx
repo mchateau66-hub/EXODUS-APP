@@ -1,6 +1,6 @@
 import Link from "next/link"
 import type { Role, UserStatus } from "@prisma/client"
-import { FEATURE_KEYS, type FeatureKey } from "@/domain/billing/features"
+import { FEATURE_KEYS, PLAN_KEYS, type FeatureKey, type PlanKey } from "@/domain/billing/features"
 import type { AdminBillingFilterMode, AdminPremiumFilterMode } from "@/components/admin/admin-users-search-form"
 
 export type AdminUserSearchResult = {
@@ -45,6 +45,12 @@ const FEATURE_FILTER_LABEL: Partial<Record<FeatureKey, string>> = {
   [FEATURE_KEYS.searchPriority]: "Priorité dans les résultats de recherche",
 }
 
+const PLAN_FILTER_LABEL: Record<PlanKey, string> = {
+  [PLAN_KEYS.free]: "Free",
+  [PLAN_KEYS.athletePremium]: "Athlète premium",
+  [PLAN_KEYS.coachPremium]: "Coach premium",
+}
+
 type AdminUsersResultsProps = {
   queryTrimmed: string
   appliedRole: Role | null
@@ -52,6 +58,7 @@ type AdminUsersResultsProps = {
   appliedFeature: FeatureKey | null
   premiumFilter: AdminPremiumFilterMode
   billingFilter: AdminBillingFilterMode
+  appliedPlan: PlanKey | null
   hasActiveCriteria: boolean
   results: AdminUserSearchResult[]
   searchError: boolean
@@ -75,6 +82,7 @@ export function AdminUsersResults({
   appliedFeature,
   premiumFilter,
   billingFilter,
+  appliedPlan,
   hasActiveCriteria,
   results,
   searchError,
@@ -92,6 +100,9 @@ export function AdminUsersResults({
   if (billingFilter === "stripe" || billingFilter === "subscribed" || billingFilter === "canceling") {
     filterChips.push(BILLING_FILTER_LABELS[billingFilter])
   }
+  if (appliedPlan) {
+    filterChips.push(`plan ${PLAN_FILTER_LABEL[appliedPlan]}`)
+  }
 
   if (searchError) {
     return (
@@ -107,8 +118,8 @@ export function AdminUsersResults({
   if (!hasActiveCriteria) {
     return (
       <p className="text-sm text-[var(--text-muted)]">
-        Recherchez un utilisateur par e-mail, identifiant ou slug, puis affinez par rôle, statut, fonctionnalités premium ou
-        état billing (Stripe, abonnement, résiliation).
+        Recherchez un utilisateur par e-mail, identifiant ou slug, puis affinez par rôle, statut, fonctionnalités premium,
+        état billing (Stripe, abonnement, résiliation) ou plan d’abonnement.
       </p>
     )
   }

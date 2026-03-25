@@ -9,7 +9,7 @@ import {
   AdminUsersResults,
   type AdminUserSearchResult,
 } from "@/components/admin/admin-users-results"
-import { FEATURE_KEYS, type FeatureKey } from "@/domain/billing/features"
+import { FEATURE_KEYS, PLAN_KEYS, type FeatureKey, type PlanKey } from "@/domain/billing/features"
 import { prisma } from "@/lib/db"
 import { requireOnboardingStep } from "@/lib/onboarding"
 import type { Prisma, Role, SubStatus, UserStatus } from "@prisma/client"
@@ -44,6 +44,15 @@ const PREMIUM_FEATURE_KEYS = ADMIN_USER_FEATURE_OPTIONS.map((o) => o.value)
 /** Statuts d’abonnement Stripe/Prisma encore pertinents côté support (« abonné » ou équivalent). */
 const SUBSCRIBED_SUB_STATUSES = ["active", "trialing", "past_due"] as const satisfies readonly SubStatus[]
 
+/** Plans proposés dans l’admin — alignés sur `PLAN_KEYS` (vérité produit). */
+const ADMIN_USER_PLAN_OPTIONS = [
+  { value: PLAN_KEYS.free, label: "Free" },
+  { value: PLAN_KEYS.athletePremium, label: "Athlète premium" },
+  { value: PLAN_KEYS.coachPremium, label: "Coach premium" },
+] as const satisfies readonly { value: PlanKey; label: string }[]
+
+const ALLOWED_PLAN_KEYS = new Set<string>(ADMIN_USER_PLAN_OPTIONS.map((o) => o.value))
+
 function normalizePremiumFilter(raw: string): AdminPremiumFilterMode {
   const t = raw.trim()
   if (t === "1" || t === "with") return "with"
@@ -74,6 +83,12 @@ function safeStatusFilter(raw: string): UserStatus | undefined {
   return t as UserStatus
 }
 
+function safePlanFilter(raw: string): PlanKey | undefined {
+  const t = raw.trim()
+  if (!t || !ALLOWED_PLAN_KEYS.has(t)) return undefined
+  return t as PlanKey
+}
+
 type PageProps = {
   searchParams?: Promise<{
     q?: string
@@ -82,6 +97,7 @@ type PageProps = {
     feature?: string
     premium?: string
     billing?: string
+    plan?: string
   }>
 }
 
@@ -99,6 +115,7 @@ export default async function AdminUsersIndexPage({ searchParams }: PageProps) {
   const rawFeature = typeof sp.feature === "string" ? sp.feature : ""
   const rawPremium = typeof sp.premium === "string" ? sp.premium : ""
   const rawBilling = typeof sp.billing === "string" ? sp.billing : ""
+  const rawPlan = typeof sp.plan === "string" ? sp.plan : ""
 
   const q = rawQ.trim()
   const roleFilter = safeRoleFilter(rawRole)
@@ -106,9 +123,16 @@ export default async function AdminUsersIndexPage({ searchParams }: PageProps) {
   const featureFilter = safeFeatureFilter(rawFeature)
   const premiumFilter = normalizePremiumFilter(rawPremium)
   const billingFilter = normalizeBillingFilter(rawBilling)
+  const planFilter = safePlanFilter(rawPlan)
 
   const hasActiveCriteria = Boolean(
-    q || roleFilter || statusFilter || featureFilter || premiumFilter !== "" || billingFilter !== "",
+    q ||
+      roleFilter ||
+      statusFilter ||
+      featureFilter ||
+      premiumFilter !== "" ||
+      billingFilter !== "" ||
+      planFilter,
   )
 
   const now = new Date()
@@ -183,24 +207,53 @@ export default async function AdminUsersIndexPage({ searchParams }: PageProps) {
         })
       }
 
-      if (billingFilter === "subscribed") {
+      const mergedSubscribedPlan = billingFilter === "subscribed" && planFilter
+      const mergedCancelingPlan = billingFilter === "canceling" && planFilter
+
+      if (mergedSubscribedPlan) {
         andClauses.push({
           subscriptions: {
             some: {
+              plan_key: planFilter,
               status: { in: [...SUBSCRIBED_SUB_STATUSES] },
             },
           },
         })
-      }
-
-      if (billingFilter === "canceling") {
+      } else if (mergedCancelingPlan) {
         andClauses.push({
           subscriptions: {
             some: {
+              plan_key: planFilter,
               cancel_at_period_end: true,
             },
           },
         })
+      } else {
+        if (billingFilter === "subscribed") {
+          andClauses.push({
+            subscriptions: {
+              some: {
+                status: { in: [...SUBSCRIBED_SUB_STATUSES] },
+              },
+            },
+          })
+        }
+        if (billingFilter === "canceling") {
+          andClauses.push({
+            subscriptions: {
+              some: {
+                cancel_at_period_end: true,
+              },
+            },
+          })
+        }
+        if (planFilter) {
+          andClauses.push({
+            subscriptions: {
+              some: { plan_key: planFilter },
+            },
+          })
+        }
       }
 
       const where: Prisma.UserWhereInput = andClauses.length > 0 ? { AND: andClauses } : {}
@@ -270,9 +323,11 @@ export default async function AdminUsersIndexPage({ searchParams }: PageProps) {
             feature={featureFilter ?? ""}
             premium={premiumFilter}
             billing={billingFilter}
+            plan={planFilter ?? ""}
             roleOptions={[...ADMIN_USER_ROLE_OPTIONS]}
             statusOptions={[...ADMIN_USER_STATUS_OPTIONS]}
             featureOptions={[...ADMIN_USER_FEATURE_OPTIONS]}
+            planOptions={[...ADMIN_USER_PLAN_OPTIONS]}
           />
         </div>
 
@@ -285,6 +340,7 @@ export default async function AdminUsersIndexPage({ searchParams }: PageProps) {
             appliedFeature={featureFilter ?? null}
             premiumFilter={premiumFilter}
             billingFilter={billingFilter}
+            appliedPlan={planFilter ?? null}
             hasActiveCriteria={hasActiveCriteria}
             results={results}
             searchError={searchError}
