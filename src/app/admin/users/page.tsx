@@ -7,14 +7,35 @@ import {
 } from "@/components/admin/admin-users-results"
 import { prisma } from "@/lib/db"
 import { requireOnboardingStep } from "@/lib/onboarding"
-import type { Prisma } from "@prisma/client"
+import type { Prisma, Role, UserStatus } from "@prisma/client"
 
 export const dynamic = "force-dynamic"
 export const revalidate = 0
 export const runtime = "nodejs"
 
+/** Valeurs autorisées — alignées sur `enum Role` (schéma Prisma). */
+const ADMIN_USER_ROLE_OPTIONS = ["coach", "athlete", "admin"] as const satisfies readonly Role[]
+
+/** Valeurs autorisées — alignées sur `enum UserStatus`. */
+const ADMIN_USER_STATUS_OPTIONS = ["active", "disabled", "deleted"] as const satisfies readonly UserStatus[]
+
+const ALLOWED_ROLES = new Set<string>(ADMIN_USER_ROLE_OPTIONS)
+const ALLOWED_STATUSES = new Set<string>(ADMIN_USER_STATUS_OPTIONS)
+
+function safeRoleFilter(raw: string): Role | undefined {
+  const t = raw.trim()
+  if (!t || !ALLOWED_ROLES.has(t)) return undefined
+  return t as Role
+}
+
+function safeStatusFilter(raw: string): UserStatus | undefined {
+  const t = raw.trim()
+  if (!t || !ALLOWED_STATUSES.has(t)) return undefined
+  return t as UserStatus
+}
+
 type PageProps = {
-  searchParams?: Promise<{ q?: string }>
+  searchParams?: Promise<{ q?: string; role?: string; status?: string }>
 }
 
 export default async function AdminUsersIndexPage({ searchParams }: PageProps) {
@@ -25,23 +46,38 @@ export default async function AdminUsersIndexPage({ searchParams }: PageProps) {
   if (user?.role !== "admin") redirect("/hub")
 
   const sp = (await searchParams) ?? {}
-  const qRaw = typeof sp.q === "string" ? sp.q : ""
-  const q = qRaw.trim()
+  const rawQ = typeof sp.q === "string" ? sp.q : ""
+  const rawRole = typeof sp.role === "string" ? sp.role : ""
+  const rawStatus = typeof sp.status === "string" ? sp.status : ""
+
+  const q = rawQ.trim()
+  const roleFilter = safeRoleFilter(rawRole)
+  const statusFilter = safeStatusFilter(rawStatus)
+
+  const hasActiveCriteria = Boolean(q || roleFilter || statusFilter)
 
   let results: AdminUserSearchResult[] = []
   let searchError = false
 
-  if (q) {
+  if (hasActiveCriteria) {
     try {
-      const or: Prisma.UserWhereInput[] = [
-        { id: { contains: q, mode: "insensitive" } },
-        { email: { contains: q, mode: "insensitive" } },
-        { name: { contains: q, mode: "insensitive" } },
-        { coach: { slug: { contains: q, mode: "insensitive" } } },
-      ]
+      const where: Prisma.UserWhereInput = {
+        ...(q
+          ? {
+              OR: [
+                { id: { contains: q, mode: "insensitive" } },
+                { email: { contains: q, mode: "insensitive" } },
+                { name: { contains: q, mode: "insensitive" } },
+                { coach: { slug: { contains: q, mode: "insensitive" } } },
+              ],
+            }
+          : {}),
+        ...(roleFilter ? { role: roleFilter } : {}),
+        ...(statusFilter ? { status: statusFilter } : {}),
+      }
 
       const rows = await prisma.user.findMany({
-        where: { OR: or },
+        where,
         orderBy: { created_at: "desc" },
         take: 20,
         select: {
@@ -98,12 +134,25 @@ export default async function AdminUsersIndexPage({ searchParams }: PageProps) {
         </div>
 
         <div className="mt-8 rounded-[var(--radius-lg)] border border-[var(--border)] bg-[var(--card-bg)] p-4 shadow-[var(--card-shadow)] md:p-6">
-          <AdminUsersSearchForm defaultQuery={qRaw} />
+          <AdminUsersSearchForm
+            q={rawQ}
+            role={roleFilter ?? ""}
+            status={statusFilter ?? ""}
+            roleOptions={[...ADMIN_USER_ROLE_OPTIONS]}
+            statusOptions={[...ADMIN_USER_STATUS_OPTIONS]}
+          />
         </div>
 
         <div className="mt-6">
           <h2 className="sr-only">Résultats</h2>
-          <AdminUsersResults queryTrimmed={q} results={results} searchError={searchError} />
+          <AdminUsersResults
+            queryTrimmed={q}
+            appliedRole={roleFilter ?? null}
+            appliedStatus={statusFilter ?? null}
+            hasActiveCriteria={hasActiveCriteria}
+            results={results}
+            searchError={searchError}
+          />
         </div>
       </div>
     </main>
