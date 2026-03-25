@@ -56,7 +56,10 @@ type AdminUsersResultsProps = {
 function ActiveFiltersSummaryLine({ chips, queryTrimmed }: { chips: string[]; queryTrimmed: string }) {
   if (chips.length === 0 && !queryTrimmed) return null
   return (
-    <p className="text-xs text-[var(--text-muted)]">
+    <p
+      className="text-xs text-[var(--text-muted)]"
+      data-testid="admin-users-results-summary"
+    >
       {chips.length > 0 ? <span>Filtres actifs : {chips.join(", ")}</span> : null}
       {chips.length > 0 && queryTrimmed ? <span className="mx-2 text-[var(--border)]">·</span> : null}
       {queryTrimmed ? <span>recherche « {queryTrimmed} »</span> : null}
