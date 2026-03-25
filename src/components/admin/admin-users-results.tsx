@@ -2,6 +2,7 @@ import Link from "next/link"
 import type { Role, UserStatus } from "@prisma/client"
 import { FEATURE_KEYS, PLAN_KEYS, type FeatureKey, type PlanKey } from "@/domain/billing/features"
 import type { AdminBillingFilterMode, AdminPremiumFilterMode } from "@/components/admin/admin-users-search-form"
+import { ADMIN_USER_ROLE_LABEL, ADMIN_USER_STATUS_LABEL } from "@/components/admin/admin-users-labels"
 
 export type AdminUserSearchResult = {
   id: string
@@ -11,18 +12,6 @@ export type AdminUserSearchResult = {
   status: string
   created_at: Date
   coachSlug: string | null
-}
-
-const ROLE_LABEL: Record<Role, string> = {
-  coach: "Coach",
-  athlete: "Athlète",
-  admin: "Administrateur",
-}
-
-const STATUS_LABEL: Record<UserStatus, string> = {
-  active: "Actif",
-  disabled: "Désactivé",
-  deleted: "Supprimé",
 }
 
 const PREMIUM_FILTER_LABELS: Record<Exclude<AdminPremiumFilterMode, "">, string> = {
@@ -64,6 +53,17 @@ type AdminUsersResultsProps = {
   searchError: boolean
 }
 
+function ActiveFiltersSummaryLine({ chips, queryTrimmed }: { chips: string[]; queryTrimmed: string }) {
+  if (chips.length === 0 && !queryTrimmed) return null
+  return (
+    <p className="text-xs text-[var(--text-muted)]">
+      {chips.length > 0 ? <span>Filtres actifs : {chips.join(", ")}</span> : null}
+      {chips.length > 0 && queryTrimmed ? <span className="mx-2 text-[var(--border)]">·</span> : null}
+      {queryTrimmed ? <span>recherche « {queryTrimmed} »</span> : null}
+    </p>
+  )
+}
+
 function formatCreatedAt(d: Date): string {
   try {
     return new Intl.DateTimeFormat("fr-FR", {
@@ -88,8 +88,8 @@ export function AdminUsersResults({
   searchError,
 }: AdminUsersResultsProps) {
   const filterChips: string[] = []
-  if (appliedRole) filterChips.push(`rôle ${ROLE_LABEL[appliedRole]}`)
-  if (appliedStatus) filterChips.push(`statut ${STATUS_LABEL[appliedStatus]}`)
+  if (appliedRole) filterChips.push(`rôle ${ADMIN_USER_ROLE_LABEL[appliedRole]}`)
+  if (appliedStatus) filterChips.push(`statut ${ADMIN_USER_STATUS_LABEL[appliedStatus]}`)
   if (appliedFeature) {
     const fl = FEATURE_FILTER_LABEL[appliedFeature]
     filterChips.push(`fonctionnalité ${fl ?? appliedFeature}`)
@@ -144,13 +144,7 @@ export function AdminUsersResults({
 
   return (
     <div className="space-y-3">
-      {filterChips.length > 0 || queryTrimmed ? (
-        <p className="text-xs text-[var(--text-muted)]">
-          {filterChips.length > 0 ? <span>Filtres actifs : {filterChips.join(", ")}</span> : null}
-          {filterChips.length > 0 && queryTrimmed ? <span className="mx-2 text-[var(--border)]">·</span> : null}
-          {queryTrimmed ? <span>recherche « {queryTrimmed} »</span> : null}
-        </p>
-      ) : null}
+      <ActiveFiltersSummaryLine chips={filterChips} queryTrimmed={queryTrimmed} />
       <ul className="space-y-3">
         {results.map((u) => (
           <li

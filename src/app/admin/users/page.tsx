@@ -44,6 +44,12 @@ const PREMIUM_FEATURE_KEYS = ADMIN_USER_FEATURE_OPTIONS.map((o) => o.value)
 /** Statuts d’abonnement Stripe/Prisma encore pertinents côté support (« abonné » ou équivalent). */
 const SUBSCRIBED_SUB_STATUSES = ["active", "trialing", "past_due"] as const satisfies readonly SubStatus[]
 
+/** Copie tableau pour clauses Prisma `status: { in: … }` (évite répétitions de spread). */
+const SUBSCRIBED_SUBSCRIPTION_STATUSES: SubStatus[] = [...SUBSCRIBED_SUB_STATUSES]
+
+/** Liste courte volontaire (admin). */
+const ADMIN_USER_SEARCH_TAKE = 20
+
 /** Plans proposés dans l’admin — alignés sur `PLAN_KEYS` (vérité produit). */
 const ADMIN_USER_PLAN_OPTIONS = [
   { value: PLAN_KEYS.free, label: "Free" },
@@ -89,6 +95,11 @@ function safePlanFilter(raw: string): PlanKey | undefined {
   return t as PlanKey
 }
 
+function readSearchParam(sp: Record<string, string | string[] | undefined>, key: string): string {
+  const v = sp[key]
+  return typeof v === "string" ? v : ""
+}
+
 type PageProps = {
   searchParams?: Promise<{
     q?: string
@@ -109,13 +120,13 @@ export default async function AdminUsersIndexPage({ searchParams }: PageProps) {
   if (user?.role !== "admin") redirect("/hub")
 
   const sp = (await searchParams) ?? {}
-  const rawQ = typeof sp.q === "string" ? sp.q : ""
-  const rawRole = typeof sp.role === "string" ? sp.role : ""
-  const rawStatus = typeof sp.status === "string" ? sp.status : ""
-  const rawFeature = typeof sp.feature === "string" ? sp.feature : ""
-  const rawPremium = typeof sp.premium === "string" ? sp.premium : ""
-  const rawBilling = typeof sp.billing === "string" ? sp.billing : ""
-  const rawPlan = typeof sp.plan === "string" ? sp.plan : ""
+  const rawQ = readSearchParam(sp, "q")
+  const rawRole = readSearchParam(sp, "role")
+  const rawStatus = readSearchParam(sp, "status")
+  const rawFeature = readSearchParam(sp, "feature")
+  const rawPremium = readSearchParam(sp, "premium")
+  const rawBilling = readSearchParam(sp, "billing")
+  const rawPlan = readSearchParam(sp, "plan")
 
   const q = rawQ.trim()
   const roleFilter = safeRoleFilter(rawRole)
@@ -215,7 +226,7 @@ export default async function AdminUsersIndexPage({ searchParams }: PageProps) {
           subscriptions: {
             some: {
               plan_key: planFilter,
-              status: { in: [...SUBSCRIBED_SUB_STATUSES] },
+              status: { in: SUBSCRIBED_SUBSCRIPTION_STATUSES },
             },
           },
         })
@@ -233,7 +244,7 @@ export default async function AdminUsersIndexPage({ searchParams }: PageProps) {
           andClauses.push({
             subscriptions: {
               some: {
-                status: { in: [...SUBSCRIBED_SUB_STATUSES] },
+                status: { in: SUBSCRIBED_SUBSCRIPTION_STATUSES },
               },
             },
           })
@@ -254,7 +265,7 @@ export default async function AdminUsersIndexPage({ searchParams }: PageProps) {
             subscriptions: {
               some: {
                 plan_key: planFilter,
-                status: { in: [...SUBSCRIBED_SUB_STATUSES] },
+                status: { in: SUBSCRIBED_SUBSCRIPTION_STATUSES },
               },
             },
           })
@@ -266,7 +277,7 @@ export default async function AdminUsersIndexPage({ searchParams }: PageProps) {
       const rows = await prisma.user.findMany({
         where,
         orderBy: { created_at: "desc" },
-        take: 20,
+        take: ADMIN_USER_SEARCH_TAKE,
         select: {
           id: true,
           email: true,

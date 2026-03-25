@@ -1,5 +1,6 @@
 import type { Role, UserStatus } from "@prisma/client"
 import type { PlanKey } from "@/domain/billing/features"
+import { ADMIN_USER_ROLE_LABEL, ADMIN_USER_STATUS_LABEL } from "@/components/admin/admin-users-labels"
 
 type FeatureOption = { value: string; label: string }
 type PlanOption = { value: PlanKey; label: string }
@@ -20,18 +21,6 @@ type AdminUsersSearchFormProps = {
   statusOptions: UserStatus[]
   featureOptions: readonly FeatureOption[]
   planOptions: readonly PlanOption[]
-}
-
-const ROLE_LABEL: Record<Role, string> = {
-  coach: "Coach",
-  athlete: "Athlète",
-  admin: "Administrateur",
-}
-
-const STATUS_LABEL: Record<UserStatus, string> = {
-  active: "Actif",
-  disabled: "Désactivé",
-  deleted: "Supprimé",
 }
 
 /**
@@ -81,7 +70,7 @@ export function AdminUsersSearchForm({
             <option value="">Tous les rôles</option>
             {roleOptions.map((r) => (
               <option key={r} value={r}>
-                {ROLE_LABEL[r]}
+                {ADMIN_USER_ROLE_LABEL[r]}
               </option>
             ))}
           </select>
@@ -100,7 +89,7 @@ export function AdminUsersSearchForm({
             <option value="">Tous les statuts</option>
             {statusOptions.map((s) => (
               <option key={s} value={s}>
-                {STATUS_LABEL[s]}
+                {ADMIN_USER_STATUS_LABEL[s]}
               </option>
             ))}
           </select>
