@@ -1,6 +1,6 @@
 import Link from "next/link"
 import { redirect } from "next/navigation"
-import { AdminUsersSearchForm } from "@/components/admin/admin-users-search-form"
+import { AdminUsersSearchForm, type AdminPremiumFilterMode } from "@/components/admin/admin-users-search-form"
 import {
   AdminUsersResults,
   type AdminUserSearchResult,
@@ -34,8 +34,15 @@ const ADMIN_USER_FEATURE_OPTIONS = [
 
 const ALLOWED_ADMIN_FEATURES = new Set<string>(ADMIN_USER_FEATURE_OPTIONS.map((o) => o.value))
 
-/** Mêmes clés que le filtre feature — entitlements actifs parmi cette liste pour `premium=1`. */
+/** Mêmes clés que le filtre feature — entitlements actifs pour les modes `premium=with` / `without`. */
 const PREMIUM_FEATURE_KEYS = ADMIN_USER_FEATURE_OPTIONS.map((o) => o.value)
+
+function normalizePremiumFilter(raw: string): AdminPremiumFilterMode {
+  const t = raw.trim()
+  if (t === "1" || t === "with") return "with"
+  if (t === "without") return "without"
+  return ""
+}
 
 function safeFeatureFilter(raw: string): FeatureKey | undefined {
   const t = raw.trim()
@@ -77,9 +84,9 @@ export default async function AdminUsersIndexPage({ searchParams }: PageProps) {
   const roleFilter = safeRoleFilter(rawRole)
   const statusFilter = safeStatusFilter(rawStatus)
   const featureFilter = safeFeatureFilter(rawFeature)
-  const hasPremiumFilter = rawPremium === "1"
+  const premiumFilter = normalizePremiumFilter(rawPremium)
 
-  const hasActiveCriteria = Boolean(q || roleFilter || statusFilter || featureFilter || hasPremiumFilter)
+  const hasActiveCriteria = Boolean(q || roleFilter || statusFilter || featureFilter || premiumFilter !== "")
 
   const now = new Date()
 
@@ -123,12 +130,25 @@ export default async function AdminUsersIndexPage({ searchParams }: PageProps) {
         })
       }
 
-      if (hasPremiumFilter) {
+      if (premiumFilter === "with") {
         andClauses.push({
           entitlements: {
             some: {
               feature_key: { in: [...PREMIUM_FEATURE_KEYS] },
               ...activeEntitlement,
+            },
+          },
+        })
+      }
+
+      if (premiumFilter === "without") {
+        andClauses.push({
+          NOT: {
+            entitlements: {
+              some: {
+                feature_key: { in: [...PREMIUM_FEATURE_KEYS] },
+                ...activeEntitlement,
+              },
             },
           },
         })
@@ -199,7 +219,7 @@ export default async function AdminUsersIndexPage({ searchParams }: PageProps) {
             role={roleFilter ?? ""}
             status={statusFilter ?? ""}
             feature={featureFilter ?? ""}
-            premium={hasPremiumFilter ? "1" : ""}
+            premium={premiumFilter}
             roleOptions={[...ADMIN_USER_ROLE_OPTIONS]}
             statusOptions={[...ADMIN_USER_STATUS_OPTIONS]}
             featureOptions={[...ADMIN_USER_FEATURE_OPTIONS]}
@@ -213,7 +233,7 @@ export default async function AdminUsersIndexPage({ searchParams }: PageProps) {
             appliedRole={roleFilter ?? null}
             appliedStatus={statusFilter ?? null}
             appliedFeature={featureFilter ?? null}
-            hasPremiumFilter={hasPremiumFilter}
+            premiumFilter={premiumFilter}
             hasActiveCriteria={hasActiveCriteria}
             results={results}
             searchError={searchError}

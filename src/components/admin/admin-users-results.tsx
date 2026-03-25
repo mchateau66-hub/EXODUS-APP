@@ -1,6 +1,7 @@
 import Link from "next/link"
 import type { Role, UserStatus } from "@prisma/client"
 import { FEATURE_KEYS, type FeatureKey } from "@/domain/billing/features"
+import type { AdminPremiumFilterMode } from "@/components/admin/admin-users-search-form"
 
 export type AdminUserSearchResult = {
   id: string
@@ -24,6 +25,11 @@ const STATUS_LABEL: Record<UserStatus, string> = {
   deleted: "Supprimé",
 }
 
+const PREMIUM_FILTER_LABELS: Record<Exclude<AdminPremiumFilterMode, "">, string> = {
+  with: "offre premium",
+  without: "sans fonctionnalité premium",
+}
+
 /** Libellés pour le filtre admin feature (whitelist recherche utilisateurs). */
 const FEATURE_FILTER_LABEL: Partial<Record<FeatureKey, string>> = {
   [FEATURE_KEYS.messagesUnlimited]: "Messages illimités",
@@ -38,7 +44,7 @@ type AdminUsersResultsProps = {
   appliedRole: Role | null
   appliedStatus: UserStatus | null
   appliedFeature: FeatureKey | null
-  hasPremiumFilter: boolean
+  premiumFilter: AdminPremiumFilterMode
   hasActiveCriteria: boolean
   results: AdminUserSearchResult[]
   searchError: boolean
@@ -60,7 +66,7 @@ export function AdminUsersResults({
   appliedRole,
   appliedStatus,
   appliedFeature,
-  hasPremiumFilter,
+  premiumFilter,
   hasActiveCriteria,
   results,
   searchError,
@@ -72,7 +78,9 @@ export function AdminUsersResults({
     const fl = FEATURE_FILTER_LABEL[appliedFeature]
     filterChips.push(`fonctionnalité ${fl ?? appliedFeature}`)
   }
-  if (hasPremiumFilter) filterChips.push("offre premium")
+  if (premiumFilter === "with" || premiumFilter === "without") {
+    filterChips.push(PREMIUM_FILTER_LABELS[premiumFilter])
+  }
 
   if (searchError) {
     return (
@@ -88,8 +96,8 @@ export function AdminUsersResults({
   if (!hasActiveCriteria) {
     return (
       <p className="text-sm text-[var(--text-muted)]">
-        Recherchez un utilisateur par e-mail, identifiant ou slug, ou appliquez un filtre par rôle, statut, fonctionnalité
-        premium précise (entitlement actif) ou offre premium (au moins une fonctionnalité de la liste admin).
+        Recherchez un utilisateur par e-mail, identifiant ou slug, puis affinez par rôle, statut, fonctionnalité premium
+        précise (entitlement actif) ou offre premium (avec ou sans fonctionnalité de la liste admin).
       </p>
     )
   }

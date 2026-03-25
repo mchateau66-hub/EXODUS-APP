@@ -2,12 +2,14 @@ import type { Role, UserStatus } from "@prisma/client"
 
 type FeatureOption = { value: string; label: string }
 
+export type AdminPremiumFilterMode = "" | "with" | "without"
+
 type AdminUsersSearchFormProps = {
   q: string
   role: string
   status: string
   feature: string
-  premium: string
+  premium: AdminPremiumFilterMode
   roleOptions: Role[]
   statusOptions: UserStatus[]
   featureOptions: readonly FeatureOption[]
@@ -132,8 +134,9 @@ export function AdminUsersSearchForm({
             defaultValue={premium}
             className="w-full rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--card-bg)] px-3 py-2 text-sm text-[var(--text)] shadow-[var(--card-shadow)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--border)]"
           >
-            <option value="">Toutes les offres</option>
-            <option value="1">Avec au moins une fonctionnalité premium</option>
+            <option value="">Tous les utilisateurs</option>
+            <option value="with">Avec au moins une fonctionnalité premium</option>
+            <option value="without">Sans fonctionnalité premium active</option>
           </select>
         </div>
       </div>
