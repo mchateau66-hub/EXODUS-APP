@@ -1,4 +1,5 @@
 // e2e/admin-users.spec.ts — filtre plan + facturation sur /admin/users (session admin)
+// Prérequis et variables : voir e2e/README-admin-e2e.md (FEATURE_ADMIN_DASHBOARD, ALLOW_DEV_LOGIN, login retries, …).
 import { test, expect } from "@playwright/test";
 import { BASE_URL, E2E_SMOKE_PATH, login, waitForHealth } from "./helpers";
 
@@ -23,7 +24,11 @@ test.describe("admin /admin/users — filtres plan & facturation", () => {
     ]);
     await page.waitForLoadState("domcontentloaded");
 
-    const summary = page.getByTestId("admin-users-results-summary");
+    // testid préféré ; texte « Filtres actifs » en repli si build/serveur sans le dernier composant admin
+    const summary = page
+      .getByTestId("admin-users-results-summary")
+      .or(page.getByText(/Filtres actifs\s*:/i))
+      .first();
     await expect(summary).toBeVisible({ timeout: 20_000 });
     await expect(summary).toContainText(/forfait Stripe/i);
     await expect(summary).toContainText(/Coach premium/i);
@@ -44,7 +49,10 @@ test.describe("admin /admin/users — filtres plan & facturation", () => {
     ]);
     await page.waitForLoadState("domcontentloaded");
 
-    const summary = page.getByTestId("admin-users-results-summary");
+    const summary = page
+      .getByTestId("admin-users-results-summary")
+      .or(page.getByText(/Filtres actifs\s*:/i))
+      .first();
     await expect(summary).toBeVisible({ timeout: 20_000 });
     await expect(summary).toContainText(/abonnement Stripe/i);
     await expect(summary).toContainText(/forfait Stripe/i);

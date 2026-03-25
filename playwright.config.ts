@@ -57,6 +57,10 @@ if (local) process.env.E2E_BASE_URL = baseURL;
 // Démarrer Next en local seulement si PW_WEB_SERVER=1
 const startWebServer = local && (process.env.PW_WEB_SERVER ?? "").trim() === "1";
 
+// Attendre une route applicative (pas seulement `/`) pour limiter les ECONNRESET sur le 1er POST API.
+const webServerReadyUrl =
+  (process.env.E2E_WEB_SERVER_READY_URL ?? "").trim() || `${baseURL}/api/health`;
+
 // ✅ En LOCAL: pas de x-e2e global (ça pollue /api/login et page.request)
 // ✅ En REMOTE: x-e2e + bypass + token
 const extraHeaders: Record<string, string> = {};
@@ -119,7 +123,7 @@ export default defineConfig({
     ? {
         webServer: {
           command: `pnpm exec next dev -p ${devPort} --hostname 127.0.0.1`,
-          url: baseURL,
+          url: webServerReadyUrl,
           reuseExistingServer: true,
           timeout: 120_000,
           env: { ...toStringEnv(process.env) },

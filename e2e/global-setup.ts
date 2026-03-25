@@ -109,7 +109,18 @@ export default async function globalSetup(_config: FullConfig) {
   } else {
     // c) Login normal uniquement si configuré
     if (IS_LOCAL_BASE || hasE2EToken) {
-      await login(page, { plan: "free" });
+      try {
+        await login(page, { plan: "free" });
+      } catch (e) {
+        const msg = String((e as Error)?.message ?? e);
+        throw new Error(
+          `${msg}\n` +
+            `[e2e] global-setup: impossible d’écrire storageState (login).\n` +
+            `➡️ Cause fréquente: route /api/login pas encore stable après health (voir E2E_LOGIN_MAX_RETRIES), ` +
+            `serveur arrêté, ou ALLOW_DEV_LOGIN / DATABASE indisponible en local.\n` +
+            `➡️ Doc: e2e/README-admin-e2e.md`,
+        );
+      }
     } else {
       throw new Error(
         `[e2e] global-setup: storageState activé mais aucune auth configurée (remote).\n` +

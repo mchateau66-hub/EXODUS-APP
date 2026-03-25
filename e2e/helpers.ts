@@ -474,6 +474,92 @@ export async function setSessionCookieFromEnv(
 // ------------------------------
 type Role = "athlete" | "coach" | "admin";
 
+/** Erreurs TCP / fetch souvent vues quand Next (dev) compile encore la route ou redémarre. */
+function isTransientNetworkError(err: unknown): boolean {
+  const e = err as NodeJS.ErrnoException & Error;
+  const code = String(e?.code ?? "");
+  const msg = `${code} ${e?.message ?? err ?? ""}`;
+  return /ECONNRESET|ECONNREFUSED|ETIMEDOUT|EPIPE|ENOTFOUND|ECONNABORTED|socket hang up|timed out|NetworkError|^fetch failed/i.test(
+    msg,
+  );
+}
+
+function loginMaxRetries(): number {
+  const raw = (process.env.E2E_LOGIN_MAX_RETRIES ?? "").trim();
+  const n = Number(raw);
+  if (Number.isFinite(n) && n >= 1) return Math.min(12, Math.floor(n));
+  return 5;
+}
+
+async function requestPostWithNetworkRetry(
+  page: Page,
+  path: string,
+  payload: unknown,
+  headers: Record<string, string>,
+): Promise<APIResponse> {
+  const max = loginMaxRetries();
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= max; attempt++) {
+    try {
+      return await page.request.post(path, {
+        data: payload,
+        headers,
+        timeout: 60_000,
+      });
+    } catch (e) {
+      lastErr = e;
+      const transient = isTransientNetworkError(e);
+      if (!transient || attempt === max) {
+        if (transient) {
+          throw new Error(
+            `[e2e] POST ${path} échoue après ${max} tentative(s) (erreur réseau transitoire).\n` +
+              `Dernière: ${String((e as Error)?.message ?? e)}\n` +
+              `➡️ Fréquent en dev: compilation à la demande de /api/login, redémarrage de Next, ou serveur occupé.\n` +
+              `➡️ Vérifier ${BASE_URL}, ALLOW_DEV_LOGIN=1, DATABASE joignable. Augmenter E2E_LOGIN_MAX_RETRIES ou utiliser PW_WEB_SERVER=1.\n`,
+          );
+        }
+        throw e;
+      }
+      const delay = 450 * attempt;
+      log(`login POST retry ${attempt}/${max} dans ${delay}ms`);
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+  throw lastErr;
+}
+
+async function requestGetWithNetworkRetry(
+  page: Page,
+  path: string,
+  params: Record<string, string | number | boolean>,
+  headers: Record<string, string>,
+): Promise<APIResponse> {
+  const max = loginMaxRetries();
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= max; attempt++) {
+    try {
+      return await page.request.get(path, {
+        params,
+        headers,
+        timeout: 60_000,
+      });
+    } catch (e) {
+      lastErr = e;
+      const transient = isTransientNetworkError(e);
+      if (!transient || attempt === max) {
+        if (transient) {
+          throw new Error(
+            `[e2e] GET ${path} échoue après ${max} tentative(s). Dernière: ${String((e as Error)?.message ?? e)}`,
+          );
+        }
+        throw e;
+      }
+      await new Promise((r) => setTimeout(r, 450 * attempt));
+    }
+  }
+  throw lastErr;
+}
+
 function normalizePlan(plan?: string) {
   const p = (plan ?? "free").toLowerCase().trim();
   if (p === "pro") return "premium";
@@ -495,15 +581,15 @@ async function tryLoginCandidates(page: Page, candidates: string[], payload: any
   for (const p of candidates) {
     const path = normalizePath(p);
 
-    // 1) POST (normal)
-    const resPost = await page.request.post(path, { data: payload, headers });
+    // 1) POST (normal) — reprises sur ECONNRESET / fermeture prématurée côté serveur (dev)
+    const resPost = await requestPostWithNetworkRetry(page, path, payload, headers);
     lastRes = resPost;
 
     if (resPost.status() < 400) return resPost;
 
     // 2) Si 405 => fallback GET (pratique si /api/dev/login n'exporte que GET)
     if (resPost.status() === 405) {
-      const resGet = await page.request.get(path, { params: payload, headers });
+      const resGet = await requestGetWithNetworkRetry(page, path, payload as Record<string, string | number | boolean>, headers);
       lastRes = resGet;
 
       if (resGet.status() < 400) return resGet;
