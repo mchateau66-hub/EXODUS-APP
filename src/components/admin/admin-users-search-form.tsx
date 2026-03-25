@@ -4,12 +4,15 @@ type FeatureOption = { value: string; label: string }
 
 export type AdminPremiumFilterMode = "" | "with" | "without"
 
+export type AdminBillingFilterMode = "" | "stripe" | "subscribed" | "canceling"
+
 type AdminUsersSearchFormProps = {
   q: string
   role: string
   status: string
   feature: string
   premium: AdminPremiumFilterMode
+  billing: AdminBillingFilterMode
   roleOptions: Role[]
   statusOptions: UserStatus[]
   featureOptions: readonly FeatureOption[]
@@ -36,6 +39,7 @@ export function AdminUsersSearchForm({
   status,
   feature,
   premium,
+  billing,
   roleOptions,
   statusOptions,
   featureOptions,
@@ -124,7 +128,7 @@ export function AdminUsersSearchForm({
           </button>
         </div>
 
-        <div className="min-w-0 md:col-span-2 lg:col-span-4">
+        <div className="min-w-0 md:col-span-1 lg:col-span-3">
           <label htmlFor="admin-users-premium" className="mb-1.5 block text-xs font-medium text-[var(--text-muted)]">
             Offre premium
           </label>
@@ -137,6 +141,23 @@ export function AdminUsersSearchForm({
             <option value="">Tous les utilisateurs</option>
             <option value="with">Avec au moins une fonctionnalité premium</option>
             <option value="without">Sans fonctionnalité premium active</option>
+          </select>
+        </div>
+
+        <div className="min-w-0 md:col-span-1 lg:col-span-3">
+          <label htmlFor="admin-users-billing" className="mb-1.5 block text-xs font-medium text-[var(--text-muted)]">
+            Billing
+          </label>
+          <select
+            id="admin-users-billing"
+            name="billing"
+            defaultValue={billing}
+            className="w-full rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--card-bg)] px-3 py-2 text-sm text-[var(--text)] shadow-[var(--card-shadow)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--border)]"
+          >
+            <option value="">Tous les états billing</option>
+            <option value="stripe">Avec client Stripe</option>
+            <option value="subscribed">Avec abonnement actif</option>
+            <option value="canceling">En résiliation fin de période</option>
           </select>
         </div>
       </div>

@@ -1,7 +1,7 @@
 import Link from "next/link"
 import type { Role, UserStatus } from "@prisma/client"
 import { FEATURE_KEYS, type FeatureKey } from "@/domain/billing/features"
-import type { AdminPremiumFilterMode } from "@/components/admin/admin-users-search-form"
+import type { AdminBillingFilterMode, AdminPremiumFilterMode } from "@/components/admin/admin-users-search-form"
 
 export type AdminUserSearchResult = {
   id: string
@@ -30,6 +30,12 @@ const PREMIUM_FILTER_LABELS: Record<Exclude<AdminPremiumFilterMode, "">, string>
   without: "sans fonctionnalité premium",
 }
 
+const BILLING_FILTER_LABELS: Record<Exclude<AdminBillingFilterMode, "">, string> = {
+  stripe: "avec client Stripe",
+  subscribed: "avec abonnement actif",
+  canceling: "en résiliation fin de période",
+}
+
 /** Libellés pour le filtre admin feature (whitelist recherche utilisateurs). */
 const FEATURE_FILTER_LABEL: Partial<Record<FeatureKey, string>> = {
   [FEATURE_KEYS.messagesUnlimited]: "Messages illimités",
@@ -45,6 +51,7 @@ type AdminUsersResultsProps = {
   appliedStatus: UserStatus | null
   appliedFeature: FeatureKey | null
   premiumFilter: AdminPremiumFilterMode
+  billingFilter: AdminBillingFilterMode
   hasActiveCriteria: boolean
   results: AdminUserSearchResult[]
   searchError: boolean
@@ -67,6 +74,7 @@ export function AdminUsersResults({
   appliedStatus,
   appliedFeature,
   premiumFilter,
+  billingFilter,
   hasActiveCriteria,
   results,
   searchError,
@@ -80,6 +88,9 @@ export function AdminUsersResults({
   }
   if (premiumFilter === "with" || premiumFilter === "without") {
     filterChips.push(PREMIUM_FILTER_LABELS[premiumFilter])
+  }
+  if (billingFilter === "stripe" || billingFilter === "subscribed" || billingFilter === "canceling") {
+    filterChips.push(BILLING_FILTER_LABELS[billingFilter])
   }
 
   if (searchError) {
@@ -96,8 +107,8 @@ export function AdminUsersResults({
   if (!hasActiveCriteria) {
     return (
       <p className="text-sm text-[var(--text-muted)]">
-        Recherchez un utilisateur par e-mail, identifiant ou slug, puis affinez par rôle, statut, fonctionnalité premium
-        précise (entitlement actif) ou offre premium (avec ou sans fonctionnalité de la liste admin).
+        Recherchez un utilisateur par e-mail, identifiant ou slug, puis affinez par rôle, statut, fonctionnalités premium ou
+        état billing (Stripe, abonnement, résiliation).
       </p>
     )
   }

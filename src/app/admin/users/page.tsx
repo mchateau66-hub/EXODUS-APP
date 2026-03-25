@@ -1,6 +1,10 @@
 import Link from "next/link"
 import { redirect } from "next/navigation"
-import { AdminUsersSearchForm, type AdminPremiumFilterMode } from "@/components/admin/admin-users-search-form"
+import {
+  AdminUsersSearchForm,
+  type AdminBillingFilterMode,
+  type AdminPremiumFilterMode,
+} from "@/components/admin/admin-users-search-form"
 import {
   AdminUsersResults,
   type AdminUserSearchResult,
@@ -8,7 +12,7 @@ import {
 import { FEATURE_KEYS, type FeatureKey } from "@/domain/billing/features"
 import { prisma } from "@/lib/db"
 import { requireOnboardingStep } from "@/lib/onboarding"
-import type { Prisma, Role, UserStatus } from "@prisma/client"
+import type { Prisma, Role, SubStatus, UserStatus } from "@prisma/client"
 
 export const dynamic = "force-dynamic"
 export const revalidate = 0
@@ -37,11 +41,19 @@ const ALLOWED_ADMIN_FEATURES = new Set<string>(ADMIN_USER_FEATURE_OPTIONS.map((o
 /** Mêmes clés que le filtre feature — entitlements actifs pour les modes `premium=with` / `without`. */
 const PREMIUM_FEATURE_KEYS = ADMIN_USER_FEATURE_OPTIONS.map((o) => o.value)
 
+/** Statuts d’abonnement Stripe/Prisma encore pertinents côté support (« abonné » ou équivalent). */
+const SUBSCRIBED_SUB_STATUSES = ["active", "trialing", "past_due"] as const satisfies readonly SubStatus[]
+
 function normalizePremiumFilter(raw: string): AdminPremiumFilterMode {
   const t = raw.trim()
   if (t === "1" || t === "with") return "with"
   if (t === "without") return "without"
   return ""
+}
+
+function normalizeBillingFilter(raw: string | undefined): AdminBillingFilterMode {
+  const t = typeof raw === "string" ? raw.trim() : ""
+  return t === "stripe" || t === "subscribed" || t === "canceling" ? t : ""
 }
 
 function safeFeatureFilter(raw: string): FeatureKey | undefined {
@@ -63,7 +75,14 @@ function safeStatusFilter(raw: string): UserStatus | undefined {
 }
 
 type PageProps = {
-  searchParams?: Promise<{ q?: string; role?: string; status?: string; feature?: string; premium?: string }>
+  searchParams?: Promise<{
+    q?: string
+    role?: string
+    status?: string
+    feature?: string
+    premium?: string
+    billing?: string
+  }>
 }
 
 export default async function AdminUsersIndexPage({ searchParams }: PageProps) {
@@ -79,14 +98,18 @@ export default async function AdminUsersIndexPage({ searchParams }: PageProps) {
   const rawStatus = typeof sp.status === "string" ? sp.status : ""
   const rawFeature = typeof sp.feature === "string" ? sp.feature : ""
   const rawPremium = typeof sp.premium === "string" ? sp.premium : ""
+  const rawBilling = typeof sp.billing === "string" ? sp.billing : ""
 
   const q = rawQ.trim()
   const roleFilter = safeRoleFilter(rawRole)
   const statusFilter = safeStatusFilter(rawStatus)
   const featureFilter = safeFeatureFilter(rawFeature)
   const premiumFilter = normalizePremiumFilter(rawPremium)
+  const billingFilter = normalizeBillingFilter(rawBilling)
 
-  const hasActiveCriteria = Boolean(q || roleFilter || statusFilter || featureFilter || premiumFilter !== "")
+  const hasActiveCriteria = Boolean(
+    q || roleFilter || statusFilter || featureFilter || premiumFilter !== "" || billingFilter !== "",
+  )
 
   const now = new Date()
 
@@ -149,6 +172,32 @@ export default async function AdminUsersIndexPage({ searchParams }: PageProps) {
                 feature_key: { in: [...PREMIUM_FEATURE_KEYS] },
                 ...activeEntitlement,
               },
+            },
+          },
+        })
+      }
+
+      if (billingFilter === "stripe") {
+        andClauses.push({
+          AND: [{ stripe_customer_id: { not: null } }, { NOT: { stripe_customer_id: "" } }],
+        })
+      }
+
+      if (billingFilter === "subscribed") {
+        andClauses.push({
+          subscriptions: {
+            some: {
+              status: { in: [...SUBSCRIBED_SUB_STATUSES] },
+            },
+          },
+        })
+      }
+
+      if (billingFilter === "canceling") {
+        andClauses.push({
+          subscriptions: {
+            some: {
+              cancel_at_period_end: true,
             },
           },
         })
@@ -220,6 +269,7 @@ export default async function AdminUsersIndexPage({ searchParams }: PageProps) {
             status={statusFilter ?? ""}
             feature={featureFilter ?? ""}
             premium={premiumFilter}
+            billing={billingFilter}
             roleOptions={[...ADMIN_USER_ROLE_OPTIONS]}
             statusOptions={[...ADMIN_USER_STATUS_OPTIONS]}
             featureOptions={[...ADMIN_USER_FEATURE_OPTIONS]}
@@ -234,6 +284,7 @@ export default async function AdminUsersIndexPage({ searchParams }: PageProps) {
             appliedStatus={statusFilter ?? null}
             appliedFeature={featureFilter ?? null}
             premiumFilter={premiumFilter}
+            billingFilter={billingFilter}
             hasActiveCriteria={hasActiveCriteria}
             results={results}
             searchError={searchError}
