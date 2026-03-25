@@ -1,5 +1,15 @@
 # E2E — zone admin (`/admin/users`, etc.)
 
+## Point d’entrée DX (local)
+
+Pré-requis habituels : app joignable (`pnpm dev` ou équivalent), `DATABASE_URL`, `ALLOW_DEV_LOGIN=1`, `.env.local` / `.e2e.local.env` selon ton flux. Voir aussi la section **Variables utiles** ci-dessous.
+
+```bash
+pnpm run e2e:admin
+```
+
+Équivalent explicite : `pnpm exec playwright test e2e/admin-users.spec.ts --project=chromium --workers=1` (aligné sur l’étape CI **Run Playwright admin users E2E**). À utiliser après un changement sur les filtres admin, le récap ou le spec, avant de pousser.
+
 ## CI (pull request)
 
 Le job **`e2e-smoke-local`** dans `.github/workflows/e2e.yml` enchaîne :
@@ -36,19 +46,11 @@ Les exécutions **smoke/full remote** (`workflow_dispatch`) ne lancent pas ce de
 
 ## Lancer uniquement les tests admin users
 
-**Recommandé (aligné CI, Chromium, 1 worker) :**
-
-```bash
-pnpm e2e:admin
-```
-
-Équivalent explicite :
+Préférer `pnpm run e2e:admin` (voir ci-dessus). Commande brute équivalente :
 
 ```bash
 pnpm exec playwright test e2e/admin-users.spec.ts --project=chromium --workers=1
 ```
-
-Prérequis : serveur Next + DB accessibles comme pour toute la suite Playwright (voir `.env.local` / `.e2e.local.env`, `ALLOW_DEV_LOGIN`, etc.).
 
 Le spec accepte aussi le texte « Filtres actifs : … » si un build sans `data-testid` tourne encore sur le port cible.
 
