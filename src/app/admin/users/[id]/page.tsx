@@ -46,6 +46,7 @@ export default async function AdminUserUsagePage({ params }: { params: Promise<{
     hasSearchPriority,
     effectiveFeatures,
     subscription,
+    subscriptionHistoryRows,
   ] = await Promise.all([
     getUsageCounters(user.id),
     getMessageDailyLimit(user.id),
@@ -57,6 +58,21 @@ export default async function AdminUserUsagePage({ params }: { params: Promise<{
     prisma.subscription.findFirst({
       where: { user_id: user.id },
       orderBy: { created_at: "desc" },
+      select: {
+        plan_key: true,
+        status: true,
+        current_period_end: true,
+        cancel_at_period_end: true,
+        created_at: true,
+        updated_at: true,
+        stripe_subscription_id: true,
+        plan: { select: { name: true } },
+      },
+    }),
+    prisma.subscription.findMany({
+      where: { user_id: user.id },
+      orderBy: { created_at: "desc" },
+      take: 5,
       select: {
         plan_key: true,
         status: true,
@@ -91,6 +107,16 @@ export default async function AdminUserUsagePage({ params }: { params: Promise<{
           stripeSubscriptionId: subscription.stripe_subscription_id,
         }
       : null,
+    subscriptionHistory: subscriptionHistoryRows.map((row) => ({
+      planName: row.plan?.name ?? null,
+      planKey: row.plan_key ?? null,
+      status: row.status,
+      currentPeriodEnd: row.current_period_end,
+      cancelAtPeriodEnd: row.cancel_at_period_end,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      stripeSubscriptionId: row.stripe_subscription_id,
+    })),
   }
 
   return (

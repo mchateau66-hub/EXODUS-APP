@@ -5,6 +5,17 @@ import {
   SettingsInfoBox,
 } from "@/components/account/settings/settings-section"
 
+export type UserSubscriptionHistoryItem = {
+  planName: string | null
+  planKey: string | null
+  status: SubStatus
+  currentPeriodEnd: Date | null
+  cancelAtPeriodEnd: boolean
+  createdAt: Date
+  updatedAt: Date
+  stripeSubscriptionId: string
+}
+
 export type UserBillingVm = {
   stripeCustomerId: string | null
   hasStripeCustomer: boolean
@@ -18,6 +29,7 @@ export type UserBillingVm = {
     updatedAt: Date
     stripeSubscriptionId: string
   } | null
+  subscriptionHistory: UserSubscriptionHistoryItem[]
 }
 
 export type UserUsagePanelProps = {
@@ -100,13 +112,18 @@ function searchPriorityLabel(active: boolean): string {
   return active ? "Activée" : "Non activée"
 }
 
-function planLabel(sub: NonNullable<UserBillingVm["latestSubscription"]>): string {
-  const name = sub.planName?.trim()
-  const key = sub.planKey?.trim()
+function planDisplayName(planName: string | null | undefined, planKey: string | null | undefined): string {
+  const name = planName?.trim()
+  const key = planKey?.trim()
   if (name && key) return `${name} (${key})`
   if (name) return name
   if (key) return key
-  return "Aucun libellé de plan"
+  return "Non disponible"
+}
+
+function planLabel(sub: NonNullable<UserBillingVm["latestSubscription"]>): string {
+  const label = planDisplayName(sub.planName, sub.planKey)
+  return label === "Non disponible" ? "Aucun libellé de plan" : label
 }
 
 /**
@@ -196,6 +213,60 @@ export function UserUsagePanel({
             Ce résumé reflète les données d’abonnement les plus récentes connues dans l’application et sert d’aide au
             support.
           </SettingsInfoBox>
+
+          <div className="mt-8 border-t border-[var(--border)] pt-6">
+            <h3 className="text-sm font-semibold tracking-tight text-[var(--text)]">
+              Historique récent des abonnements
+            </h3>
+            {billing.subscriptionHistory.length === 0 ? (
+              <p className="mt-3 text-sm text-[var(--text-muted)]">Aucun historique d’abonnement disponible.</p>
+            ) : (
+              <div className="mt-4 space-y-4">
+                {billing.subscriptionHistory.map((row) => (
+                  <div
+                    key={row.stripeSubscriptionId}
+                    className="rounded-[var(--radius-lg)] border border-[var(--border)] bg-[var(--bg-muted)] p-4 md:p-5"
+                  >
+                    <SettingsFactsList>
+                      <SettingsFactRow label="Plan" value={planDisplayName(row.planName, row.planKey)} />
+                      <SettingsFactRow
+                        label="Clé de plan"
+                        value={row.planKey?.trim() ? <span className="font-mono text-xs">{row.planKey}</span> : "Non disponible"}
+                      />
+                      <SettingsFactRow label="Statut abonnement" value={subStatusLabelFr(row.status)} />
+                      <SettingsFactRow
+                        label="Créé le"
+                        value={row.createdAt ? formatDateTimeFr(row.createdAt) : "Non disponible"}
+                      />
+                      <SettingsFactRow
+                        label="Fin de période"
+                        value={
+                          row.currentPeriodEnd ? formatDateTimeFr(row.currentPeriodEnd) : "Non disponible"
+                        }
+                      />
+                      <SettingsFactRow
+                        label="Résiliation en fin de période"
+                        value={row.cancelAtPeriodEnd ? "Oui" : "Non"}
+                      />
+                      <SettingsFactRow
+                        label="Identifiant abonnement Stripe"
+                        value={
+                          row.stripeSubscriptionId?.trim() ? (
+                            <span className="break-all font-mono text-xs">{row.stripeSubscriptionId}</span>
+                          ) : (
+                            "Non disponible"
+                          )
+                        }
+                      />
+                    </SettingsFactsList>
+                  </div>
+                ))}
+              </div>
+            )}
+            <SettingsInfoBox>
+              Cet historique présente les abonnements les plus récents connus dans l’application et facilite le support.
+            </SettingsInfoBox>
+          </div>
         </div>
       </section>
 
