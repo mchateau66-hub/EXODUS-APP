@@ -1,15 +1,30 @@
+import type { SubStatus } from "@prisma/client"
 import {
   SettingsFactRow,
   SettingsFactsList,
   SettingsInfoBox,
 } from "@/components/account/settings/settings-section"
 
+export type UserBillingVm = {
+  stripeCustomerId: string | null
+  hasStripeCustomer: boolean
+  latestSubscription: {
+    planName: string | null
+    planKey: string | null
+    status: SubStatus
+    currentPeriodEnd: Date | null
+    cancelAtPeriodEnd: boolean
+    createdAt: Date
+    updatedAt: Date
+    stripeSubscriptionId: string
+  } | null
+}
+
 export type UserUsagePanelProps = {
   email: string | null
   role: string | null
   status: string | null
-  stripeCustomerId: string | null
-  subscriptionSummary: string | null
+  billing: UserBillingVm
   usage: {
     messagesSentToday: number | null
     messagesSentTotal: number | null
@@ -26,6 +41,29 @@ export type UserUsagePanelProps = {
     hasSearchPriority: boolean
   }
   effectiveFeatures: string[]
+}
+
+function formatDateTimeFr(d: Date): string {
+  try {
+    return new Intl.DateTimeFormat("fr-FR", {
+      dateStyle: "medium",
+      timeStyle: "short",
+    }).format(d)
+  } catch {
+    return d.toISOString()
+  }
+}
+
+function subStatusLabelFr(s: SubStatus): string {
+  const m: Record<SubStatus, string> = {
+    incomplete: "Incomplet",
+    trialing: "Période d’essai",
+    active: "Actif",
+    past_due: "Paiement en retard",
+    canceled: "Résilié",
+    unpaid: "Impayé",
+  }
+  return m[s] ?? s
 }
 
 function nOrDash(n: number | null): string {
@@ -62,6 +100,15 @@ function searchPriorityLabel(active: boolean): string {
   return active ? "Activée" : "Non activée"
 }
 
+function planLabel(sub: NonNullable<UserBillingVm["latestSubscription"]>): string {
+  const name = sub.planName?.trim()
+  const key = sub.planKey?.trim()
+  if (name && key) return `${name} (${key})`
+  if (name) return name
+  if (key) return key
+  return "Aucun libellé de plan"
+}
+
 /**
  * Panneau lecture seule — usage, limites messages, entitlements effectifs (admin / support).
  */
@@ -69,13 +116,24 @@ export function UserUsagePanel({
   email,
   role,
   status,
-  stripeCustomerId,
-  subscriptionSummary,
+  billing,
   usage,
   limits,
   effectiveFeatures,
 }: UserUsagePanelProps) {
   const featuresSorted = [...effectiveFeatures].sort((a, b) => a.localeCompare(b))
+  const sub = billing.latestSubscription
+
+  const cancelEndLabel = !sub
+    ? "Non disponible"
+    : sub.cancelAtPeriodEnd
+      ? "Oui"
+      : "Non"
+
+  const periodEndLabel =
+    !sub ? "Non disponible" : sub.currentPeriodEnd ? formatDateTimeFr(sub.currentPeriodEnd) : "Non disponible"
+
+  const statusLabel = !sub ? "Non disponible" : subStatusLabelFr(sub.status)
 
   return (
     <div className="space-y-6">
@@ -90,15 +148,54 @@ export function UserUsagePanel({
             <SettingsFactRow label="E-mail" value={email ? <span className="break-all">{email}</span> : "Non disponible"} />
             <SettingsFactRow label="Rôle" value={role ?? "Non disponible"} />
             <SettingsFactRow label="Statut du compte" value={status ?? "Non disponible"} />
+          </SettingsFactsList>
+        </div>
+      </section>
+
+      <section
+        className="rounded-[var(--radius-lg)] border border-[var(--border)] bg-[var(--card-bg)] p-5 shadow-[var(--card-shadow)] md:p-6"
+      >
+        <h2 className="border-b border-[var(--border)] pb-3 text-base font-semibold tracking-tight text-[var(--text)]">
+          Abonnement et billing
+        </h2>
+        <div className="pt-5">
+          <SettingsFactsList>
             <SettingsFactRow
               label="Client Stripe"
-              value={stripeCustomerId?.trim() ? <span className="break-all font-mono text-xs">{stripeCustomerId}</span> : "—"}
+              value={billing.hasStripeCustomer ? "Oui" : "Non"}
             />
             <SettingsFactRow
-              label="Abonnement (aperçu)"
-              value={subscriptionSummary?.trim() ? subscriptionSummary : "—"}
+              label="Stripe customer"
+              value={
+                billing.stripeCustomerId?.trim() ? (
+                  <span className="break-all font-mono text-xs">{billing.stripeCustomerId}</span>
+                ) : (
+                  "Non disponible"
+                )
+              }
             />
+            <SettingsFactRow
+              label="Plan"
+              value={sub ? planLabel(sub) : "Aucun abonnement"}
+            />
+            <SettingsFactRow label="Statut abonnement" value={statusLabel} />
+            <SettingsFactRow label="Fin de période" value={periodEndLabel} />
+            <SettingsFactRow label="Résiliation en fin de période" value={cancelEndLabel} />
+            {sub ? (
+              <>
+                <SettingsFactRow label="Abonnement créé le" value={formatDateTimeFr(sub.createdAt)} />
+                <SettingsFactRow label="Dernière mise à jour abonnement" value={formatDateTimeFr(sub.updatedAt)} />
+                <SettingsFactRow
+                  label="Identifiant abonnement Stripe"
+                  value={<span className="break-all font-mono text-xs">{sub.stripeSubscriptionId}</span>}
+                />
+              </>
+            ) : null}
           </SettingsFactsList>
+          <SettingsInfoBox>
+            Ce résumé reflète les données d’abonnement les plus récentes connues dans l’application et sert d’aide au
+            support.
+          </SettingsInfoBox>
         </div>
       </section>
 

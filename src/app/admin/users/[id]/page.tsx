@@ -60,6 +60,11 @@ export default async function AdminUserUsagePage({ params }: { params: Promise<{
       select: {
         plan_key: true,
         status: true,
+        current_period_end: true,
+        cancel_at_period_end: true,
+        created_at: true,
+        updated_at: true,
+        stripe_subscription_id: true,
         plan: { select: { name: true } },
       },
     }),
@@ -71,9 +76,22 @@ export default async function AdminUserUsagePage({ params }: { params: Promise<{
       ? null
       : Math.max(0, messageDailyLimit - messagesSentToday)
 
-  const subscriptionSummary = subscription
-    ? `${subscription.plan?.name ?? subscription.plan_key ?? "—"} · ${subscription.status}`
-    : null
+  const billing = {
+    stripeCustomerId: user.stripe_customer_id,
+    hasStripeCustomer: Boolean(user.stripe_customer_id?.trim()),
+    latestSubscription: subscription
+      ? {
+          planName: subscription.plan?.name ?? null,
+          planKey: subscription.plan_key ?? null,
+          status: subscription.status,
+          currentPeriodEnd: subscription.current_period_end,
+          cancelAtPeriodEnd: subscription.cancel_at_period_end,
+          createdAt: subscription.created_at,
+          updatedAt: subscription.updated_at,
+          stripeSubscriptionId: subscription.stripe_subscription_id,
+        }
+      : null,
+  }
 
   return (
     <main className="min-h-[100dvh] bg-[var(--bg)] text-[var(--text)]">
@@ -109,8 +127,7 @@ export default async function AdminUserUsagePage({ params }: { params: Promise<{
             email={user.email}
             role={user.role}
             status={user.status}
-            stripeCustomerId={user.stripe_customer_id}
-            subscriptionSummary={subscriptionSummary}
+            billing={billing}
             usage={
               usageCounters
                 ? {
