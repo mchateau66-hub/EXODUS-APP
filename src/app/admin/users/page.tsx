@@ -5,6 +5,7 @@ import {
   AdminUsersResults,
   type AdminUserSearchResult,
 } from "@/components/admin/admin-users-results"
+import { FEATURE_KEYS, type FeatureKey } from "@/domain/billing/features"
 import { prisma } from "@/lib/db"
 import { requireOnboardingStep } from "@/lib/onboarding"
 import type { Prisma, Role, UserStatus } from "@prisma/client"
@@ -22,6 +23,23 @@ const ADMIN_USER_STATUS_OPTIONS = ["active", "disabled", "deleted"] as const sat
 const ALLOWED_ROLES = new Set<string>(ADMIN_USER_ROLE_OPTIONS)
 const ALLOWED_STATUSES = new Set<string>(ADMIN_USER_STATUS_OPTIONS)
 
+/** Whitelist features premium — alignées sur les clés produit et `userHasFeature`. */
+const ADMIN_USER_FEATURE_OPTIONS = [
+  { value: FEATURE_KEYS.messagesUnlimited, label: "Messages illimités" },
+  { value: FEATURE_KEYS.contactUnlock, label: "Déverrouillage de contact" },
+  { value: FEATURE_KEYS.coachPriorityListing, label: "Mise en avant du profil coach" },
+  { value: FEATURE_KEYS.profileBoost, label: "Boost du profil" },
+  { value: FEATURE_KEYS.searchPriority, label: "Priorité dans les résultats de recherche" },
+] as const satisfies readonly { value: FeatureKey; label: string }[]
+
+const ALLOWED_ADMIN_FEATURES = new Set<string>(ADMIN_USER_FEATURE_OPTIONS.map((o) => o.value))
+
+function safeFeatureFilter(raw: string): FeatureKey | undefined {
+  const t = raw.trim()
+  if (!t || !ALLOWED_ADMIN_FEATURES.has(t)) return undefined
+  return t as FeatureKey
+}
+
 function safeRoleFilter(raw: string): Role | undefined {
   const t = raw.trim()
   if (!t || !ALLOWED_ROLES.has(t)) return undefined
@@ -35,7 +53,7 @@ function safeStatusFilter(raw: string): UserStatus | undefined {
 }
 
 type PageProps = {
-  searchParams?: Promise<{ q?: string; role?: string; status?: string }>
+  searchParams?: Promise<{ q?: string; role?: string; status?: string; feature?: string }>
 }
 
 export default async function AdminUsersIndexPage({ searchParams }: PageProps) {
@@ -49,12 +67,16 @@ export default async function AdminUsersIndexPage({ searchParams }: PageProps) {
   const rawQ = typeof sp.q === "string" ? sp.q : ""
   const rawRole = typeof sp.role === "string" ? sp.role : ""
   const rawStatus = typeof sp.status === "string" ? sp.status : ""
+  const rawFeature = typeof sp.feature === "string" ? sp.feature : ""
 
   const q = rawQ.trim()
   const roleFilter = safeRoleFilter(rawRole)
   const statusFilter = safeStatusFilter(rawStatus)
+  const featureFilter = safeFeatureFilter(rawFeature)
 
-  const hasActiveCriteria = Boolean(q || roleFilter || statusFilter)
+  const hasActiveCriteria = Boolean(q || roleFilter || statusFilter || featureFilter)
+
+  const now = new Date()
 
   let results: AdminUserSearchResult[] = []
   let searchError = false
@@ -74,6 +96,17 @@ export default async function AdminUsersIndexPage({ searchParams }: PageProps) {
           : {}),
         ...(roleFilter ? { role: roleFilter } : {}),
         ...(statusFilter ? { status: statusFilter } : {}),
+        ...(featureFilter
+          ? {
+              entitlements: {
+                some: {
+                  feature_key: featureFilter,
+                  starts_at: { lte: now },
+                  OR: [{ expires_at: null }, { expires_at: { gt: now } }],
+                },
+              },
+            }
+          : {}),
       }
 
       const rows = await prisma.user.findMany({
@@ -138,8 +171,10 @@ export default async function AdminUsersIndexPage({ searchParams }: PageProps) {
             q={rawQ}
             role={roleFilter ?? ""}
             status={statusFilter ?? ""}
+            feature={featureFilter ?? ""}
             roleOptions={[...ADMIN_USER_ROLE_OPTIONS]}
             statusOptions={[...ADMIN_USER_STATUS_OPTIONS]}
+            featureOptions={[...ADMIN_USER_FEATURE_OPTIONS]}
           />
         </div>
 
@@ -149,6 +184,7 @@ export default async function AdminUsersIndexPage({ searchParams }: PageProps) {
             queryTrimmed={q}
             appliedRole={roleFilter ?? null}
             appliedStatus={statusFilter ?? null}
+            appliedFeature={featureFilter ?? null}
             hasActiveCriteria={hasActiveCriteria}
             results={results}
             searchError={searchError}

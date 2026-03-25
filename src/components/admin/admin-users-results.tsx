@@ -1,5 +1,6 @@
 import Link from "next/link"
 import type { Role, UserStatus } from "@prisma/client"
+import { FEATURE_KEYS, type FeatureKey } from "@/domain/billing/features"
 
 export type AdminUserSearchResult = {
   id: string
@@ -23,10 +24,20 @@ const STATUS_LABEL: Record<UserStatus, string> = {
   deleted: "Supprimé",
 }
 
+/** Libellés pour le filtre admin feature (whitelist recherche utilisateurs). */
+const FEATURE_FILTER_LABEL: Partial<Record<FeatureKey, string>> = {
+  [FEATURE_KEYS.messagesUnlimited]: "Messages illimités",
+  [FEATURE_KEYS.contactUnlock]: "Déverrouillage de contact",
+  [FEATURE_KEYS.coachPriorityListing]: "Mise en avant du profil coach",
+  [FEATURE_KEYS.profileBoost]: "Boost du profil",
+  [FEATURE_KEYS.searchPriority]: "Priorité dans les résultats de recherche",
+}
+
 type AdminUsersResultsProps = {
   queryTrimmed: string
   appliedRole: Role | null
   appliedStatus: UserStatus | null
+  appliedFeature: FeatureKey | null
   hasActiveCriteria: boolean
   results: AdminUserSearchResult[]
   searchError: boolean
@@ -47,6 +58,7 @@ export function AdminUsersResults({
   queryTrimmed,
   appliedRole,
   appliedStatus,
+  appliedFeature,
   hasActiveCriteria,
   results,
   searchError,
@@ -54,6 +66,10 @@ export function AdminUsersResults({
   const filterChips: string[] = []
   if (appliedRole) filterChips.push(`rôle ${ROLE_LABEL[appliedRole]}`)
   if (appliedStatus) filterChips.push(`statut ${STATUS_LABEL[appliedStatus]}`)
+  if (appliedFeature) {
+    const fl = FEATURE_FILTER_LABEL[appliedFeature]
+    filterChips.push(`fonctionnalité ${fl ?? appliedFeature}`)
+  }
 
   if (searchError) {
     return (
@@ -69,7 +85,8 @@ export function AdminUsersResults({
   if (!hasActiveCriteria) {
     return (
       <p className="text-sm text-[var(--text-muted)]">
-        Recherchez un utilisateur par e-mail, identifiant ou slug, ou appliquez un filtre par rôle ou statut.
+        Recherchez un utilisateur par e-mail, identifiant ou slug, ou appliquez un filtre par rôle, statut ou fonctionnalité
+        premium (entitlement actif).
       </p>
     )
   }
