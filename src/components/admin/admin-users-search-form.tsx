@@ -152,7 +152,7 @@ export function AdminUsersSearchForm({
 
         <div className="min-w-0 md:col-span-1 lg:col-span-3">
           <label htmlFor="admin-users-billing" className="mb-1.5 block text-xs font-medium text-[var(--text-muted)]">
-            Billing
+            Facturation Stripe
           </label>
           <select
             id="admin-users-billing"
@@ -160,16 +160,16 @@ export function AdminUsersSearchForm({
             defaultValue={billing}
             className="w-full rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--card-bg)] px-3 py-2 text-sm text-[var(--text)] shadow-[var(--card-shadow)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--border)]"
           >
-            <option value="">Tous les états billing</option>
+            <option value="">Tous les états</option>
             <option value="stripe">Avec client Stripe</option>
-            <option value="subscribed">Avec abonnement actif</option>
-            <option value="canceling">En résiliation fin de période</option>
+            <option value="subscribed">Abonnement actif, essai ou impayé léger</option>
+            <option value="canceling">Résiliation à l’échéance</option>
           </select>
         </div>
 
         <div className="min-w-0 md:col-span-1 lg:col-span-3">
           <label htmlFor="admin-users-plan" className="mb-1.5 block text-xs font-medium text-[var(--text-muted)]">
-            Plan d’abonnement
+            Forfait Stripe
           </label>
           <select
             id="admin-users-plan"
@@ -177,7 +177,7 @@ export function AdminUsersSearchForm({
             defaultValue={plan}
             className="w-full rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--card-bg)] px-3 py-2 text-sm text-[var(--text)] shadow-[var(--card-shadow)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--border)]"
           >
-            <option value="">Tous les plans</option>
+            <option value="">Tous les forfaits</option>
             {planOptions.map((opt) => (
               <option key={opt.value} value={opt.value}>
                 {opt.label}

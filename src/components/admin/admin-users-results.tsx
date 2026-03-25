@@ -26,14 +26,14 @@ const STATUS_LABEL: Record<UserStatus, string> = {
 }
 
 const PREMIUM_FILTER_LABELS: Record<Exclude<AdminPremiumFilterMode, "">, string> = {
-  with: "offre premium",
-  without: "sans fonctionnalité premium",
+  with: "droits premium actifs (fonctionnalités)",
+  without: "sans droits premium actifs",
 }
 
 const BILLING_FILTER_LABELS: Record<Exclude<AdminBillingFilterMode, "">, string> = {
-  stripe: "avec client Stripe",
-  subscribed: "avec abonnement actif",
-  canceling: "en résiliation fin de période",
+  stripe: "client Stripe renseigné",
+  subscribed: "abonnement Stripe : actif, essai ou impayé léger",
+  canceling: "résiliation à l’échéance",
 }
 
 /** Libellés pour le filtre admin feature (whitelist recherche utilisateurs). */
@@ -101,7 +101,7 @@ export function AdminUsersResults({
     filterChips.push(BILLING_FILTER_LABELS[billingFilter])
   }
   if (appliedPlan) {
-    filterChips.push(`plan ${PLAN_FILTER_LABEL[appliedPlan]}`)
+    filterChips.push(`forfait Stripe « ${PLAN_FILTER_LABEL[appliedPlan]} »`)
   }
 
   if (searchError) {
@@ -118,9 +118,9 @@ export function AdminUsersResults({
   if (!hasActiveCriteria) {
     return (
       <p className="text-sm text-[var(--text-muted)]">
-        Recherchez un utilisateur par e-mail, identifiant ou slug, puis affinez par rôle, statut, fonctionnalités premium,
-        état billing (Stripe, abonnement, résiliation) ou plan d’abonnement (abonnement actif, essai ou impayé — comme le
-        filtre « abonnement actif »).
+        Recherchez un utilisateur par e-mail, identifiant ou slug, puis affinez par rôle, statut, fonctionnalités premium
+        (entitlements), facturation Stripe ou forfait. Le forfait utilise les mêmes statuts d’abonnement que l’option
+        « Abonnement actif, essai ou impayé léger » ci-dessus.
       </p>
     )
   }
