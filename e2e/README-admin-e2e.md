@@ -41,3 +41,5 @@ pnpm exec playwright test e2e/admin-users.spec.ts
 ```
 
 Le spec accepte aussi le texte « Filtres actifs : … » si un build sans `data-testid` tourne encore sur le port cible.
+
+Les scénarios incluent un cas **SSR sans résultat** (`q` + `plan` volontairement impossible) pour verrouiller le message vide et le récap, sans soumettre le formulaire.

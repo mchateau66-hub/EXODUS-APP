@@ -58,4 +58,20 @@ test.describe("admin /admin/users — filtres plan & facturation", () => {
     await expect(summary).toContainText(/forfait Stripe/i);
     await expect(summary).toContainText(/Athlète premium/i);
   });
+
+  test("recherche sans résultat : message explicite et récap filtres (SSR)", async ({ page }) => {
+    const token = "zze2e-admin-no-results-impossible-token";
+    await page.goto(
+      `/admin/users?q=${encodeURIComponent(token)}&plan=coach_premium`,
+      { waitUntil: "domcontentloaded", timeout: 25_000 },
+    );
+    await expect(page).toHaveURL(/\/admin\/users/);
+    await expect(page.getByText(/Aucun utilisateur ne correspond/i)).toBeVisible();
+    const summary = page
+      .getByTestId("admin-users-results-summary")
+      .or(page.getByText(/Filtres actifs\s*:/i))
+      .first();
+    await expect(summary).toBeVisible();
+    await expect(summary).toContainText(/forfait Stripe/i);
+  });
 });

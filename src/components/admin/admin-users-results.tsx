@@ -131,13 +131,7 @@ export function AdminUsersResults({
   if (results.length === 0) {
     return (
       <div className="space-y-2">
-        {filterChips.length > 0 || queryTrimmed ? (
-          <p className="text-xs text-[var(--text-muted)]">
-            {filterChips.length > 0 ? <span>Filtres actifs : {filterChips.join(", ")}</span> : null}
-            {filterChips.length > 0 && queryTrimmed ? <span className="mx-2 text-[var(--border)]">·</span> : null}
-            {queryTrimmed ? <span>recherche « {queryTrimmed} »</span> : null}
-          </p>
-        ) : null}
+        <ActiveFiltersSummaryLine chips={filterChips} queryTrimmed={queryTrimmed} />
         <p className="text-sm text-[var(--text-muted)]">
           Aucun utilisateur ne correspond aux critères sélectionnés.
         </p>
