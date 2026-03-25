@@ -1,5 +1,18 @@
 # E2E — zone admin (`/admin/users`, etc.)
 
+## CI (pull request)
+
+Le job **`e2e-smoke-local`** dans `.github/workflows/e2e.yml` enchaîne :
+
+1. **`e2e/smoke.spec.ts`** — `E2E_SKIP_LOGIN=1` (aucun appel à `login()`).
+2. **`e2e/admin-users.spec.ts`** — `E2E_SKIP_LOGIN=0`, `E2E_LOGIN_MAX_RETRIES=8`, même instance **Next** + **Postgres** que l’étape 1 (`ALLOW_DEV_LOGIN=1` au niveau du job).
+
+`global-setup` reste en mode **sans storageState** (`E2E_DISABLE_STORAGE_STATE=1`) : le spec admin s’authentifie dans son `beforeEach`.
+
+Ne pas fixer **`FEATURE_ADMIN_DASHBOARD=0`** sur ce job sans accepter que les tests admin soient **skip** (voir `admin-users.spec.ts`).
+
+Les exécutions **smoke/full remote** (`workflow_dispatch`) ne lancent pas ce deuxième bloc sur PR ; le **full remote** shard exécute toute la suite Playwright (dont `admin-users.spec.ts`) si tu lances le mode `full` contre une preview avec `/api/login` utilisable.
+
 ## Variables utiles
 
 | Variable | Rôle |

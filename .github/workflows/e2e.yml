@@ -219,13 +219,13 @@ jobs:
     needs: [cfg]
     if: ${{ needs.cfg.outputs.mode == 'smoke' && needs.cfg.outputs.webserver == '1' && github.event.pull_request.head.repo.fork == false }}
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
 
     env:
       CI: "true"
       PW_WEB_SERVER: "0"
 
-      # ✅ smoke = pas de storageState, pas de login
+      # ✅ smoke = pas de storageState ; login désactivé par défaut (smoke.spec.ts n’utilise pas login())
       E2E_DISABLE_STORAGE_STATE: "1"
       E2E_SKIP_LOGIN: "1"
 
@@ -345,6 +345,13 @@ jobs:
 
       - name: Run Playwright smoke tests
         run: pnpm exec playwright test e2e/smoke.spec.ts --project=chromium --workers=1
+
+      # Spec admin : login HTTP via /api/login (ALLOW_DEV_LOGIN=1). Lever E2E_SKIP_LOGIN pour cet appel uniquement.
+      - name: Run Playwright admin users E2E
+        env:
+          E2E_SKIP_LOGIN: "0"
+          E2E_LOGIN_MAX_RETRIES: "8"
+        run: pnpm exec playwright test e2e/admin-users.spec.ts --project=chromium --workers=1
 
       - name: Stop Next server
         if: always()
