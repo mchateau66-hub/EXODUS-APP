@@ -10,9 +10,10 @@ import {
   type AdminUserSearchResult,
 } from "@/components/admin/admin-users-results"
 import { FEATURE_KEYS, PLAN_KEYS, type FeatureKey, type PlanKey } from "@/domain/billing/features"
+import { ADMIN_USER_SEARCH_TAKE, buildAdminUsersWhere } from "@/lib/admin-users-search-query"
 import { prisma } from "@/lib/db"
 import { requireOnboardingStep } from "@/lib/onboarding"
-import type { Prisma, Role, SubStatus, UserStatus } from "@prisma/client"
+import type { Role, UserStatus } from "@prisma/client"
 
 export const dynamic = "force-dynamic"
 export const revalidate = 0
@@ -40,15 +41,6 @@ const ALLOWED_ADMIN_FEATURES = new Set<string>(ADMIN_USER_FEATURE_OPTIONS.map((o
 
 /** Mêmes clés que le filtre feature — entitlements actifs pour les modes `premium=with` / `without`. */
 const PREMIUM_FEATURE_KEYS = ADMIN_USER_FEATURE_OPTIONS.map((o) => o.value)
-
-/** Statuts d’abonnement Stripe/Prisma encore pertinents côté support (« abonné » ou équivalent). */
-const SUBSCRIBED_SUB_STATUSES = ["active", "trialing", "past_due"] as const satisfies readonly SubStatus[]
-
-/** Copie tableau pour clauses Prisma `status: { in: … }` (évite répétitions de spread). */
-const SUBSCRIBED_SUBSCRIPTION_STATUSES: SubStatus[] = [...SUBSCRIBED_SUB_STATUSES]
-
-/** Liste courte volontaire (admin). */
-const ADMIN_USER_SEARCH_TAKE = 20
 
 /** Plans proposés dans l’admin — alignés sur `PLAN_KEYS` (vérité produit). */
 const ADMIN_USER_PLAN_OPTIONS = [
@@ -153,126 +145,19 @@ export default async function AdminUsersIndexPage({ searchParams }: PageProps) {
 
   if (hasActiveCriteria) {
     try {
-      const activeEntitlement: Pick<
-        Prisma.UserEntitlementWhereInput,
-        "starts_at" | "OR"
-      > = {
-        starts_at: { lte: now },
-        OR: [{ expires_at: null }, { expires_at: { gt: now } }],
-      }
-
-      const andClauses: Prisma.UserWhereInput[] = []
-
-      if (q) {
-        andClauses.push({
-          OR: [
-            { id: { contains: q, mode: "insensitive" } },
-            { email: { contains: q, mode: "insensitive" } },
-            { name: { contains: q, mode: "insensitive" } },
-            { coach: { slug: { contains: q, mode: "insensitive" } } },
-          ],
-        })
-      }
-
-      if (roleFilter) andClauses.push({ role: roleFilter })
-      if (statusFilter) andClauses.push({ status: statusFilter })
-
-      if (featureFilter) {
-        andClauses.push({
-          entitlements: {
-            some: {
-              feature_key: featureFilter,
-              ...activeEntitlement,
-            },
-          },
-        })
-      }
-
-      if (premiumFilter === "with") {
-        andClauses.push({
-          entitlements: {
-            some: {
-              feature_key: { in: [...PREMIUM_FEATURE_KEYS] },
-              ...activeEntitlement,
-            },
-          },
-        })
-      }
-
-      if (premiumFilter === "without") {
-        andClauses.push({
-          NOT: {
-            entitlements: {
-              some: {
-                feature_key: { in: [...PREMIUM_FEATURE_KEYS] },
-                ...activeEntitlement,
-              },
-            },
-          },
-        })
-      }
-
-      if (billingFilter === "stripe") {
-        andClauses.push({
-          AND: [{ stripe_customer_id: { not: null } }, { NOT: { stripe_customer_id: "" } }],
-        })
-      }
-
-      const mergedSubscribedPlan = billingFilter === "subscribed" && planFilter
-      const mergedCancelingPlan = billingFilter === "canceling" && planFilter
-
-      if (mergedSubscribedPlan) {
-        andClauses.push({
-          subscriptions: {
-            some: {
-              plan_key: planFilter,
-              status: { in: SUBSCRIBED_SUBSCRIPTION_STATUSES },
-            },
-          },
-        })
-      } else if (mergedCancelingPlan) {
-        andClauses.push({
-          subscriptions: {
-            some: {
-              plan_key: planFilter,
-              cancel_at_period_end: true,
-            },
-          },
-        })
-      } else {
-        if (billingFilter === "subscribed") {
-          andClauses.push({
-            subscriptions: {
-              some: {
-                status: { in: SUBSCRIBED_SUBSCRIPTION_STATUSES },
-              },
-            },
-          })
-        }
-        if (billingFilter === "canceling") {
-          andClauses.push({
-            subscriptions: {
-              some: {
-                cancel_at_period_end: true,
-              },
-            },
-          })
-        }
-        // Plan sans fusion billing : même notion de « abonnement pertinent » que `billing=subscribed`
-        // (évite les lignes historiques canceled/unpaid uniquement).
-        if (planFilter) {
-          andClauses.push({
-            subscriptions: {
-              some: {
-                plan_key: planFilter,
-                status: { in: SUBSCRIBED_SUBSCRIPTION_STATUSES },
-              },
-            },
-          })
-        }
-      }
-
-      const where: Prisma.UserWhereInput = andClauses.length > 0 ? { AND: andClauses } : {}
+      const where = buildAdminUsersWhere(
+        {
+          q,
+          roleFilter,
+          statusFilter,
+          featureFilter,
+          premiumFilter,
+          billingFilter,
+          planFilter,
+          premiumFeatureKeys: PREMIUM_FEATURE_KEYS,
+        },
+        now,
+      )
 
       const rows = await prisma.user.findMany({
         where,
