@@ -36,9 +36,19 @@ Les exécutions **smoke/full remote** (`workflow_dispatch`) ne lancent pas ce de
 
 ## Lancer uniquement les tests admin users
 
+**Recommandé (aligné CI, Chromium, 1 worker) :**
+
 ```bash
-pnpm exec playwright test e2e/admin-users.spec.ts
+pnpm e2e:admin
 ```
+
+Équivalent explicite :
+
+```bash
+pnpm exec playwright test e2e/admin-users.spec.ts --project=chromium --workers=1
+```
+
+Prérequis : serveur Next + DB accessibles comme pour toute la suite Playwright (voir `.env.local` / `.e2e.local.env`, `ALLOW_DEV_LOGIN`, etc.).
 
 Le spec accepte aussi le texte « Filtres actifs : … » si un build sans `data-testid` tourne encore sur le port cible.
 

@@ -21,6 +21,7 @@
   "e2e:report": "playwright show-report",
   "e2e:ci": "playwright test -C ./playwright.config.ts --reporter=html && playwright show-report --port 0",
   "e2e:smoke": "playwright test --project=chromium --grep @smoke",
+  "e2e:admin": "playwright test e2e/admin-users.spec.ts --project=chromium --workers=1",
   "e2e:browsers": "playwright install --with-deps",
   "next15:audit": "node scripts/next15_audit.mjs",
   "next15:audit:strict": "NEXT15_AUDIT_STRICT=1 node scripts/next15_audit.mjs",
