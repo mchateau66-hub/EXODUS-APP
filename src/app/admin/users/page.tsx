@@ -247,10 +247,15 @@ export default async function AdminUsersIndexPage({ searchParams }: PageProps) {
             },
           })
         }
+        // Plan sans fusion billing : même notion de « abonnement pertinent » que `billing=subscribed`
+        // (évite les lignes historiques canceled/unpaid uniquement).
         if (planFilter) {
           andClauses.push({
             subscriptions: {
-              some: { plan_key: planFilter },
+              some: {
+                plan_key: planFilter,
+                status: { in: [...SUBSCRIBED_SUB_STATUSES] },
+              },
             },
           })
         }

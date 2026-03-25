@@ -119,7 +119,8 @@ export function AdminUsersResults({
     return (
       <p className="text-sm text-[var(--text-muted)]">
         Recherchez un utilisateur par e-mail, identifiant ou slug, puis affinez par rôle, statut, fonctionnalités premium,
-        état billing (Stripe, abonnement, résiliation) ou plan d’abonnement.
+        état billing (Stripe, abonnement, résiliation) ou plan d’abonnement (abonnement actif, essai ou impayé — comme le
+        filtre « abonnement actif »).
       </p>
     )
   }
