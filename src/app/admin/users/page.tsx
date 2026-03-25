@@ -34,6 +34,9 @@ const ADMIN_USER_FEATURE_OPTIONS = [
 
 const ALLOWED_ADMIN_FEATURES = new Set<string>(ADMIN_USER_FEATURE_OPTIONS.map((o) => o.value))
 
+/** Mêmes clés que le filtre feature — entitlements actifs parmi cette liste pour `premium=1`. */
+const PREMIUM_FEATURE_KEYS = ADMIN_USER_FEATURE_OPTIONS.map((o) => o.value)
+
 function safeFeatureFilter(raw: string): FeatureKey | undefined {
   const t = raw.trim()
   if (!t || !ALLOWED_ADMIN_FEATURES.has(t)) return undefined
@@ -53,7 +56,7 @@ function safeStatusFilter(raw: string): UserStatus | undefined {
 }
 
 type PageProps = {
-  searchParams?: Promise<{ q?: string; role?: string; status?: string; feature?: string }>
+  searchParams?: Promise<{ q?: string; role?: string; status?: string; feature?: string; premium?: string }>
 }
 
 export default async function AdminUsersIndexPage({ searchParams }: PageProps) {
@@ -68,13 +71,15 @@ export default async function AdminUsersIndexPage({ searchParams }: PageProps) {
   const rawRole = typeof sp.role === "string" ? sp.role : ""
   const rawStatus = typeof sp.status === "string" ? sp.status : ""
   const rawFeature = typeof sp.feature === "string" ? sp.feature : ""
+  const rawPremium = typeof sp.premium === "string" ? sp.premium : ""
 
   const q = rawQ.trim()
   const roleFilter = safeRoleFilter(rawRole)
   const statusFilter = safeStatusFilter(rawStatus)
   const featureFilter = safeFeatureFilter(rawFeature)
+  const hasPremiumFilter = rawPremium === "1"
 
-  const hasActiveCriteria = Boolean(q || roleFilter || statusFilter || featureFilter)
+  const hasActiveCriteria = Boolean(q || roleFilter || statusFilter || featureFilter || hasPremiumFilter)
 
   const now = new Date()
 
@@ -83,31 +88,53 @@ export default async function AdminUsersIndexPage({ searchParams }: PageProps) {
 
   if (hasActiveCriteria) {
     try {
-      const where: Prisma.UserWhereInput = {
-        ...(q
-          ? {
-              OR: [
-                { id: { contains: q, mode: "insensitive" } },
-                { email: { contains: q, mode: "insensitive" } },
-                { name: { contains: q, mode: "insensitive" } },
-                { coach: { slug: { contains: q, mode: "insensitive" } } },
-              ],
-            }
-          : {}),
-        ...(roleFilter ? { role: roleFilter } : {}),
-        ...(statusFilter ? { status: statusFilter } : {}),
-        ...(featureFilter
-          ? {
-              entitlements: {
-                some: {
-                  feature_key: featureFilter,
-                  starts_at: { lte: now },
-                  OR: [{ expires_at: null }, { expires_at: { gt: now } }],
-                },
-              },
-            }
-          : {}),
+      const activeEntitlement: Pick<
+        Prisma.UserEntitlementWhereInput,
+        "starts_at" | "OR"
+      > = {
+        starts_at: { lte: now },
+        OR: [{ expires_at: null }, { expires_at: { gt: now } }],
       }
+
+      const andClauses: Prisma.UserWhereInput[] = []
+
+      if (q) {
+        andClauses.push({
+          OR: [
+            { id: { contains: q, mode: "insensitive" } },
+            { email: { contains: q, mode: "insensitive" } },
+            { name: { contains: q, mode: "insensitive" } },
+            { coach: { slug: { contains: q, mode: "insensitive" } } },
+          ],
+        })
+      }
+
+      if (roleFilter) andClauses.push({ role: roleFilter })
+      if (statusFilter) andClauses.push({ status: statusFilter })
+
+      if (featureFilter) {
+        andClauses.push({
+          entitlements: {
+            some: {
+              feature_key: featureFilter,
+              ...activeEntitlement,
+            },
+          },
+        })
+      }
+
+      if (hasPremiumFilter) {
+        andClauses.push({
+          entitlements: {
+            some: {
+              feature_key: { in: [...PREMIUM_FEATURE_KEYS] },
+              ...activeEntitlement,
+            },
+          },
+        })
+      }
+
+      const where: Prisma.UserWhereInput = andClauses.length > 0 ? { AND: andClauses } : {}
 
       const rows = await prisma.user.findMany({
         where,
@@ -172,6 +199,7 @@ export default async function AdminUsersIndexPage({ searchParams }: PageProps) {
             role={roleFilter ?? ""}
             status={statusFilter ?? ""}
             feature={featureFilter ?? ""}
+            premium={hasPremiumFilter ? "1" : ""}
             roleOptions={[...ADMIN_USER_ROLE_OPTIONS]}
             statusOptions={[...ADMIN_USER_STATUS_OPTIONS]}
             featureOptions={[...ADMIN_USER_FEATURE_OPTIONS]}
@@ -185,6 +213,7 @@ export default async function AdminUsersIndexPage({ searchParams }: PageProps) {
             appliedRole={roleFilter ?? null}
             appliedStatus={statusFilter ?? null}
             appliedFeature={featureFilter ?? null}
+            hasPremiumFilter={hasPremiumFilter}
             hasActiveCriteria={hasActiveCriteria}
             results={results}
             searchError={searchError}

@@ -38,6 +38,7 @@ type AdminUsersResultsProps = {
   appliedRole: Role | null
   appliedStatus: UserStatus | null
   appliedFeature: FeatureKey | null
+  hasPremiumFilter: boolean
   hasActiveCriteria: boolean
   results: AdminUserSearchResult[]
   searchError: boolean
@@ -59,6 +60,7 @@ export function AdminUsersResults({
   appliedRole,
   appliedStatus,
   appliedFeature,
+  hasPremiumFilter,
   hasActiveCriteria,
   results,
   searchError,
@@ -70,6 +72,7 @@ export function AdminUsersResults({
     const fl = FEATURE_FILTER_LABEL[appliedFeature]
     filterChips.push(`fonctionnalité ${fl ?? appliedFeature}`)
   }
+  if (hasPremiumFilter) filterChips.push("offre premium")
 
   if (searchError) {
     return (
@@ -85,8 +88,8 @@ export function AdminUsersResults({
   if (!hasActiveCriteria) {
     return (
       <p className="text-sm text-[var(--text-muted)]">
-        Recherchez un utilisateur par e-mail, identifiant ou slug, ou appliquez un filtre par rôle, statut ou fonctionnalité
-        premium (entitlement actif).
+        Recherchez un utilisateur par e-mail, identifiant ou slug, ou appliquez un filtre par rôle, statut, fonctionnalité
+        premium précise (entitlement actif) ou offre premium (au moins une fonctionnalité de la liste admin).
       </p>
     )
   }

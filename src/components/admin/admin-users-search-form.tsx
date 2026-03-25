@@ -7,6 +7,7 @@ type AdminUsersSearchFormProps = {
   role: string
   status: string
   feature: string
+  premium: string
   roleOptions: Role[]
   statusOptions: UserStatus[]
   featureOptions: readonly FeatureOption[]
@@ -32,6 +33,7 @@ export function AdminUsersSearchForm({
   role,
   status,
   feature,
+  premium,
   roleOptions,
   statusOptions,
   featureOptions,
@@ -118,6 +120,21 @@ export function AdminUsersSearchForm({
           >
             Rechercher
           </button>
+        </div>
+
+        <div className="min-w-0 md:col-span-2 lg:col-span-4">
+          <label htmlFor="admin-users-premium" className="mb-1.5 block text-xs font-medium text-[var(--text-muted)]">
+            Offre premium
+          </label>
+          <select
+            id="admin-users-premium"
+            name="premium"
+            defaultValue={premium}
+            className="w-full rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--card-bg)] px-3 py-2 text-sm text-[var(--text)] shadow-[var(--card-shadow)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--border)]"
+          >
+            <option value="">Toutes les offres</option>
+            <option value="1">Avec au moins une fonctionnalité premium</option>
+          </select>
         </div>
       </div>
     </form>
