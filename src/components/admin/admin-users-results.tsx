@@ -34,6 +34,10 @@ type AdminUsersResultsProps = {
   searchError: boolean
   /** Nombre total d’utilisateurs correspondant au `where` (null si recherche non lancée ou erreur). */
   totalMatchingCount: number | null
+  currentPage: number
+  totalPages: number
+  prevHref: string | null
+  nextHref: string | null
 }
 
 function ActiveFiltersSummaryLine({ chips, queryTrimmed }: { chips: string[]; queryTrimmed: string }) {
@@ -54,26 +58,69 @@ function ResultsCountLine({
   displayed,
   total,
   takeLimit,
+  page,
 }: {
   displayed: number
   total: number
   takeLimit: number
+  page: number
 }) {
-  const truncated = total > takeLimit && displayed === takeLimit
   const noun = total <= 1 ? "utilisateur" : "utilisateurs"
   const verb = total <= 1 ? "correspond" : "correspondent"
+  const start = (page - 1) * takeLimit + 1
+  const end = (page - 1) * takeLimit + displayed
 
   return (
     <div className="space-y-1" data-testid="admin-users-results-count">
       <p className="text-sm font-medium text-[var(--text)]">
-        {displayed} sur {total} {noun} {verb} aux filtres
+        {start}–{end} sur {total} {noun} {verb} aux filtres
       </p>
-      {truncated ? (
-        <p className="text-xs text-[var(--text-muted)]">
-          Affichage limité aux {takeLimit} plus récents (tri par date de création).
-        </p>
-      ) : null}
     </div>
+  )
+}
+
+function PaginationNav({
+  currentPage,
+  totalPages,
+  prevHref,
+  nextHref,
+}: {
+  currentPage: number
+  totalPages: number
+  prevHref: string | null
+  nextHref: string | null
+}) {
+  if (totalPages <= 1) return null
+
+  const linkClass =
+    "inline-flex items-center rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--card-bg)] px-3 py-1.5 text-sm font-medium text-[var(--text)] transition-colors hover:bg-[var(--bg-muted)]"
+  const disabledClass =
+    "inline-flex cursor-not-allowed items-center rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--bg-muted)] px-3 py-1.5 text-sm font-medium text-[var(--text-muted)] opacity-70"
+
+  return (
+    <nav
+      aria-label="Pagination des résultats"
+      className="flex flex-wrap items-center gap-3 border-t border-[var(--border)] pt-3"
+      data-testid="admin-users-results-pagination"
+    >
+      {prevHref ? (
+        <Link href={prevHref} className={linkClass}>
+          Précédent
+        </Link>
+      ) : (
+        <span className={disabledClass}>Précédent</span>
+      )}
+      <span className="text-sm text-[var(--text-muted)]">
+        Page {currentPage} / {totalPages}
+      </span>
+      {nextHref ? (
+        <Link href={nextHref} className={linkClass}>
+          Suivant
+        </Link>
+      ) : (
+        <span className={disabledClass}>Suivant</span>
+      )}
+    </nav>
   )
 }
 
@@ -100,6 +147,10 @@ export function AdminUsersResults({
   results,
   searchError,
   totalMatchingCount,
+  currentPage,
+  totalPages,
+  prevHref,
+  nextHref,
 }: AdminUsersResultsProps) {
   const filterChips: string[] = []
   if (appliedRole) filterChips.push(`rôle ${ADMIN_USER_ROLE_LABEL[appliedRole]}`)
@@ -158,6 +209,7 @@ export function AdminUsersResults({
           displayed={results.length}
           total={totalMatchingCount}
           takeLimit={ADMIN_USER_SEARCH_TAKE}
+          page={currentPage}
         />
       ) : null}
       <ul className="space-y-3">
@@ -206,6 +258,14 @@ export function AdminUsersResults({
           </li>
         ))}
       </ul>
+      {!searchError && totalMatchingCount !== null ? (
+        <PaginationNav
+          currentPage={currentPage}
+          totalPages={totalPages}
+          prevHref={prevHref}
+          nextHref={nextHref}
+        />
+      ) : null}
     </div>
   )
 }

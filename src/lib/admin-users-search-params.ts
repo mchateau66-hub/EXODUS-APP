@@ -124,3 +124,34 @@ export function toAdminUsersSearchFilters(
     premiumFeatureKeys,
   }
 }
+
+/** Index de page 1-based depuis `page=` (valeurs invalides ou inférieures à 1 → 1). */
+export function parseAdminUsersPageIndex(raw: string): number {
+  const n = parseInt(raw.trim(), 10)
+  if (!Number.isFinite(n) || n < 1) return 1
+  return Math.floor(n)
+}
+
+/**
+ * Construit l’URL `/admin/users` en conservant les filtres GET et le paramètre `page` (omis si page 1).
+ */
+export function buildAdminUsersListHref(opts: {
+  rawQ: string
+  parsed: ParsedAdminUsersSearchParams
+  page: number
+}): string {
+  const { rawQ, parsed, page } = opts
+  const params = new URLSearchParams()
+  const q = rawQ.trim()
+  if (q) params.set("q", q)
+  if (parsed.roleFilter) params.set("role", parsed.roleFilter)
+  if (parsed.statusFilter) params.set("status", parsed.statusFilter)
+  if (parsed.featureFilter) params.set("feature", parsed.featureFilter)
+  if (parsed.premiumFilter !== "") params.set("premium", parsed.premiumFilter)
+  if (parsed.billingFilter !== "") params.set("billing", parsed.billingFilter)
+  if (parsed.planFilter) params.set("plan", parsed.planFilter)
+  if (page > 1) params.set("page", String(page))
+  const qs = params.toString()
+  if (qs) return `/admin/users?${qs}`
+  return page > 1 ? `/admin/users?page=${page}` : "/admin/users"
+}

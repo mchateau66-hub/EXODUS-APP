@@ -15,7 +15,10 @@ import {
 } from "@/lib/admin-users-filter-config"
 import {
   adminUsersSearchHasActiveCriteria,
+  buildAdminUsersListHref,
+  parseAdminUsersPageIndex,
   parseAdminUsersSearchParams,
+  readAdminSearchParam,
   toAdminUsersSearchFilters,
 } from "@/lib/admin-users-search-params"
 import { ADMIN_USER_SEARCH_TAKE, buildAdminUsersWhere } from "@/lib/admin-users-search-query"
@@ -26,6 +29,12 @@ export const dynamic = "force-dynamic"
 export const revalidate = 0
 export const runtime = "nodejs"
 
+function isNextRedirectError(e: unknown): boolean {
+  if (typeof e !== "object" || e === null || !("digest" in e)) return false
+  const d = (e as { digest?: unknown }).digest
+  return typeof d === "string" && d.includes("NEXT_REDIRECT")
+}
+
 type PageProps = {
   searchParams?: Promise<{
     q?: string
@@ -35,6 +44,7 @@ type PageProps = {
     premium?: string
     billing?: string
     plan?: string
+    page?: string
   }>
 }
 
@@ -59,12 +69,18 @@ export default async function AdminUsersIndexPage({ searchParams }: PageProps) {
   } = parsed
 
   const hasActiveCriteria = adminUsersSearchHasActiveCriteria(parsed)
+  const pageIndexRequested = parseAdminUsersPageIndex(readAdminSearchParam(sp, "page"))
+
+  if (!hasActiveCriteria && readAdminSearchParam(sp, "page").trim() !== "") {
+    redirect("/admin/users")
+  }
 
   const now = new Date()
 
   let results: AdminUserSearchResult[] = []
   let searchError = false
   let totalMatchingCount: number | null = null
+  let effectivePage = 1
 
   if (hasActiveCriteria) {
     try {
@@ -73,25 +89,31 @@ export default async function AdminUsersIndexPage({ searchParams }: PageProps) {
         now,
       )
 
-      const [rows, count] = await Promise.all([
-        prisma.user.findMany({
-          where,
-          orderBy: { created_at: "desc" },
-          take: ADMIN_USER_SEARCH_TAKE,
-          select: {
-            id: true,
-            email: true,
-            name: true,
-            role: true,
-            status: true,
-            created_at: true,
-            coach: { select: { slug: true } },
-          },
-        }),
-        prisma.user.count({ where }),
-      ])
-
+      const count = await prisma.user.count({ where })
       totalMatchingCount = count
+
+      const maxPage = Math.max(1, Math.ceil(count / ADMIN_USER_SEARCH_TAKE))
+      effectivePage = count === 0 ? 1 : Math.min(Math.max(1, pageIndexRequested), maxPage)
+
+      if (pageIndexRequested !== effectivePage) {
+        redirect(buildAdminUsersListHref({ rawQ, parsed, page: effectivePage }))
+      }
+
+      const rows = await prisma.user.findMany({
+        where,
+        orderBy: { created_at: "desc" },
+        skip: (effectivePage - 1) * ADMIN_USER_SEARCH_TAKE,
+        take: ADMIN_USER_SEARCH_TAKE,
+        select: {
+          id: true,
+          email: true,
+          name: true,
+          role: true,
+          status: true,
+          created_at: true,
+          coach: { select: { slug: true } },
+        },
+      })
 
       results = rows.map((row) => ({
         id: row.id,
@@ -103,10 +125,26 @@ export default async function AdminUsersIndexPage({ searchParams }: PageProps) {
         coachSlug: row.coach?.slug ?? null,
       }))
     } catch (error) {
+      if (isNextRedirectError(error)) throw error
       console.error("admin_users_search_failed", { error })
       searchError = true
     }
   }
+
+  const totalPages =
+    hasActiveCriteria && totalMatchingCount !== null
+      ? Math.max(1, Math.ceil(totalMatchingCount / ADMIN_USER_SEARCH_TAKE))
+      : 1
+
+  const prevHref =
+    hasActiveCriteria && !searchError && totalMatchingCount !== null && effectivePage > 1
+      ? buildAdminUsersListHref({ rawQ, parsed, page: effectivePage - 1 })
+      : null
+
+  const nextHref =
+    hasActiveCriteria && !searchError && totalMatchingCount !== null && effectivePage < totalPages
+      ? buildAdminUsersListHref({ rawQ, parsed, page: effectivePage + 1 })
+      : null
 
   return (
     <main className="min-h-[100dvh] bg-[var(--bg)] text-[var(--text)]">
@@ -165,6 +203,10 @@ export default async function AdminUsersIndexPage({ searchParams }: PageProps) {
             results={results}
             searchError={searchError}
             totalMatchingCount={totalMatchingCount}
+            currentPage={effectivePage}
+            totalPages={totalPages}
+            prevHref={prevHref}
+            nextHref={nextHref}
           />
         </div>
       </div>
