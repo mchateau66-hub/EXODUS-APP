@@ -105,4 +105,8 @@ Ajoute `E2E_SEED_ADMIN_USERS_PAGINATION=1` dans `.e2e.local.env` si tu préfère
 
 #### Vérification coachs → fiche (`/admin/verification` → `/admin/users/[id]`)
 
-- Avec le même seed **`pnpm db:seed:e2e:admin`**, un coach **E2E Verification Coach** (`e2e-verification-coach@exodus-e2e.local`, slug `e2e-verification-coach`) et un **CoachDocument** `pending` sont créés. Le spec `e2e/admin-verification.spec.ts` ouvre `/admin/verification`, filtre la recherche sur le slug, clique **« Voir la fiche admin »**, puis vérifie **Usage et limites** et **Profil** sur la fiche utilisateur.
+- Avec le même seed **`pnpm db:seed:e2e:admin`**, deux coaches **E2E** (`e2e-verification-coach`, `e2e-verification-coach-reject`) et deux **CoachDocument** `pending` (ids fixes dans `e2e/fixtures/e2e-admin-verification-ids.ts`) sont créés. Le spec `e2e/admin-verification.spec.ts` couvre :
+  - navigation **« Voir la fiche admin »** → fiche utilisateur ;
+  - **Approuver** / **Rejeter** (boutons `data-testid` `approve-doc-*` / `reject-doc-*`, statut `verification-status-*`) + persistance après reload ;
+  - API `POST /api/admin/verification/:id/approve|reject` (401 sans session, 404 si doc absent, 409 si statut ≠ `pending`).
+- Les actions serveur passent par les routes dédiées (session admin, même-origin, audit) ; la mise à jour manuelle via **Sauver** existe toujours (`PUT /api/admin/coach-documents/[id]`).

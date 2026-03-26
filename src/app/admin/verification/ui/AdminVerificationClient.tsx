@@ -235,6 +235,7 @@ export default function AdminVerificationClient({ initialRows }: Props) {
 
   // Saving
   const [savingId, setSavingId] = React.useState<string | null>(null);
+  const [moderatingId, setModeratingId] = React.useState<string | null>(null);
   const [batchSaving, setBatchSaving] = React.useState(false);
 
   // Batch payload (global)
@@ -491,6 +492,46 @@ export default function AdminVerificationClient({ initialRows }: Props) {
     }
 
     await onCopy(lines.join("\n"), "Summary");
+  }
+
+  async function moderateDoc(docId: string, action: "approve" | "reject") {
+    const row = rows.find((r) => r.id === docId);
+    if (!row) return;
+    if (normalizeStatus(row.status) !== "pending") return;
+
+    setModeratingId(docId);
+    setToast(null);
+
+    try {
+      const res = await fetch(`/api/admin/verification/${docId}/${action}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+
+      const data = (await res.json().catch(() => null)) as any;
+
+      if (res.status === 409) {
+        setToast(`État invalide (${data?.error ?? "invalid_state"})`);
+        return;
+      }
+      if (!res.ok || !data?.success) {
+        setToast(`Erreur: ${data?.error ?? "moderation_failed"}`);
+        return;
+      }
+
+      const newStatus: Status = action === "approve" ? "verified" : "rejected";
+      const nowIso = new Date().toISOString();
+      setRows((prev) =>
+        prev.map((x) =>
+          x.id === docId ? { ...x, status: newStatus, reviewedAt: nowIso } : x,
+        ),
+      );
+      setToast(action === "approve" ? "Approuvé ✅" : "Rejeté");
+    } finally {
+      setModeratingId(null);
+      setTimeout(() => setToast(null), 2500);
+    }
   }
 
   async function saveRow(docId: string) {
@@ -1391,6 +1432,7 @@ export default function AdminVerificationClient({ initialRows }: Props) {
                                 <div className="min-w-0">
                                   <div className="flex flex-wrap items-center gap-2">
                                     <span
+                                      data-testid={`verification-status-${r.id}`}
                                       className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold ${badgeClasses(
                                         status,
                                       )}`}
@@ -1467,6 +1509,29 @@ export default function AdminVerificationClient({ initialRows }: Props) {
                                   </a>
                                 </div>
                               </div>
+
+                              {status === "pending" ? (
+                                <div className="mt-3 flex flex-wrap gap-2">
+                                  <button
+                                    type="button"
+                                    data-testid={`approve-doc-${r.id}`}
+                                    disabled={moderatingId === r.id}
+                                    onClick={() => moderateDoc(r.id, "approve")}
+                                    className="inline-flex items-center justify-center rounded-2xl border border-emerald-400/30 bg-emerald-400/15 px-3 py-1.5 text-xs font-semibold text-emerald-50 hover:bg-emerald-400/25 disabled:cursor-not-allowed disabled:opacity-50"
+                                  >
+                                    {moderatingId === r.id ? "…" : "Approuver"}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    data-testid={`reject-doc-${r.id}`}
+                                    disabled={moderatingId === r.id}
+                                    onClick={() => moderateDoc(r.id, "reject")}
+                                    className="inline-flex items-center justify-center rounded-2xl border border-rose-400/30 bg-rose-400/15 px-3 py-1.5 text-xs font-semibold text-rose-50 hover:bg-rose-400/25 disabled:cursor-not-allowed disabled:opacity-50"
+                                  >
+                                    {moderatingId === r.id ? "…" : "Rejeter"}
+                                  </button>
+                                </div>
+                              ) : null}
 
                               {/* Inline edit */}
                               <div className="mt-3 grid gap-2 sm:grid-cols-2">
@@ -1600,9 +1665,35 @@ export default function AdminVerificationClient({ initialRows }: Props) {
                     </td>
 
                     <td className="px-3 py-3">
-                      <div className={`mb-2 inline-flex items-center rounded-full border px-2 py-1 text-[11px] ${badgeClasses(status)}`}>
+                      <div
+                        data-testid={`verification-status-${r.id}`}
+                        className={`mb-2 inline-flex items-center rounded-full border px-2 py-1 text-[11px] ${badgeClasses(status)}`}
+                      >
                         {statusLabel(status)}
                       </div>
+
+                      {status === "pending" ? (
+                        <div className="mb-2 flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            data-testid={`approve-doc-${r.id}`}
+                            disabled={moderatingId === r.id}
+                            onClick={() => moderateDoc(r.id, "approve")}
+                            className="inline-flex rounded-xl border border-emerald-400/30 bg-emerald-400/15 px-2 py-1 text-[11px] font-semibold text-emerald-50 hover:bg-emerald-400/25 disabled:opacity-50"
+                          >
+                            Approuver
+                          </button>
+                          <button
+                            type="button"
+                            data-testid={`reject-doc-${r.id}`}
+                            disabled={moderatingId === r.id}
+                            onClick={() => moderateDoc(r.id, "reject")}
+                            className="inline-flex rounded-xl border border-rose-400/30 bg-rose-400/15 px-2 py-1 text-[11px] font-semibold text-rose-50 hover:bg-rose-400/25 disabled:opacity-50"
+                          >
+                            Rejeter
+                          </button>
+                        </div>
+                      ) : null}
 
                       <select
                         className="w-full rounded-xl border border-white/10 bg-slate-950 px-3 py-2 text-sm text-white"
