@@ -9,6 +9,7 @@ import {
   ADMIN_USER_PLAN_FILTER_LABEL,
   ADMIN_USER_PREMIUM_FILTER_SUMMARY_LABELS,
 } from "@/lib/admin-users-filter-config"
+import { ADMIN_USER_SEARCH_TAKE } from "@/lib/admin-users-search-query"
 
 export type AdminUserSearchResult = {
   id: string
@@ -31,6 +32,8 @@ type AdminUsersResultsProps = {
   hasActiveCriteria: boolean
   results: AdminUserSearchResult[]
   searchError: boolean
+  /** Nombre total d’utilisateurs correspondant au `where` (null si recherche non lancée ou erreur). */
+  totalMatchingCount: number | null
 }
 
 function ActiveFiltersSummaryLine({ chips, queryTrimmed }: { chips: string[]; queryTrimmed: string }) {
@@ -44,6 +47,33 @@ function ActiveFiltersSummaryLine({ chips, queryTrimmed }: { chips: string[]; qu
       {chips.length > 0 && queryTrimmed ? <span className="mx-2 text-[var(--border)]">·</span> : null}
       {queryTrimmed ? <span>recherche « {queryTrimmed} »</span> : null}
     </p>
+  )
+}
+
+function ResultsCountLine({
+  displayed,
+  total,
+  takeLimit,
+}: {
+  displayed: number
+  total: number
+  takeLimit: number
+}) {
+  const truncated = total > takeLimit && displayed === takeLimit
+  const noun = total <= 1 ? "utilisateur" : "utilisateurs"
+  const verb = total <= 1 ? "correspond" : "correspondent"
+
+  return (
+    <div className="space-y-1" data-testid="admin-users-results-count">
+      <p className="text-sm font-medium text-[var(--text)]">
+        {displayed} sur {total} {noun} {verb} aux filtres
+      </p>
+      {truncated ? (
+        <p className="text-xs text-[var(--text-muted)]">
+          Affichage limité aux {takeLimit} plus récents (tri par date de création).
+        </p>
+      ) : null}
+    </div>
   )
 }
 
@@ -69,6 +99,7 @@ export function AdminUsersResults({
   hasActiveCriteria,
   results,
   searchError,
+  totalMatchingCount,
 }: AdminUsersResultsProps) {
   const filterChips: string[] = []
   if (appliedRole) filterChips.push(`rôle ${ADMIN_USER_ROLE_LABEL[appliedRole]}`)
@@ -122,6 +153,13 @@ export function AdminUsersResults({
   return (
     <div className="space-y-3">
       <ActiveFiltersSummaryLine chips={filterChips} queryTrimmed={queryTrimmed} />
+      {totalMatchingCount !== null ? (
+        <ResultsCountLine
+          displayed={results.length}
+          total={totalMatchingCount}
+          takeLimit={ADMIN_USER_SEARCH_TAKE}
+        />
+      ) : null}
       <ul className="space-y-3">
         {results.map((u) => (
           <li

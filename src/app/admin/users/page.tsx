@@ -64,6 +64,7 @@ export default async function AdminUsersIndexPage({ searchParams }: PageProps) {
 
   let results: AdminUserSearchResult[] = []
   let searchError = false
+  let totalMatchingCount: number | null = null
 
   if (hasActiveCriteria) {
     try {
@@ -72,20 +73,25 @@ export default async function AdminUsersIndexPage({ searchParams }: PageProps) {
         now,
       )
 
-      const rows = await prisma.user.findMany({
-        where,
-        orderBy: { created_at: "desc" },
-        take: ADMIN_USER_SEARCH_TAKE,
-        select: {
-          id: true,
-          email: true,
-          name: true,
-          role: true,
-          status: true,
-          created_at: true,
-          coach: { select: { slug: true } },
-        },
-      })
+      const [rows, count] = await Promise.all([
+        prisma.user.findMany({
+          where,
+          orderBy: { created_at: "desc" },
+          take: ADMIN_USER_SEARCH_TAKE,
+          select: {
+            id: true,
+            email: true,
+            name: true,
+            role: true,
+            status: true,
+            created_at: true,
+            coach: { select: { slug: true } },
+          },
+        }),
+        prisma.user.count({ where }),
+      ])
+
+      totalMatchingCount = count
 
       results = rows.map((row) => ({
         id: row.id,
@@ -158,6 +164,7 @@ export default async function AdminUsersIndexPage({ searchParams }: PageProps) {
             hasActiveCriteria={hasActiveCriteria}
             results={results}
             searchError={searchError}
+            totalMatchingCount={totalMatchingCount}
           />
         </div>
       </div>
