@@ -9,8 +9,15 @@ import { writeAuditLog } from "@/lib/audit";
 
 export type ModerationMode = "approve" | "reject";
 
-function isAdmin(user: unknown): user is { id: string; role: "admin" } {
-  return Boolean((user as any)?.id) && (user as any)?.role === "admin";
+/**
+ * Accès modération verification (admin aujourd’hui).
+ * Extensible : ajouter `moderator` (ou rôle dédié) sans changer le contrat HTTP.
+ */
+function canModerateVerification(user: unknown): boolean {
+  const u = user as { id?: string; role?: string } | null;
+  if (!u?.id) return false;
+  const r = String(u.role ?? "").toLowerCase().trim();
+  return r === "admin" || r === "moderator";
 }
 
 function setRateHeaders(res: NextResponse, rl: ReturnType<typeof rateHeaders>) {
@@ -101,7 +108,7 @@ export async function postVerificationModeration(
   if (!user?.id) {
     return NextResponse.json({ success: false, error: "invalid_session" }, { status: 401 });
   }
-  if (!isAdmin(user)) {
+  if (!canModerateVerification(user)) {
     return NextResponse.json({ success: false, error: "forbidden" }, { status: 403 });
   }
 

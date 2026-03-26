@@ -1,11 +1,12 @@
-// e2e/admin-verification.spec.ts — /admin/verification (navigation, modération approve/reject)
-// Prérequis seed : voir e2e/README-admin-e2e.md (E2E_SEED_ADMIN_USERS_PAGINATION=1).
+// e2e/admin-verification.spec.ts — /admin/verification (navigation, modération approve/reject, 403 non-admin)
+// Prérequis seed : voir e2e/README-admin-e2e.md (E2E_SEED_ADMIN_USERS_PAGINATION=1) pour les blocs seed ; le bloc 403 n’en dépend pas.
 import { test, expect } from "@playwright/test";
 import { BASE_URL } from "./helpers";
 import {
   approveDoc,
   expandAllVerificationGroups,
   loginAdmin,
+  loginNonAdmin,
   rejectDoc,
   searchVerification,
 } from "./admin-verification-helpers";
@@ -15,6 +16,36 @@ import {
 } from "./fixtures/e2e-admin-verification-ids";
 
 test.describe.configure({ mode: "serial" });
+
+test.describe("admin /admin/verification — API 403 non-admin (sans seed)", () => {
+  test.beforeEach(async ({ page }) => {
+    test.skip(process.env.FEATURE_ADMIN_DASHBOARD === "0", "FEATURE_ADMIN_DASHBOARD=0 désactive l’admin");
+    await loginNonAdmin(page, "athlete");
+  });
+
+  test("POST approve / reject : athlète → 403 forbidden (pas de mutation métier)", async ({ page }) => {
+    const base = BASE_URL.replace(/\/$/, "");
+    const id = E2E_VERIFICATION_DOCUMENT_ID_APPROVE;
+
+    const resApprove = await page.request.post(`${base}/api/admin/verification/${id}/approve`, {
+      data: {},
+      headers: { "Content-Type": "application/json" },
+    });
+    expect(resApprove.status()).toBe(403);
+    const ja = (await resApprove.json()) as { success?: boolean; error?: string };
+    expect(ja.success).toBe(false);
+    expect(ja.error).toBe("forbidden");
+
+    const resReject = await page.request.post(`${base}/api/admin/verification/${id}/reject`, {
+      data: {},
+      headers: { "Content-Type": "application/json" },
+    });
+    expect(resReject.status()).toBe(403);
+    const jr = (await resReject.json()) as { success?: boolean; error?: string };
+    expect(jr.success).toBe(false);
+    expect(jr.error).toBe("forbidden");
+  });
+});
 
 test.describe("admin /admin/verification — verification → fiche utilisateur (seed e2e)", () => {
   test.beforeEach(async ({ page }) => {

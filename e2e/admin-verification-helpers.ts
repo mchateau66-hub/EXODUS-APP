@@ -6,6 +6,12 @@ export async function loginAdmin(page: Page) {
   await login(page, { role: "admin", plan: "free", onboardingStep: 3 });
 }
 
+/** Session athlète ou coach (tests 403 sur routes admin verification). */
+export async function loginNonAdmin(page: Page, role: "athlete" | "coach" = "athlete") {
+  await waitForHealth(BASE_URL, process.env.E2E_SMOKE_PATH ?? E2E_SMOKE_PATH, 20_000);
+  await login(page, { role, plan: "free", onboardingStep: 3 });
+}
+
 export async function searchVerification(page: Page, slug: string) {
   await page.goto("/admin/verification", {
     waitUntil: "domcontentloaded",
