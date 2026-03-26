@@ -55,3 +55,10 @@ pnpm exec playwright test e2e/admin-users.spec.ts --project=chromium --workers=1
 Le spec accepte aussi le texte « Filtres actifs : … » si un build sans `data-testid` tourne encore sur le port cible.
 
 Les scénarios incluent un cas **SSR sans résultat** (`q` + `plan` volontairement impossible) pour verrouiller le message vide et le récap, sans soumettre le formulaire.
+
+### Pagination (`page`)
+
+- Paramètre de query **`page`** (entier ≥ 1) : `skip = (page - 1) ×` limite (voir `ADMIN_USER_SEARCH_TAKE` côté app).
+- **Sans critères actifs** (`q`, filtres, etc.) : un `page` présent dans l’URL est **ignoré** — redirection vers `/admin/users` sans query.
+- **Page hors plage** (ex. `page=999` alors qu’il n’y a aucun résultat ou une seule page) : **redirection canonique** vers la même recherche avec une page valide (souvent sans paramètre `page` quand la page effective est 1).
+- Un scénario E2E couvre la redirection **sans dépendre** du nombre d’utilisateurs en base ; un test de navigation « page 2 » avec liste longue reste optionnel si les données locales dépassent la limite.

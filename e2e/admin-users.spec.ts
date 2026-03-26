@@ -95,4 +95,26 @@ test.describe("admin /admin/users — filtres plan & facturation", () => {
     await expect(summary).toBeVisible();
     await expect(summary).toContainText(/forfait Stripe/i);
   });
+
+  test("pagination : page hors plage redirigée (0 résultat, URL canonique)", async ({ page }) => {
+    const token = "zze2e-admin-no-results-impossible-token";
+    await page.goto(
+      `/admin/users?q=${encodeURIComponent(token)}&plan=coach_premium&page=999`,
+      { waitUntil: "domcontentloaded", timeout: 25_000 },
+    );
+    await expect(page).toHaveURL(/\/admin\/users/);
+    await expect(page).not.toHaveURL(/[?&]page=999/);
+    await expect(page).toHaveURL(/[?&]plan=coach_premium/);
+    await expect(page.getByText(/Aucun utilisateur ne correspond/i)).toBeVisible();
+  });
+
+  test("pagination : sans critères de recherche, page dans l’URL est ignorée (redirect)", async ({
+    page,
+  }) => {
+    await page.goto("/admin/users?page=2", { waitUntil: "domcontentloaded", timeout: 25_000 });
+    await expect(page).toHaveURL((url) => {
+      const u = new URL(url);
+      return u.pathname === "/admin/users" && u.search === "";
+    });
+  });
 });
