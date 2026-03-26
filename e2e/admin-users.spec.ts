@@ -119,7 +119,7 @@ test.describe("admin /admin/users — filtres plan & facturation", () => {
   });
 });
 
-test.describe("admin /admin/users — pagination multi-page (seed e2e)", () => {
+test.describe("admin /admin/users — seed e2e (liste → fiche + pagination multi-page)", () => {
   test.beforeEach(async ({ page }) => {
     test.skip(process.env.FEATURE_ADMIN_DASHBOARD === "0", "FEATURE_ADMIN_DASHBOARD=0 désactive l’admin");
     test.skip(
@@ -128,6 +128,32 @@ test.describe("admin /admin/users — pagination multi-page (seed e2e)", () => {
     );
     await waitForHealth(BASE_URL, process.env.E2E_SMOKE_PATH ?? E2E_SMOKE_PATH, 20_000);
     await login(page, { role: "admin", plan: "free", onboardingStep: 3 });
+  });
+
+  // Avant la pagination : en mode serial, un échec sur la pagination ne doit pas empêcher ce parcours.
+  test("liste → fiche /admin/users/[id] (Profil, billing, usage, entitlements)", async ({ page }) => {
+    const email = "e2e-pagination-00@exodus-e2e.local";
+    const qs = new URLSearchParams({ q: email, role: "athlete" });
+    await page.goto(`/admin/users?${qs.toString()}`, {
+      waitUntil: "domcontentloaded",
+      timeout: 25_000,
+    });
+    await expect(page).toHaveURL(/\/admin\/users/);
+
+    await expect(page.getByText(email, { exact: true })).toBeVisible({ timeout: 20_000 });
+
+    const detailLink = page.getByRole("link", { name: "Voir la fiche admin" }).first();
+    await Promise.all([
+      page.waitForURL(/\/admin\/users\/[0-9a-f-]{36}/),
+      detailLink.click(),
+    ]);
+    await expect(page).toHaveURL(/\/admin\/users\/[0-9a-f-]{36}/);
+
+    await expect(page.getByRole("heading", { name: "Usage et limites" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Profil" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Abonnement et billing" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Usage" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Entitlements effectifs" })).toBeVisible();
   });
 
   test("navigation page 1 → page 2 (filtres + compteur + pagination)", async ({ page }) => {

@@ -77,3 +77,7 @@ E2E_SEED_ADMIN_USERS_PAGINATION=1 pnpm exec prisma db seed
 ```
 
 Puis lancer les tests avec `E2E_SEED_ADMIN_USERS_PAGINATION=1` (ex. préfixer la commande ou l’ajouter à `.e2e.local.env`). Le scénario utilise `q=e2e-pagination` + `role=athlete` pour cibler uniquement ces lignes.
+
+#### Liste → fiche utilisateur (`/admin/users/[id]`)
+
+- Dans le même bloc **seed e2e** que la pagination (ordre d’exécution : **liste → fiche** d’abord, puis navigation page 1 → 2), un scénario ouvre la fiche **Usage et limites** via « Voir la fiche admin » après `q=e2e-pagination-00@exodus-e2e.local` + `role=athlete`. Assertions sur **Profil**, **Abonnement et billing**, **Usage** et **Entitlements effectifs** — mêmes prérequis `E2E_SEED_ADMIN_USERS_PAGINATION=1` que la pagination multi-page.
