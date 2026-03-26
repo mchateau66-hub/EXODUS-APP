@@ -2,7 +2,7 @@
  * Parsing des query params GET `/admin/users` → filtres typés pour `buildAdminUsersWhere`.
  * Les allowlists sont définies dans `admin-users-filter-config.ts` (options admin users).
  */
-import type { AdminBillingFilterMode, AdminPremiumFilterMode } from "@/components/admin/admin-users-search-form"
+import type { AdminBillingFilterMode, AdminPremiumFilterMode } from "@/lib/admin-users-filter-types"
 import type { FeatureKey, PlanKey } from "@/domain/billing/features"
 import type { AdminUsersSearchFilters } from "@/lib/admin-users-search-query"
 import type { Role, UserStatus } from "@prisma/client"

@@ -5,6 +5,7 @@
  * et `buildAdminUsersWhere`.
  */
 import { FEATURE_KEYS, PLAN_KEYS, type FeatureKey, type PlanKey } from "@/domain/billing/features"
+import type { AdminBillingFilterMode, AdminPremiumFilterMode } from "@/lib/admin-users-filter-types"
 import type { AdminUsersSearchParamsAllowlists } from "@/lib/admin-users-search-params"
 import type { Role, UserStatus } from "@prisma/client"
 
@@ -57,7 +58,7 @@ export const ADMIN_USER_PREMIUM_FORM_OPTIONS = [
   { value: "", label: "Tous les utilisateurs" },
   { value: "with", label: "Avec au moins une fonctionnalité premium" },
   { value: "without", label: "Sans fonctionnalité premium active" },
-] as const
+] as const satisfies readonly { value: AdminPremiumFilterMode; label: string }[]
 
 /** Options `<select name="billing">`. */
 export const ADMIN_USER_BILLING_FORM_OPTIONS = [
@@ -65,7 +66,7 @@ export const ADMIN_USER_BILLING_FORM_OPTIONS = [
   { value: "stripe", label: "Avec client Stripe" },
   { value: "subscribed", label: "Abonnement actif, essai ou impayé léger" },
   { value: "canceling", label: "Résiliation à l’échéance" },
-] as const
+] as const satisfies readonly { value: AdminBillingFilterMode; label: string }[]
 
 /** Allowlists alignées sur les options affichées — entrée de `parseAdminUsersSearchParams`. */
 export const ADMIN_USER_SEARCH_PARAM_ALLOWLISTS: AdminUsersSearchParamsAllowlists = {

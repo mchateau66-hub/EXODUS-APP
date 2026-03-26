@@ -1,7 +1,7 @@
 import Link from "next/link"
 import type { Role, UserStatus } from "@prisma/client"
 import type { FeatureKey, PlanKey } from "@/domain/billing/features"
-import type { AdminBillingFilterMode, AdminPremiumFilterMode } from "@/components/admin/admin-users-search-form"
+import type { AdminBillingFilterMode, AdminPremiumFilterMode } from "@/lib/admin-users-filter-types"
 import { ADMIN_USER_ROLE_LABEL, ADMIN_USER_STATUS_LABEL } from "@/components/admin/admin-users-labels"
 import {
   ADMIN_USER_BILLING_FILTER_SUMMARY_LABELS,

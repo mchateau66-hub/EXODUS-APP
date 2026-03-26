@@ -2,13 +2,10 @@ import type { Role, UserStatus } from "@prisma/client"
 import type { PlanKey } from "@/domain/billing/features"
 import { ADMIN_USER_ROLE_LABEL, ADMIN_USER_STATUS_LABEL } from "@/components/admin/admin-users-labels"
 import { ADMIN_USER_BILLING_FORM_OPTIONS, ADMIN_USER_PREMIUM_FORM_OPTIONS } from "@/lib/admin-users-filter-config"
+import type { AdminBillingFilterMode, AdminPremiumFilterMode } from "@/lib/admin-users-filter-types"
 
 type FeatureOption = { value: string; label: string }
 type PlanOption = { value: PlanKey; label: string }
-
-export type AdminPremiumFilterMode = "" | "with" | "without"
-
-export type AdminBillingFilterMode = "" | "stripe" | "subscribed" | "canceling"
 
 type AdminUsersSearchFormProps = {
   q: string

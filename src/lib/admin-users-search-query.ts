@@ -8,7 +8,7 @@
  * - Sinon, `subscribed` / `canceling` / `plan` seuls appliquent chacune leur branche (plan seul = même
  *   notion d’abonnement pertinent que pour `billing=subscribed`).
  */
-import type { AdminBillingFilterMode, AdminPremiumFilterMode } from "@/components/admin/admin-users-search-form"
+import type { AdminBillingFilterMode, AdminPremiumFilterMode } from "@/lib/admin-users-filter-types"
 import type { FeatureKey, PlanKey } from "@/domain/billing/features"
 import type { Prisma, Role, SubStatus, UserStatus } from "@prisma/client"
 
