@@ -11,7 +11,9 @@ export const E2E_ADMIN_PAGINATION_USER_COUNT = 22
 
 export async function seedE2eAdminPaginationUsers() {
   if (process.env.E2E_SEED_ADMIN_USERS_PAGINATION !== "1") {
-    console.log("[seed] skip e2e admin pagination users (E2E_SEED_ADMIN_USERS_PAGINATION!=1)")
+    console.log(
+      "[seed] skip e2e admin pagination users (E2E_SEED_ADMIN_USERS_PAGINATION!=1 — pour les données E2E admin : pnpm db:seed:e2e:admin)",
+    )
     return
   }
 

@@ -4,11 +4,23 @@
 
 Pré-requis habituels : app joignable (`pnpm dev` ou équivalent), `DATABASE_URL`, `ALLOW_DEV_LOGIN=1`, `.env.local` / `.e2e.local.env` selon ton flux. Voir aussi la section **Variables utiles** ci-dessous.
 
+Le seed Prisma (`pnpm db:seed`, `pnpm db:seed:e2e:admin`) charge **`.env`** puis **`.env.local`** (priorité à `.env.local`) pour que `DATABASE_URL` soit trouvé comme sous Next.js.
+
 ```bash
 pnpm run e2e:admin
 ```
 
 Équivalent explicite : `pnpm exec playwright test e2e/admin-users.spec.ts --project=chromium --workers=1` (aligné sur l’étape CI **Run Playwright admin users E2E**). À utiliser après un changement sur les filtres admin, le récap ou le spec, avant de pousser.
+
+## Local vs CI (scénarios admin seedés)
+
+| | **Local** | **CI** (`e2e-smoke-local`) |
+|---|-----------|----------------------------|
+| `DATABASE_URL` | Fichier `.env` / `.env.local` (voir ci-dessus) | Injecté par le workflow |
+| `E2E_SEED_ADMIN_USERS_PAGINATION` | À exporter ou mettre dans `.e2e.local.env` pour **Playwright** ; le **seed** utilise `pnpm db:seed:e2e:admin` qui fixe `=1` | `1` dans le job |
+| Ordre recommandé | `pnpm db:seed:e2e:admin` puis `E2E_SEED_ADMIN_USERS_PAGINATION=1 pnpm run e2e:admin`, ou **`pnpm e2e:admin:seeded`** (seed + tests en une commande) | Seed Prisma puis Playwright sur la même base |
+
+Les tests **sans** jeu seed (filtres, SSR, etc.) passent avec `pnpm run e2e:admin` seul si l’app et le login dev sont OK.
 
 ## CI (pull request)
 
@@ -38,6 +50,7 @@ Les exécutions **smoke/full remote** (`workflow_dispatch`) ne lancent pas ce de
 | `PW_WEB_SERVER` | Si `1` en local, Playwright lance `next dev` et attend `E2E_WEB_SERVER_READY_URL` (défaut `/api/health`). |
 | `E2E_WEB_SERVER_READY_URL` | Surcharge de l’URL « prête » pour `webServer` (ex. `/api/health/ready`). |
 | `E2E_LOGIN_MAX_RETRIES` | Nombre de tentatives sur `POST /api/login` en cas d’erreur réseau transitoire (défaut `5`, max `12`). |
+| `E2E_SEED_ADMIN_USERS_PAGINATION` | Si `1`, les scénarios seed du bloc **liste → fiche + pagination** dans `admin-users.spec.ts` **ne sont pas skip**. Doit être aligné avec un seed ayant créé les utilisateurs `e2e-pagination-*` (`pnpm db:seed:e2e:admin`). |
 
 ## Fragilités connues (dev)
 
@@ -70,13 +83,21 @@ Pour que le test **« navigation page 1 → page 2 »** s’exécute (et ne soit
 1. **Seed Prisma** avec `E2E_SEED_ADMIN_USERS_PAGINATION=1` : crée **22** athlètes actifs dont l’e-mail contient `e2e-pagination` (`prisma/seed.e2e_admin_pagination.ts`, constante `E2E_ADMIN_PAGINATION_USER_COUNT`).
 2. **Playwright** avec la même variable `E2E_SEED_ADMIN_USERS_PAGINATION=1` (déjà le cas dans le job CI **e2e-smoke-local**).
 
-En local, avant `pnpm run e2e:admin` :
+En local, **une** des options suivantes :
 
 ```bash
-E2E_SEED_ADMIN_USERS_PAGINATION=1 pnpm exec prisma db seed
+# Recommandé : seed déterministe admin + même variable pour Playwright
+pnpm db:seed:e2e:admin
+E2E_SEED_ADMIN_USERS_PAGINATION=1 pnpm run e2e:admin
 ```
 
-Puis lancer les tests avec `E2E_SEED_ADMIN_USERS_PAGINATION=1` (ex. préfixer la commande ou l’ajouter à `.e2e.local.env`). Le scénario utilise `q=e2e-pagination` + `role=athlete` pour cibler uniquement ces lignes.
+Ou en une commande (même prérequis `DATABASE_URL` + app déjà prête pour les tests) :
+
+```bash
+pnpm e2e:admin:seeded
+```
+
+Ajoute `E2E_SEED_ADMIN_USERS_PAGINATION=1` dans `.e2e.local.env` si tu préfères ne pas préfixer chaque commande. Le scénario utilise `q=e2e-pagination` + `role=athlete` pour cibler uniquement ces lignes.
 
 #### Liste → fiche utilisateur (`/admin/users/[id]`)
 

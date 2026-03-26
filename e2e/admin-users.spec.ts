@@ -124,7 +124,7 @@ test.describe("admin /admin/users — seed e2e (liste → fiche + pagination mul
     test.skip(process.env.FEATURE_ADMIN_DASHBOARD === "0", "FEATURE_ADMIN_DASHBOARD=0 désactive l’admin");
     test.skip(
       process.env.E2E_SEED_ADMIN_USERS_PAGINATION !== "1",
-      "E2E_SEED_ADMIN_USERS_PAGINATION=1 requis (pnpm db:seed avec ce flag + voir e2e/README-admin-e2e.md)",
+      "E2E_SEED_ADMIN_USERS_PAGINATION=1 requis (pnpm db:seed:e2e:admin puis même variable pour pnpm e2e:admin — voir e2e/README-admin-e2e.md)",
     );
     await waitForHealth(BASE_URL, process.env.E2E_SMOKE_PATH ?? E2E_SMOKE_PATH, 20_000);
     await login(page, { role: "admin", plan: "free", onboardingStep: 3 });

@@ -31,6 +31,8 @@
   "db:migrate:deploy": "prisma migrate deploy",
   "db:generate": "prisma generate",
   "db:seed": "prisma db seed",
+  "db:seed:e2e:admin": "E2E_SEED_ADMIN_USERS_PAGINATION=1 pnpm exec prisma db seed",
+  "e2e:admin:seeded": "pnpm run db:seed:e2e:admin && E2E_SEED_ADMIN_USERS_PAGINATION=1 pnpm run e2e:admin",
   "db:studio": "prisma studio",
 
   "check:billing": "tsx scripts/check_billing.ts",
