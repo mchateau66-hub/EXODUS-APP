@@ -23,6 +23,15 @@ type DocRow = {
   url: string;
 };
 
+type VerificationHistoryItem = {
+  action: "approve" | "reject";
+  actorId: string | null;
+  actorEmail: string | null;
+  createdAt: string;
+  reason: string | null;
+  statusAfter: "verified" | "rejected";
+};
+
 type Props = {
   initialRows: DocRow[];
 };
@@ -257,6 +266,12 @@ export default function AdminVerificationClient({ initialRows }: Props) {
   const [groupOps, setGroupOps] = React.useState<Record<string, GroupOpState>>({});
 
   const [toast, setToast] = React.useState<string | null>(null);
+
+  const [historyCache, setHistoryCache] = React.useState<Record<string, VerificationHistoryItem[] | undefined>>(
+    {},
+  );
+  const [historyLoadingId, setHistoryLoadingId] = React.useState<string | null>(null);
+  const [historyOpenId, setHistoryOpenId] = React.useState<string | null>(null);
 
   const filtered = React.useMemo(() => {
     const needle = q.trim().toLowerCase();
@@ -527,11 +542,118 @@ export default function AdminVerificationClient({ initialRows }: Props) {
           x.id === docId ? { ...x, status: newStatus, reviewedAt: nowIso } : x,
         ),
       );
+      setHistoryCache((prev) => {
+        const next = { ...prev };
+        delete next[docId];
+        return next;
+      });
       setToast(action === "approve" ? "Approuvé ✅" : "Rejeté");
     } finally {
       setModeratingId(null);
       setTimeout(() => setToast(null), 2500);
     }
+  }
+
+  async function loadVerificationHistory(docId: string) {
+    setHistoryLoadingId(docId);
+    setHistoryOpenId(docId);
+    setToast(null);
+    try {
+      const res = await fetch(`/api/admin/verification/${docId}/history`);
+      const data = (await res.json().catch(() => null)) as {
+        success?: boolean;
+        items?: VerificationHistoryItem[];
+        error?: string;
+      };
+      if (!res.ok || !data?.success) {
+        setToast(`Historique: ${data?.error ?? res.status}`);
+        setHistoryOpenId(null);
+        return;
+      }
+      setHistoryCache((prev) => ({ ...prev, [docId]: data.items ?? [] }));
+    } finally {
+      setHistoryLoadingId(null);
+      setTimeout(() => setToast(null), 2500);
+    }
+  }
+
+  function toggleVerificationHistory(docId: string) {
+    if (historyOpenId === docId) {
+      setHistoryOpenId(null);
+      return;
+    }
+    if (historyCache[docId] !== undefined) {
+      setHistoryOpenId(docId);
+      return;
+    }
+    void loadVerificationHistory(docId);
+  }
+
+  function renderVerificationHistoryPanel(docId: string) {
+    const open = historyOpenId === docId;
+    const items = historyCache[docId];
+    const loading = historyLoadingId === docId;
+    return (
+      <div className="mt-3">
+        <button
+          type="button"
+          data-testid={`verification-history-toggle-${docId}`}
+          onClick={() => toggleVerificationHistory(docId)}
+          className="text-xs font-semibold text-sky-200 underline underline-offset-2 hover:text-sky-100"
+        >
+          {loading ? "Chargement…" : open ? "Masquer l’historique" : "Voir l’historique"}
+        </button>
+        {open ? (
+          <div
+            data-testid={`verification-history-panel-${docId}`}
+            className="mt-2 rounded-2xl border border-white/10 bg-black/25 p-3"
+          >
+            {loading && items === undefined ? (
+              <p className="text-xs text-white/45">Chargement…</p>
+            ) : (items?.length ?? 0) === 0 ? (
+              <p className="text-xs text-white/55">Aucune décision enregistrée pour ce document.</p>
+            ) : (
+              <ul className="space-y-2">
+                {(items ?? []).map((it, idx) => (
+                  <li
+                    key={`${it.createdAt}-${idx}`}
+                    data-testid={`verification-history-item-${docId}-${idx}`}
+                    className="text-xs leading-relaxed text-white/85"
+                  >
+                    <span
+                      className={
+                        it.action === "approve" ? "font-semibold text-emerald-300" : "font-semibold text-rose-300"
+                      }
+                    >
+                      {it.action === "approve" ? "Approuvé" : "Rejeté"}
+                    </span>
+                    <span className="text-white/40"> · </span>
+                    {new Date(it.createdAt).toLocaleString()}
+                    {it.actorEmail ? (
+                      <>
+                        <span className="text-white/40"> · </span>
+                        {it.actorEmail}
+                      </>
+                    ) : it.actorId ? (
+                      <>
+                        <span className="text-white/40"> · </span>
+                        <span className="font-mono text-[11px] text-white/55">{it.actorId.slice(0, 8)}…</span>
+                      </>
+                    ) : null}
+                    {it.reason ? (
+                      <>
+                        <span className="text-white/40"> — </span>
+                        <span className="text-white/70">{it.reason}</span>
+                      </>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        ) : null}
+      </div>
+    );
   }
 
   async function saveRow(docId: string) {
@@ -1533,6 +1655,8 @@ export default function AdminVerificationClient({ initialRows }: Props) {
                                 </div>
                               ) : null}
 
+                              {renderVerificationHistoryPanel(r.id)}
+
                               {/* Inline edit */}
                               <div className="mt-3 grid gap-2 sm:grid-cols-2">
                                 <select
@@ -1694,6 +1818,8 @@ export default function AdminVerificationClient({ initialRows }: Props) {
                           </button>
                         </div>
                       ) : null}
+
+                      {renderVerificationHistoryPanel(r.id)}
 
                       <select
                         className="w-full rounded-xl border border-white/10 bg-slate-950 px-3 py-2 text-sm text-white"

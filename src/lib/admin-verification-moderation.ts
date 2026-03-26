@@ -13,7 +13,7 @@ export type ModerationMode = "approve" | "reject";
  * Accès modération verification (admin aujourd’hui).
  * Extensible : ajouter `moderator` (ou rôle dédié) sans changer le contrat HTTP.
  */
-function canModerateVerification(user: unknown): boolean {
+export function canModerateVerification(user: unknown): boolean {
   const u = user as { id?: string; role?: string } | null;
   if (!u?.id) return false;
   const r = String(u.role ?? "").toLowerCase().trim();
@@ -199,6 +199,7 @@ export async function postVerificationModeration(
         docId: id,
         newStatus: targetStatus,
         reviewNoteLen: reason?.length ?? 0,
+        ...(reason ? { reason } : {}),
       },
     });
 

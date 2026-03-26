@@ -45,6 +45,17 @@ test.describe("admin /admin/verification — API 403 non-admin (sans seed)", () 
     expect(jr.success).toBe(false);
     expect(jr.error).toBe("forbidden");
   });
+
+  test("GET history : athlète → 403", async ({ page }) => {
+    const base = BASE_URL.replace(/\/$/, "");
+    const res = await page.request.get(
+      `${base}/api/admin/verification/${E2E_VERIFICATION_DOCUMENT_ID_APPROVE}/history`,
+    );
+    expect(res.status()).toBe(403);
+    const j = (await res.json()) as { success?: boolean; error?: string };
+    expect(j.success).toBe(false);
+    expect(j.error).toBe("forbidden");
+  });
 });
 
 test.describe("admin /admin/verification — verification → fiche utilisateur (seed e2e)", () => {
@@ -93,6 +104,18 @@ test.describe("admin /admin/verification — verification → fiche utilisateur 
     );
   });
 
+  test("Historique UI : affiche Approuvé après modération (audit métier)", async ({ page }) => {
+    await searchVerification(page, "e2e-verification-coach");
+    await expandAllVerificationGroups(page);
+    await page.getByTestId(`verification-history-toggle-${E2E_VERIFICATION_DOCUMENT_ID_APPROVE}`).click();
+    await expect(
+      page.getByTestId(`verification-history-panel-${E2E_VERIFICATION_DOCUMENT_ID_APPROVE}`),
+    ).toBeVisible({ timeout: 15_000 });
+    await expect(
+      page.getByTestId(`verification-history-item-${E2E_VERIFICATION_DOCUMENT_ID_APPROVE}-0`),
+    ).toContainText(/Approuvé/i);
+  });
+
   test("Rejeter doc pending → UI rejected, persistance après reload", async ({ page }) => {
     await searchVerification(page, "e2e-verification-coach-reject");
     await expandAllVerificationGroups(page);
@@ -110,6 +133,18 @@ test.describe("admin /admin/verification — verification → fiche utilisateur 
       /rejected/i,
       { timeout: 15_000 },
     );
+  });
+
+  test("Historique UI : affiche Rejeté après modération (audit métier)", async ({ page }) => {
+    await searchVerification(page, "e2e-verification-coach-reject");
+    await expandAllVerificationGroups(page);
+    await page.getByTestId(`verification-history-toggle-${E2E_VERIFICATION_DOCUMENT_ID_REJECT}`).click();
+    await expect(
+      page.getByTestId(`verification-history-panel-${E2E_VERIFICATION_DOCUMENT_ID_REJECT}`),
+    ).toBeVisible({ timeout: 15_000 });
+    await expect(
+      page.getByTestId(`verification-history-item-${E2E_VERIFICATION_DOCUMENT_ID_REJECT}-0`),
+    ).toContainText(/Rejeté/i);
   });
 
   test("API : second approve sur doc déjà vérifié → 409", async ({ page }) => {
@@ -139,6 +174,14 @@ test.describe("admin /admin/verification — verification → fiche utilisateur 
     const res = await page.request.post(
       `${BASE_URL.replace(/\/$/, "")}/api/admin/verification/${missingId}/approve`,
       { data: {} },
+    );
+    expect(res.status()).toBe(404);
+  });
+
+  test("GET history : doc inexistant → 404", async ({ page }) => {
+    const missingId = "00000000-0000-4000-8000-000000000099";
+    const res = await page.request.get(
+      `${BASE_URL.replace(/\/$/, "")}/api/admin/verification/${missingId}/history`,
     );
     expect(res.status()).toBe(404);
   });
