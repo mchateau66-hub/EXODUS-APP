@@ -3,6 +3,7 @@ import { config as loadEnvFile } from "dotenv"
 import { existsSync } from "node:fs"
 import { seedPlansFeatures } from "./seed.plans_features"
 import { runSeedE2eAdminPaginationUsers } from "./seed.e2e_admin_pagination"
+import { runSeedE2eAdminVerificationCoachDoc } from "./seed.e2e_admin_verification"
 
 // Prisma CLI + prisma.config ne chargent pas toujours .env.local ; Next.js oui — aligner le seed local.
 if (existsSync(".env.local")) {
@@ -23,6 +24,7 @@ async function main() {
   requireDatabaseUrl()
   await seedPlansFeatures()
   await runSeedE2eAdminPaginationUsers()
+  await runSeedE2eAdminVerificationCoachDoc()
 }
 
 main().catch((e) => {

@@ -10,7 +10,7 @@ Le seed Prisma (`pnpm db:seed`, `pnpm db:seed:e2e:admin`) charge **`.env`** puis
 pnpm run e2e:admin
 ```
 
-Équivalent explicite : `pnpm exec playwright test e2e/admin-users.spec.ts --project=chromium --workers=1` (aligné sur l’étape CI **Run Playwright admin users E2E**). À utiliser après un changement sur les filtres admin, le récap ou le spec, avant de pousser.
+Équivalent explicite : `pnpm exec playwright test e2e/admin-users.spec.ts e2e/admin-verification.spec.ts --project=chromium --workers=1` (aligné sur l’étape CI **Run Playwright admin users E2E**). À utiliser après un changement sur les filtres admin, la vérification coach, le récap ou les specs, avant de pousser.
 
 ## Local vs CI (scénarios admin seedés)
 
@@ -50,7 +50,7 @@ Les exécutions **smoke/full remote** (`workflow_dispatch`) ne lancent pas ce de
 | `PW_WEB_SERVER` | Si `1` en local, Playwright lance `next dev` et attend `E2E_WEB_SERVER_READY_URL` (défaut `/api/health`). |
 | `E2E_WEB_SERVER_READY_URL` | Surcharge de l’URL « prête » pour `webServer` (ex. `/api/health/ready`). |
 | `E2E_LOGIN_MAX_RETRIES` | Nombre de tentatives sur `POST /api/login` en cas d’erreur réseau transitoire (défaut `5`, max `12`). |
-| `E2E_SEED_ADMIN_USERS_PAGINATION` | Si `1`, les scénarios seed du bloc **liste → fiche + pagination** dans `admin-users.spec.ts` **ne sont pas skip**. Doit être aligné avec un seed ayant créé les utilisateurs `e2e-pagination-*` (`pnpm db:seed:e2e:admin`). |
+| `E2E_SEED_ADMIN_USERS_PAGINATION` | Si `1`, les scénarios seed dans **`admin-users.spec.ts`** (liste → fiche + pagination) et **`admin-verification.spec.ts`** (vérification → fiche) **ne sont pas skip**. Le seed crée aussi un coach + document déterministes (`e2e-verification-coach@…`, slug `e2e-verification-coach`) — voir ci-dessous. |
 
 ## Fragilités connues (dev)
 
@@ -62,7 +62,7 @@ Les exécutions **smoke/full remote** (`workflow_dispatch`) ne lancent pas ce de
 Préférer `pnpm run e2e:admin` (voir ci-dessus). Commande brute équivalente :
 
 ```bash
-pnpm exec playwright test e2e/admin-users.spec.ts --project=chromium --workers=1
+pnpm exec playwright test e2e/admin-users.spec.ts e2e/admin-verification.spec.ts --project=chromium --workers=1
 ```
 
 Le spec accepte aussi le texte « Filtres actifs : … » si un build sans `data-testid` tourne encore sur le port cible.
@@ -102,3 +102,7 @@ Ajoute `E2E_SEED_ADMIN_USERS_PAGINATION=1` dans `.e2e.local.env` si tu préfère
 #### Liste → fiche utilisateur (`/admin/users/[id]`)
 
 - Dans le même bloc **seed e2e** que la pagination (ordre d’exécution : **liste → fiche** d’abord, puis navigation page 1 → 2), un scénario ouvre la fiche **Usage et limites** via « Voir la fiche admin » après `q=e2e-pagination-00@exodus-e2e.local` + `role=athlete`. Assertions sur **Profil**, **Abonnement et billing**, **Usage** et **Entitlements effectifs** — mêmes prérequis `E2E_SEED_ADMIN_USERS_PAGINATION=1` que la pagination multi-page.
+
+#### Vérification coachs → fiche (`/admin/verification` → `/admin/users/[id]`)
+
+- Avec le même seed **`pnpm db:seed:e2e:admin`**, un coach **E2E Verification Coach** (`e2e-verification-coach@exodus-e2e.local`, slug `e2e-verification-coach`) et un **CoachDocument** `pending` sont créés. Le spec `e2e/admin-verification.spec.ts` ouvre `/admin/verification`, filtre la recherche sur le slug, clique **« Voir la fiche admin »**, puis vérifie **Usage et limites** et **Profil** sur la fiche utilisateur.

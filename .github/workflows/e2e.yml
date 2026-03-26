@@ -354,7 +354,7 @@ jobs:
           E2E_SKIP_LOGIN: "0"
           E2E_LOGIN_MAX_RETRIES: "8"
           E2E_SEED_ADMIN_USERS_PAGINATION: "1"
-        run: pnpm exec playwright test e2e/admin-users.spec.ts --project=chromium --workers=1
+        run: pnpm exec playwright test e2e/admin-users.spec.ts e2e/admin-verification.spec.ts --project=chromium --workers=1
 
       - name: Stop Next server
         if: always()
