@@ -1,4 +1,5 @@
-// e2e/admin-users.spec.ts — filtre plan + facturation sur /admin/users (session admin)
+// e2e/admin-users.spec.ts — filtres /admin/users (plan, facturation, premium/entitlements, SSR)
+// Le filtre « Offre premium » (query `premium`) porte sur les entitlements actifs, pas sur le forfait Stripe (`plan` / `billing`).
 // Prérequis et variables : voir e2e/README-admin-e2e.md (FEATURE_ADMIN_DASHBOARD, ALLOW_DEV_LOGIN, login retries, …).
 import { test, expect } from "@playwright/test";
 import { BASE_URL, E2E_SMOKE_PATH, login, waitForHealth } from "./helpers";
@@ -57,6 +58,26 @@ test.describe("admin /admin/users — filtres plan & facturation", () => {
     await expect(summary).toContainText(/abonnement Stripe/i);
     await expect(summary).toContainText(/forfait Stripe/i);
     await expect(summary).toContainText(/Athlète premium/i);
+  });
+
+  test("filtre premium=with : URL et récap (entitlements)", async ({ page }) => {
+    await page.goto("/admin/users", { waitUntil: "domcontentloaded", timeout: 25_000 });
+    await expect(page).toHaveURL(/\/admin\/users/);
+
+    await page.locator("#admin-users-premium").selectOption("with");
+    await Promise.all([
+      page.waitForURL(/[?&]premium=with(?:&|$)/, { timeout: 25_000 }),
+      page.getByRole("button", { name: "Rechercher" }).click(),
+    ]);
+    await page.waitForLoadState("domcontentloaded");
+
+    const summary = page
+      .getByTestId("admin-users-results-summary")
+      .or(page.getByText(/Filtres actifs\s*:/i))
+      .first();
+    await expect(summary).toBeVisible({ timeout: 20_000 });
+    // Aligné sur ADMIN_USER_PREMIUM_FILTER_SUMMARY_LABELS (config admin users)
+    await expect(summary).toContainText(/droits premium actifs/i);
   });
 
   test("recherche sans résultat : message explicite et récap filtres (SSR)", async ({ page }) => {
