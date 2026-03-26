@@ -203,6 +203,15 @@ export async function postVerificationModeration(
   } catch (e) {
     const msg = e instanceof Error ? e.message : "server_error";
     if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2025") {
+      // Race : document supprimé entre findUnique et update — même action d’audit que not_found (404).
+      await writeAuditLog({
+        action: `admin.verification.${mode}_not_found`,
+        userId: user.id,
+        email,
+        ip,
+        ua,
+        meta: { docId: id, prismaCode: "P2025" },
+      });
       const res = NextResponse.json({ success: false, error: "not_found" }, { status: 404 });
       return setRateHeaders(res, rlH);
     }
