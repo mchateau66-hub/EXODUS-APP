@@ -62,3 +62,18 @@ Les scénarios incluent un cas **SSR sans résultat** (`q` + `plan` volontaireme
 - **Sans critères actifs** (`q`, filtres, etc.) : un `page` présent dans l’URL est **ignoré** — redirection vers `/admin/users` sans query.
 - **Page hors plage** (ex. `page=999` alors qu’il n’y a aucun résultat ou une seule page) : **redirection canonique** vers la même recherche avec une page valide (souvent sans paramètre `page` quand la page effective est 1).
 - Un scénario E2E couvre la redirection **sans dépendre** du nombre d’utilisateurs en base ; un test de navigation « page 2 » avec liste longue reste optionnel si les données locales dépassent la limite.
+
+#### Jeu de données déterministe (pagination multi-page)
+
+Pour que le test **« navigation page 1 → page 2 »** s’exécute (et ne soit pas **skip**), il faut :
+
+1. **Seed Prisma** avec `E2E_SEED_ADMIN_USERS_PAGINATION=1` : crée **22** athlètes actifs dont l’e-mail contient `e2e-pagination` (`prisma/seed.e2e_admin_pagination.ts`, constante `E2E_ADMIN_PAGINATION_USER_COUNT`).
+2. **Playwright** avec la même variable `E2E_SEED_ADMIN_USERS_PAGINATION=1` (déjà le cas dans le job CI **e2e-smoke-local**).
+
+En local, avant `pnpm run e2e:admin` :
+
+```bash
+E2E_SEED_ADMIN_USERS_PAGINATION=1 pnpm exec prisma db seed
+```
+
+Puis lancer les tests avec `E2E_SEED_ADMIN_USERS_PAGINATION=1` (ex. préfixer la commande ou l’ajouter à `.e2e.local.env`). Le scénario utilise `q=e2e-pagination` + `role=athlete` pour cibler uniquement ces lignes.

@@ -118,3 +118,40 @@ test.describe("admin /admin/users — filtres plan & facturation", () => {
     });
   });
 });
+
+test.describe("admin /admin/users — pagination multi-page (seed e2e)", () => {
+  test.beforeEach(async ({ page }) => {
+    test.skip(process.env.FEATURE_ADMIN_DASHBOARD === "0", "FEATURE_ADMIN_DASHBOARD=0 désactive l’admin");
+    test.skip(
+      process.env.E2E_SEED_ADMIN_USERS_PAGINATION !== "1",
+      "E2E_SEED_ADMIN_USERS_PAGINATION=1 requis (pnpm db:seed avec ce flag + voir e2e/README-admin-e2e.md)",
+    );
+    await waitForHealth(BASE_URL, process.env.E2E_SMOKE_PATH ?? E2E_SMOKE_PATH, 20_000);
+    await login(page, { role: "admin", plan: "free", onboardingStep: 3 });
+  });
+
+  test("navigation page 1 → page 2 (filtres + compteur + pagination)", async ({ page }) => {
+    const qs = new URLSearchParams({ q: "e2e-pagination", role: "athlete" });
+    await page.goto(`/admin/users?${qs.toString()}`, {
+      waitUntil: "domcontentloaded",
+      timeout: 25_000,
+    });
+    await expect(page).toHaveURL(/\/admin\/users/);
+
+    const pagination = page.getByTestId("admin-users-results-pagination");
+    await expect(pagination).toBeVisible({ timeout: 20_000 });
+    await expect(pagination).toContainText(/Page 1 \/ 2/);
+
+    const countLine = page.getByTestId("admin-users-results-count");
+    await expect(countLine).toContainText(/1–20 sur 22/);
+
+    await Promise.all([
+      page.waitForURL(/[?&]page=2(?:&|$)/, { timeout: 25_000 }),
+      page.getByRole("link", { name: "Suivant" }).click(),
+    ]);
+    await page.waitForLoadState("domcontentloaded");
+
+    await expect(pagination).toContainText(/Page 2 \/ 2/);
+    await expect(countLine).toContainText(/21–22 sur 22/);
+  });
+});

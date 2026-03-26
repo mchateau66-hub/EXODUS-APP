@@ -23,7 +23,8 @@ const FEATURE_KEYS = {
 
 type FeatureKey = (typeof FEATURE_KEYS)[keyof typeof FEATURE_KEYS]
 
-async function main() {
+export async function seedPlansFeatures() {
+  try {
   // 1) Plans
   const plans: { key: PlanKey; name: string }[] = [
     {
@@ -131,13 +132,18 @@ async function main() {
   }
 
   console.log('✅ Plans & features seeded')
+  } finally {
+    await prisma.$disconnect()
+  }
 }
 
-main()
-  .catch((e) => {
+const runDirect =
+  typeof process.argv[1] === "string" &&
+  (process.argv[1].includes("seed.plans_features") || process.argv[1].endsWith("seed.plans_features.ts"))
+
+if (runDirect) {
+  seedPlansFeatures().catch((e) => {
     console.error(e)
     process.exit(1)
   })
-  .finally(async () => {
-    await prisma.$disconnect()
-  })
+}
