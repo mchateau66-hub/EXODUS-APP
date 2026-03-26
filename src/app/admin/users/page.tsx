@@ -1,15 +1,16 @@
 import Link from "next/link"
 import { redirect } from "next/navigation"
-import {
-  AdminUsersSearchForm,
-  type AdminBillingFilterMode,
-  type AdminPremiumFilterMode,
-} from "@/components/admin/admin-users-search-form"
+import { AdminUsersSearchForm } from "@/components/admin/admin-users-search-form"
 import {
   AdminUsersResults,
   type AdminUserSearchResult,
 } from "@/components/admin/admin-users-results"
 import { FEATURE_KEYS, PLAN_KEYS, type FeatureKey, type PlanKey } from "@/domain/billing/features"
+import {
+  adminUsersSearchHasActiveCriteria,
+  parseAdminUsersSearchParams,
+  toAdminUsersSearchFilters,
+} from "@/lib/admin-users-search-params"
 import { ADMIN_USER_SEARCH_TAKE, buildAdminUsersWhere } from "@/lib/admin-users-search-query"
 import { prisma } from "@/lib/db"
 import { requireOnboardingStep } from "@/lib/onboarding"
@@ -51,47 +52,6 @@ const ADMIN_USER_PLAN_OPTIONS = [
 
 const ALLOWED_PLAN_KEYS = new Set<string>(ADMIN_USER_PLAN_OPTIONS.map((o) => o.value))
 
-function normalizePremiumFilter(raw: string): AdminPremiumFilterMode {
-  const t = raw.trim()
-  if (t === "1" || t === "with") return "with"
-  if (t === "without") return "without"
-  return ""
-}
-
-function normalizeBillingFilter(raw: string | undefined): AdminBillingFilterMode {
-  const t = typeof raw === "string" ? raw.trim() : ""
-  return t === "stripe" || t === "subscribed" || t === "canceling" ? t : ""
-}
-
-function safeFeatureFilter(raw: string): FeatureKey | undefined {
-  const t = raw.trim()
-  if (!t || !ALLOWED_ADMIN_FEATURES.has(t)) return undefined
-  return t as FeatureKey
-}
-
-function safeRoleFilter(raw: string): Role | undefined {
-  const t = raw.trim()
-  if (!t || !ALLOWED_ROLES.has(t)) return undefined
-  return t as Role
-}
-
-function safeStatusFilter(raw: string): UserStatus | undefined {
-  const t = raw.trim()
-  if (!t || !ALLOWED_STATUSES.has(t)) return undefined
-  return t as UserStatus
-}
-
-function safePlanFilter(raw: string): PlanKey | undefined {
-  const t = raw.trim()
-  if (!t || !ALLOWED_PLAN_KEYS.has(t)) return undefined
-  return t as PlanKey
-}
-
-function readSearchParam(sp: Record<string, string | string[] | undefined>, key: string): string {
-  const v = sp[key]
-  return typeof v === "string" ? v : ""
-}
-
 type PageProps = {
   searchParams?: Promise<{
     q?: string
@@ -112,31 +72,24 @@ export default async function AdminUsersIndexPage({ searchParams }: PageProps) {
   if (user?.role !== "admin") redirect("/hub")
 
   const sp = (await searchParams) ?? {}
-  const rawQ = readSearchParam(sp, "q")
-  const rawRole = readSearchParam(sp, "role")
-  const rawStatus = readSearchParam(sp, "status")
-  const rawFeature = readSearchParam(sp, "feature")
-  const rawPremium = readSearchParam(sp, "premium")
-  const rawBilling = readSearchParam(sp, "billing")
-  const rawPlan = readSearchParam(sp, "plan")
+  const parsed = parseAdminUsersSearchParams(sp, {
+    allowedRoles: ALLOWED_ROLES,
+    allowedStatuses: ALLOWED_STATUSES,
+    allowedFeatures: ALLOWED_ADMIN_FEATURES,
+    allowedPlans: ALLOWED_PLAN_KEYS,
+  })
+  const {
+    rawQ,
+    q,
+    roleFilter,
+    statusFilter,
+    featureFilter,
+    premiumFilter,
+    billingFilter,
+    planFilter,
+  } = parsed
 
-  const q = rawQ.trim()
-  const roleFilter = safeRoleFilter(rawRole)
-  const statusFilter = safeStatusFilter(rawStatus)
-  const featureFilter = safeFeatureFilter(rawFeature)
-  const premiumFilter = normalizePremiumFilter(rawPremium)
-  const billingFilter = normalizeBillingFilter(rawBilling)
-  const planFilter = safePlanFilter(rawPlan)
-
-  const hasActiveCriteria = Boolean(
-    q ||
-      roleFilter ||
-      statusFilter ||
-      featureFilter ||
-      premiumFilter !== "" ||
-      billingFilter !== "" ||
-      planFilter,
-  )
+  const hasActiveCriteria = adminUsersSearchHasActiveCriteria(parsed)
 
   const now = new Date()
 
@@ -146,16 +99,7 @@ export default async function AdminUsersIndexPage({ searchParams }: PageProps) {
   if (hasActiveCriteria) {
     try {
       const where = buildAdminUsersWhere(
-        {
-          q,
-          roleFilter,
-          statusFilter,
-          featureFilter,
-          premiumFilter,
-          billingFilter,
-          planFilter,
-          premiumFeatureKeys: PREMIUM_FEATURE_KEYS,
-        },
+        toAdminUsersSearchFilters(parsed, PREMIUM_FEATURE_KEYS),
         now,
       )
 

@@ -1,6 +1,12 @@
 /**
  * Construction de `Prisma.UserWhereInput` pour la recherche admin `/admin/users`.
- * Les valeurs doivent être déjà normalisées / whitelistées côté page.
+ * Les valeurs doivent être déjà normalisées / whitelistées (voir `admin-users-search-params.ts`).
+ *
+ * Fusion `billing` + `plan` :
+ * - `subscribed` + plan : souscription avec ce `plan_key` et statut « pertinent » (active/trialing/past_due).
+ * - `canceling` + plan : souscription avec ce `plan_key` et `cancel_at_period_end`.
+ * - Sinon, `subscribed` / `canceling` / `plan` seuls appliquent chacune leur branche (plan seul = même
+ *   notion d’abonnement pertinent que pour `billing=subscribed`).
  */
 import type { AdminBillingFilterMode, AdminPremiumFilterMode } from "@/components/admin/admin-users-search-form"
 import type { FeatureKey, PlanKey } from "@/domain/billing/features"
