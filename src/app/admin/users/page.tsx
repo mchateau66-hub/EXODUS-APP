@@ -5,7 +5,14 @@ import {
   AdminUsersResults,
   type AdminUserSearchResult,
 } from "@/components/admin/admin-users-results"
-import { FEATURE_KEYS, PLAN_KEYS, type FeatureKey, type PlanKey } from "@/domain/billing/features"
+import {
+  ADMIN_USER_PREMIUM_FEATURE_KEYS,
+  ADMIN_USER_SEARCH_PARAM_ALLOWLISTS,
+  ADMIN_USER_FEATURE_OPTIONS,
+  ADMIN_USER_PLAN_OPTIONS,
+  ADMIN_USER_ROLE_OPTIONS,
+  ADMIN_USER_STATUS_OPTIONS,
+} from "@/lib/admin-users-filter-config"
 import {
   adminUsersSearchHasActiveCriteria,
   parseAdminUsersSearchParams,
@@ -14,43 +21,10 @@ import {
 import { ADMIN_USER_SEARCH_TAKE, buildAdminUsersWhere } from "@/lib/admin-users-search-query"
 import { prisma } from "@/lib/db"
 import { requireOnboardingStep } from "@/lib/onboarding"
-import type { Role, UserStatus } from "@prisma/client"
 
 export const dynamic = "force-dynamic"
 export const revalidate = 0
 export const runtime = "nodejs"
-
-/** Valeurs autorisées — alignées sur `enum Role` (schéma Prisma). */
-const ADMIN_USER_ROLE_OPTIONS = ["coach", "athlete", "admin"] as const satisfies readonly Role[]
-
-/** Valeurs autorisées — alignées sur `enum UserStatus`. */
-const ADMIN_USER_STATUS_OPTIONS = ["active", "disabled", "deleted"] as const satisfies readonly UserStatus[]
-
-const ALLOWED_ROLES = new Set<string>(ADMIN_USER_ROLE_OPTIONS)
-const ALLOWED_STATUSES = new Set<string>(ADMIN_USER_STATUS_OPTIONS)
-
-/** Whitelist features premium — alignées sur les clés produit et `userHasFeature`. */
-const ADMIN_USER_FEATURE_OPTIONS = [
-  { value: FEATURE_KEYS.messagesUnlimited, label: "Messages illimités" },
-  { value: FEATURE_KEYS.contactUnlock, label: "Déverrouillage de contact" },
-  { value: FEATURE_KEYS.coachPriorityListing, label: "Mise en avant du profil coach" },
-  { value: FEATURE_KEYS.profileBoost, label: "Boost du profil" },
-  { value: FEATURE_KEYS.searchPriority, label: "Priorité dans les résultats de recherche" },
-] as const satisfies readonly { value: FeatureKey; label: string }[]
-
-const ALLOWED_ADMIN_FEATURES = new Set<string>(ADMIN_USER_FEATURE_OPTIONS.map((o) => o.value))
-
-/** Mêmes clés que le filtre feature — entitlements actifs pour les modes `premium=with` / `without`. */
-const PREMIUM_FEATURE_KEYS = ADMIN_USER_FEATURE_OPTIONS.map((o) => o.value)
-
-/** Plans proposés dans l’admin — alignés sur `PLAN_KEYS` (vérité produit). */
-const ADMIN_USER_PLAN_OPTIONS = [
-  { value: PLAN_KEYS.free, label: "Free" },
-  { value: PLAN_KEYS.athletePremium, label: "Athlète premium" },
-  { value: PLAN_KEYS.coachPremium, label: "Coach premium" },
-] as const satisfies readonly { value: PlanKey; label: string }[]
-
-const ALLOWED_PLAN_KEYS = new Set<string>(ADMIN_USER_PLAN_OPTIONS.map((o) => o.value))
 
 type PageProps = {
   searchParams?: Promise<{
@@ -72,12 +46,7 @@ export default async function AdminUsersIndexPage({ searchParams }: PageProps) {
   if (user?.role !== "admin") redirect("/hub")
 
   const sp = (await searchParams) ?? {}
-  const parsed = parseAdminUsersSearchParams(sp, {
-    allowedRoles: ALLOWED_ROLES,
-    allowedStatuses: ALLOWED_STATUSES,
-    allowedFeatures: ALLOWED_ADMIN_FEATURES,
-    allowedPlans: ALLOWED_PLAN_KEYS,
-  })
+  const parsed = parseAdminUsersSearchParams(sp, ADMIN_USER_SEARCH_PARAM_ALLOWLISTS)
   const {
     rawQ,
     q,
@@ -99,7 +68,7 @@ export default async function AdminUsersIndexPage({ searchParams }: PageProps) {
   if (hasActiveCriteria) {
     try {
       const where = buildAdminUsersWhere(
-        toAdminUsersSearchFilters(parsed, PREMIUM_FEATURE_KEYS),
+        toAdminUsersSearchFilters(parsed, ADMIN_USER_PREMIUM_FEATURE_KEYS),
         now,
       )
 

@@ -1,8 +1,14 @@
 import Link from "next/link"
 import type { Role, UserStatus } from "@prisma/client"
-import { FEATURE_KEYS, PLAN_KEYS, type FeatureKey, type PlanKey } from "@/domain/billing/features"
+import type { FeatureKey, PlanKey } from "@/domain/billing/features"
 import type { AdminBillingFilterMode, AdminPremiumFilterMode } from "@/components/admin/admin-users-search-form"
 import { ADMIN_USER_ROLE_LABEL, ADMIN_USER_STATUS_LABEL } from "@/components/admin/admin-users-labels"
+import {
+  ADMIN_USER_BILLING_FILTER_SUMMARY_LABELS,
+  ADMIN_USER_FEATURE_FILTER_LABEL,
+  ADMIN_USER_PLAN_FILTER_LABEL,
+  ADMIN_USER_PREMIUM_FILTER_SUMMARY_LABELS,
+} from "@/lib/admin-users-filter-config"
 
 export type AdminUserSearchResult = {
   id: string
@@ -12,32 +18,6 @@ export type AdminUserSearchResult = {
   status: string
   created_at: Date
   coachSlug: string | null
-}
-
-const PREMIUM_FILTER_LABELS: Record<Exclude<AdminPremiumFilterMode, "">, string> = {
-  with: "droits premium actifs (fonctionnalités)",
-  without: "sans droits premium actifs",
-}
-
-const BILLING_FILTER_LABELS: Record<Exclude<AdminBillingFilterMode, "">, string> = {
-  stripe: "client Stripe renseigné",
-  subscribed: "abonnement Stripe : actif, essai ou impayé léger",
-  canceling: "résiliation à l’échéance",
-}
-
-/** Libellés pour le filtre admin feature (whitelist recherche utilisateurs). */
-const FEATURE_FILTER_LABEL: Partial<Record<FeatureKey, string>> = {
-  [FEATURE_KEYS.messagesUnlimited]: "Messages illimités",
-  [FEATURE_KEYS.contactUnlock]: "Déverrouillage de contact",
-  [FEATURE_KEYS.coachPriorityListing]: "Mise en avant du profil coach",
-  [FEATURE_KEYS.profileBoost]: "Boost du profil",
-  [FEATURE_KEYS.searchPriority]: "Priorité dans les résultats de recherche",
-}
-
-const PLAN_FILTER_LABEL: Record<PlanKey, string> = {
-  [PLAN_KEYS.free]: "Free",
-  [PLAN_KEYS.athletePremium]: "Athlète premium",
-  [PLAN_KEYS.coachPremium]: "Coach premium",
 }
 
 type AdminUsersResultsProps = {
@@ -94,17 +74,17 @@ export function AdminUsersResults({
   if (appliedRole) filterChips.push(`rôle ${ADMIN_USER_ROLE_LABEL[appliedRole]}`)
   if (appliedStatus) filterChips.push(`statut ${ADMIN_USER_STATUS_LABEL[appliedStatus]}`)
   if (appliedFeature) {
-    const fl = FEATURE_FILTER_LABEL[appliedFeature]
+    const fl = ADMIN_USER_FEATURE_FILTER_LABEL[appliedFeature]
     filterChips.push(`fonctionnalité ${fl ?? appliedFeature}`)
   }
   if (premiumFilter === "with" || premiumFilter === "without") {
-    filterChips.push(PREMIUM_FILTER_LABELS[premiumFilter])
+    filterChips.push(ADMIN_USER_PREMIUM_FILTER_SUMMARY_LABELS[premiumFilter])
   }
   if (billingFilter === "stripe" || billingFilter === "subscribed" || billingFilter === "canceling") {
-    filterChips.push(BILLING_FILTER_LABELS[billingFilter])
+    filterChips.push(ADMIN_USER_BILLING_FILTER_SUMMARY_LABELS[billingFilter])
   }
   if (appliedPlan) {
-    filterChips.push(`forfait Stripe « ${PLAN_FILTER_LABEL[appliedPlan]} »`)
+    filterChips.push(`forfait Stripe « ${ADMIN_USER_PLAN_FILTER_LABEL[appliedPlan]} »`)
   }
 
   if (searchError) {

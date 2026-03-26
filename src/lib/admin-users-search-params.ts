@@ -1,6 +1,6 @@
 /**
  * Parsing des query params GET `/admin/users` → filtres typés pour `buildAdminUsersWhere`.
- * Les allowlists reflètent les options affichées dans le formulaire (page).
+ * Les allowlists sont définies dans `admin-users-filter-config.ts` (options admin users).
  */
 import type { AdminBillingFilterMode, AdminPremiumFilterMode } from "@/components/admin/admin-users-search-form"
 import type { FeatureKey, PlanKey } from "@/domain/billing/features"

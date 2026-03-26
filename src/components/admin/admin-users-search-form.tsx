@@ -1,6 +1,7 @@
 import type { Role, UserStatus } from "@prisma/client"
 import type { PlanKey } from "@/domain/billing/features"
 import { ADMIN_USER_ROLE_LABEL, ADMIN_USER_STATUS_LABEL } from "@/components/admin/admin-users-labels"
+import { ADMIN_USER_BILLING_FORM_OPTIONS, ADMIN_USER_PREMIUM_FORM_OPTIONS } from "@/lib/admin-users-filter-config"
 
 type FeatureOption = { value: string; label: string }
 type PlanOption = { value: PlanKey; label: string }
@@ -133,9 +134,11 @@ export function AdminUsersSearchForm({
             defaultValue={premium}
             className="w-full rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--card-bg)] px-3 py-2 text-sm text-[var(--text)] shadow-[var(--card-shadow)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--border)]"
           >
-            <option value="">Tous les utilisateurs</option>
-            <option value="with">Avec au moins une fonctionnalité premium</option>
-            <option value="without">Sans fonctionnalité premium active</option>
+            {ADMIN_USER_PREMIUM_FORM_OPTIONS.map((opt) => (
+              <option key={opt.value === "" ? "__all" : opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
           </select>
         </div>
 
@@ -149,10 +152,11 @@ export function AdminUsersSearchForm({
             defaultValue={billing}
             className="w-full rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--card-bg)] px-3 py-2 text-sm text-[var(--text)] shadow-[var(--card-shadow)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--border)]"
           >
-            <option value="">Tous les états</option>
-            <option value="stripe">Avec client Stripe</option>
-            <option value="subscribed">Abonnement actif, essai ou impayé léger</option>
-            <option value="canceling">Résiliation à l’échéance</option>
+            {ADMIN_USER_BILLING_FORM_OPTIONS.map((opt) => (
+              <option key={opt.value === "" ? "__all" : opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
           </select>
         </div>
 
